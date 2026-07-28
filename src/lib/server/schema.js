@@ -1,0 +1,271 @@
+// @ts-nocheck
+const schemaVersion = 3;
+
+export function createSchema(db) {
+	db.exec(`
+		PRAGMA foreign_keys = ON;
+		PRAGMA journal_mode = WAL;
+
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version INTEGER PRIMARY KEY,
+			applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS auth_users (
+			id TEXT PRIMARY KEY,
+			username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+			password_hash TEXT NOT NULL,
+			role TEXT NOT NULL CHECK (role IN ('admin', 'viewer')),
+			active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+			failed_login_count INTEGER NOT NULL DEFAULT 0,
+			locked_until TEXT,
+			last_login_at TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS auth_sessions (
+			id TEXT PRIMARY KEY,
+			token_hash TEXT NOT NULL UNIQUE,
+			user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+			expires_at TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS audit_logs (
+			id TEXT PRIMARY KEY,
+			actor_user_id TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
+			actor_username TEXT,
+			action TEXT NOT NULL,
+			entity_type TEXT NOT NULL CHECK (entity_type IN ('project', 'sop', 'person', 'reminder_rule', 'auth')),
+			entity_id TEXT,
+			summary TEXT NOT NULL,
+			before_json TEXT,
+			after_json TEXT,
+			request_ip TEXT,
+			user_agent TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS people (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			email TEXT,
+			role TEXT,
+			active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(name)
+		);
+
+		CREATE TABLE IF NOT EXISTS sop_templates (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			debt_type TEXT NOT NULL,
+			description TEXT,
+			is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(name, debt_type)
+		);
+
+		CREATE TABLE IF NOT EXISTS sop_nodes (
+			id TEXT PRIMARY KEY,
+			template_id TEXT NOT NULL REFERENCES sop_templates(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			description TEXT,
+			sort_order INTEGER NOT NULL,
+			default_offset_days INTEGER NOT NULL DEFAULT 0,
+			default_owner_role TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(template_id, sort_order)
+		);
+
+		CREATE TABLE IF NOT EXISTS projects (
+			id TEXT PRIMARY KEY,
+			code TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			debt_type TEXT NOT NULL,
+			borrower TEXT,
+			amount REAL,
+			currency TEXT NOT NULL DEFAULT 'CNY',
+			status TEXT NOT NULL DEFAULT 'planning' CHECK (status IN ('planning', 'in_progress', 'at_risk', 'completed', 'cancelled')),
+			planned_start_date TEXT,
+			planned_issue_date TEXT,
+			planned_maturity_date TEXT,
+			sop_template_id TEXT REFERENCES sop_templates(id) ON DELETE SET NULL,
+			owner_id TEXT REFERENCES people(id) ON DELETE SET NULL,
+			notes TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS project_tasks (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			sop_node_id TEXT REFERENCES sop_nodes(id) ON DELETE SET NULL,
+			name TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'not_started' CHECK (status IN ('not_started', 'in_progress', 'blocked', 'completed')),
+			assignee_id TEXT REFERENCES people(id) ON DELETE SET NULL,
+			planned_start_date TEXT,
+			due_date TEXT,
+			completed_at TEXT,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			notes TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS debts (
+			id TEXT PRIMARY KEY,
+			external_key TEXT NOT NULL UNIQUE,
+			project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+			debt_type TEXT NOT NULL,
+			instrument_name TEXT,
+			instrument_code TEXT,
+			borrower TEXT,
+			counterparty TEXT,
+			principal_amount REAL,
+			outstanding_amount REAL,
+			currency TEXT NOT NULL DEFAULT 'CNY',
+			annual_rate REAL,
+			issue_date TEXT,
+			maturity_date TEXT,
+			status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'matured', 'planned', 'closed')),
+			source_sheet TEXT NOT NULL,
+			source_row INTEGER NOT NULL,
+			source_file TEXT NOT NULL,
+			raw_data TEXT NOT NULL,
+			imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(source_sheet, source_row)
+		);
+
+		CREATE TABLE IF NOT EXISTS debt_balance_daily (
+			as_of_date TEXT NOT NULL,
+			debt_type TEXT NOT NULL,
+			balance_yi REAL NOT NULL,
+			source_sheet TEXT NOT NULL,
+			source_cell TEXT NOT NULL,
+			source_file TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(as_of_date, debt_type)
+		);
+
+		CREATE TABLE IF NOT EXISTS debt_balance_history (
+			id TEXT PRIMARY KEY,
+			source_file TEXT NOT NULL,
+			as_of_date TEXT NOT NULL,
+			debt_type TEXT NOT NULL,
+			balance_yi REAL NOT NULL,
+			source_sheet TEXT NOT NULL,
+			source_cell TEXT NOT NULL,
+			source_sequence INTEGER NOT NULL,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(source_file, source_sheet, source_cell)
+		);
+
+		CREATE TABLE IF NOT EXISTS debt_source_rows (
+			id TEXT PRIMARY KEY,
+			source_file TEXT NOT NULL,
+			source_sheet TEXT NOT NULL,
+			source_row INTEGER NOT NULL,
+			record_kind TEXT NOT NULL CHECK (record_kind IN ('detail', 'continuation', 'summary')),
+			parent_external_key TEXT,
+			row_data TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(source_file, source_sheet, source_row)
+		);
+
+		CREATE TABLE IF NOT EXISTS debt_cashflow_events (
+			id TEXT PRIMARY KEY,
+			event_key TEXT NOT NULL UNIQUE,
+			debt_external_key TEXT,
+			event_type TEXT NOT NULL CHECK (event_type IN ('interest', 'principal')),
+			event_date TEXT NOT NULL,
+			amount REAL,
+			source_file TEXT NOT NULL,
+			source_sheet TEXT NOT NULL,
+			source_row INTEGER NOT NULL,
+			source_date_cell TEXT NOT NULL,
+			source_amount_cell TEXT,
+			raw_data TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS reminder_rules (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			target_type TEXT NOT NULL DEFAULT 'project_task' CHECK (target_type IN ('project_task', 'project', 'debt')),
+			debt_type TEXT,
+			trigger_field TEXT NOT NULL,
+			offset_days INTEGER NOT NULL DEFAULT 1,
+			frequency TEXT NOT NULL DEFAULT 'once' CHECK (frequency IN ('once', 'daily', 'weekly')),
+			channel TEXT NOT NULL DEFAULT 'email' CHECK (channel IN ('email')),
+			recipient_mode TEXT NOT NULL DEFAULT 'assignee' CHECK (recipient_mode IN ('assignee', 'owner', 'custom')),
+			recipients TEXT,
+			is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS reminder_deliveries (
+			id TEXT PRIMARY KEY,
+			rule_id TEXT NOT NULL REFERENCES reminder_rules(id) ON DELETE CASCADE,
+			target_type TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			delivery_date TEXT NOT NULL,
+			recipients TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('pending', 'sent', 'failed')),
+			provider_message_id TEXT,
+			error_message TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			sent_at TEXT,
+			UNIQUE(rule_id, target_id, delivery_date)
+		);
+
+		CREATE TABLE IF NOT EXISTS import_runs (
+			id TEXT PRIMARY KEY,
+			source_file TEXT NOT NULL,
+			file_hash TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+			started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			finished_at TEXT,
+			inserted_count INTEGER NOT NULL DEFAULT 0,
+			updated_count INTEGER NOT NULL DEFAULT 0,
+			skipped_count INTEGER NOT NULL DEFAULT 0,
+			error_message TEXT
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_debts_type_status ON debts(debt_type, status);
+		CREATE INDEX IF NOT EXISTS idx_debts_maturity ON debts(maturity_date);
+		CREATE INDEX IF NOT EXISTS idx_debt_balance_daily_date ON debt_balance_daily(as_of_date);
+		CREATE INDEX IF NOT EXISTS idx_debt_balance_history_date ON debt_balance_history(as_of_date, source_sequence);
+		CREATE INDEX IF NOT EXISTS idx_debt_source_rows_source ON debt_source_rows(source_file, source_sheet, source_row);
+		CREATE INDEX IF NOT EXISTS idx_debt_cashflow_events_date ON debt_cashflow_events(event_date, event_type);
+		CREATE INDEX IF NOT EXISTS idx_debt_cashflow_events_debt ON debt_cashflow_events(debt_external_key);
+		CREATE INDEX IF NOT EXISTS idx_projects_status_type ON projects(status, debt_type);
+		CREATE INDEX IF NOT EXISTS idx_project_tasks_project_due ON project_tasks(project_id, due_date);
+		CREATE INDEX IF NOT EXISTS idx_reminder_rules_active ON reminder_rules(is_active, target_type);
+		CREATE INDEX IF NOT EXISTS idx_reminder_deliveries_status ON reminder_deliveries(status, delivery_date);
+		CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);
+		CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id, created_at);
+		CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at);
+	`);
+
+	const balanceColumns = new Set(
+		db.prepare('PRAGMA table_info(debt_balance_daily)').all().map((column) => column.name)
+	);
+	if (!balanceColumns.has('source_file')) {
+		db.exec('ALTER TABLE debt_balance_daily ADD COLUMN source_file TEXT');
+	}
+
+	db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)').run(schemaVersion);
+}

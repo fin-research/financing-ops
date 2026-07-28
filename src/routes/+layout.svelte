@@ -1,0 +1,130 @@
+<script lang="ts">
+	import './layout.css';
+	import { page } from '$app/state';
+	import {
+		BarChart3,
+		Bell,
+		BriefcaseBusiness,
+		CalendarDays,
+		FileSpreadsheet,
+		LayoutDashboard,
+		LogOut,
+		Settings2,
+		Workflow
+	} from '@lucide/svelte';
+
+	let { children, data } = $props();
+
+	const navItems = [
+		{ href: '/', label: '总览', icon: LayoutDashboard },
+		{ href: '/projects', label: '项目进度', icon: BriefcaseBusiness },
+		{ href: '/settings', label: 'SOP 与提醒', icon: Workflow }
+	];
+
+	const isActive = (href: string) =>
+		href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
+</script>
+
+<svelte:head>
+	<title>融资工作台</title>
+	<meta
+		name="description"
+		content="负债数据、融资项目、SOP 节点与提醒的一体化管理工作台"
+	/>
+</svelte:head>
+
+{#if data.user}
+<div class="app-shell">
+	<a class="skip-link" href="#main-content">跳到主要内容</a>
+	<aside class="sidebar">
+		<a class="brand" href="/" aria-label="融资工作台首页">
+			<span class="brand-mark"><BarChart3 size={19} strokeWidth={2.2} /></span>
+			<span>
+				<strong>融资工作台</strong>
+				<small>FINANCING OPS</small>
+			</span>
+		</a>
+
+		<nav class="main-nav" aria-label="主导航">
+			<p class="nav-caption">工作空间</p>
+			{#each navItems as item}
+				<a class:active={isActive(item.href)} href={item.href}>
+					<item.icon size={18} strokeWidth={1.8} />
+					<span>{item.label}</span>
+				</a>
+			{/each}
+			<p class="nav-caption nav-caption-spaced">数据管理</p>
+			<a href="/settings#import">
+				<FileSpreadsheet size={18} strokeWidth={1.8} />
+				<span>Excel 导入</span>
+			</a>
+			<a href="/settings#members">
+				<Settings2 size={18} strokeWidth={1.8} />
+				<span>人员与权限</span>
+			</a>
+		</nav>
+
+		<div class="sidebar-status">
+			<div class="status-title">
+				<span class="status-dot"></span>
+				<span>数据已同步</span>
+			</div>
+			<p>借入资金台账</p>
+			<small>更新至 2026-07-27</small>
+		</div>
+	</aside>
+
+	<div class="workspace">
+		<header class="topbar">
+			<div class="mobile-brand">
+				<span class="brand-mark"><BarChart3 size={18} /></span>
+				<strong>融资工作台</strong>
+			</div>
+			<div class="breadcrumb">
+				<span>资金运营中心</span>
+				<span class="breadcrumb-divider">/</span>
+				<strong>
+					{navItems.find((item) => isActive(item.href))?.label ?? '工作台'}
+				</strong>
+			</div>
+			<div class="top-actions">
+				<a class="today-pill" href="/#calendar">
+					<CalendarDays size={15} />
+					<span>2026年7月28日</span>
+				</a>
+				<button class="icon-button" type="button" aria-label="查看提醒">
+					<Bell size={18} />
+					<span class="notification-dot"></span>
+				</button>
+				<div class="profile-button" aria-label="当前登录账号">
+					<span class="avatar">{data.user.username.slice(0, 1).toUpperCase()}</span>
+					<span class="profile-copy">
+						<strong>{data.user.username}</strong>
+						<small>{data.user.role === 'admin' ? '管理员' : '只读用户'}</small>
+					</span>
+				</div>
+				<form method="POST" action="/logout">
+					<button class="icon-button" type="submit" aria-label="退出登录" title="退出登录">
+						<LogOut size={18} />
+					</button>
+				</form>
+			</div>
+		</header>
+
+		<div class="mobile-nav" aria-label="移动端导航">
+			{#each navItems as item}
+				<a class:active={isActive(item.href)} href={item.href}>
+					<item.icon size={18} />
+					<span>{item.label}</span>
+				</a>
+			{/each}
+		</div>
+
+		<main class="page-content" id="main-content" tabindex="-1">
+			{@render children()}
+		</main>
+	</div>
+</div>
+{:else}
+	{@render children()}
+{/if}

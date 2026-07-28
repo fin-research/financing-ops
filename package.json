@@ -1,0 +1,38 @@
+{
+	"name": "financing-workbench",
+	"private": true,
+	"version": "0.0.1",
+	"type": "module",
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"prepare": "svelte-kit sync || echo ''",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"db:init": "node --env-file-if-exists=.env scripts/init-database.mjs",
+		"db:import": "node --env-file-if-exists=.env scripts/import-debts.mjs",
+		"db:refresh": "pnpm db:init && pnpm db:import",
+		"reminders:send": "node --env-file-if-exists=.env scripts/send-reminders.mjs"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-node": "^5.5.4",
+		"@sveltejs/kit": "^2.63.0",
+		"@sveltejs/vite-plugin-svelte": "^7.1.2",
+		"@tailwindcss/vite": "^4.3.0",
+		"@types/better-sqlite3": "^7.6.13",
+		"daisyui": "^5.7.4",
+		"svelte": "^5.56.1",
+		"svelte-check": "^4.6.0",
+		"tailwindcss": "^4.3.0",
+		"tsx": "^4.23.1",
+		"typescript": "^6.0.3",
+		"vite": "^8.0.16"
+	},
+	"dependencies": {
+		"@lucide/svelte": "^1.27.0",
+		"better-sqlite3": "^13.0.1",
+		"resend": "^6.18.0",
+		"xlsx": "^0.18.5"
+	}
+}
