@@ -82,6 +82,14 @@ a {
 	text-decoration: none;
 }
 
+dialog[open] {
+	position: fixed;
+	inset: 0;
+	max-height: min(90dvh, 52rem);
+	margin: auto;
+	overflow-y: auto;
+}
+
 .skip-link {
 	position: fixed;
 	z-index: 1000;
@@ -431,7 +439,7 @@ textarea:focus-visible {
 		top: 3.625rem;
 		z-index: 18;
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
+		grid-template-columns: repeat(5, minmax(0, 1fr));
 		border-bottom: 1px solid var(--line);
 		background: #fff;
 	}

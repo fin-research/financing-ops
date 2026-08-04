@@ -159,10 +159,9 @@ export function getProjectGanttData(filters = {}) {
 	};
 }
 
-export function getSettingsData() {
+export function getWorkflowSettingsData() {
 	const db = getDatabase();
 	return {
-		people: db.prepare('SELECT id, name, email, role, active FROM people ORDER BY active DESC, name').all().map((person) => ({ ...person, active: Boolean(person.active) })),
 		sopTemplates: db.prepare(`
 			SELECT st.id, st.name, st.debt_type AS debtType, st.description, st.is_active AS isActive,
 				COUNT(sn.id) AS nodeCount
@@ -173,7 +172,13 @@ export function getSettingsData() {
 			SELECT id, name, target_type AS targetType, debt_type AS debtType, trigger_field AS triggerField,
 				offset_days AS offsetDays, frequency, channel, recipient_mode AS recipientMode, recipients, is_active AS isActive
 			FROM reminder_rules ORDER BY is_active DESC, name
-		`).all().map((rule) => ({ ...rule, isActive: Boolean(rule.isActive) })),
+		`).all().map((rule) => ({ ...rule, isActive: Boolean(rule.isActive) }))
+	};
+}
+
+export function getDataImportData() {
+	const db = getDatabase();
+	return {
 		lastImport: db.prepare(`
 			SELECT id, source_file AS sourceFile, status, started_at AS startedAt, finished_at AS finishedAt,
 				inserted_count AS insertedCount, updated_count AS updatedCount, skipped_count AS skippedCount, error_message AS errorMessage
@@ -193,11 +198,58 @@ export function getSettingsData() {
 	};
 }
 
+export function getPeopleAccessData() {
+	const db = getDatabase();
+	return {
+		people: db.prepare(`
+			SELECT id, name, email, role, active
+			FROM people
+			ORDER BY active DESC, name
+		`).all().map((person) => ({ ...person, active: Boolean(person.active) })),
+		accounts: db.prepare(`
+			SELECT id, username, role, active, last_login_at AS lastLoginAt
+			FROM auth_users
+			ORDER BY active DESC, username
+		`).all().map((account) => ({ ...account, active: Boolean(account.active) }))
+	};
+}
+
+export function getSettingsData() {
+	return {
+		...getWorkflowSettingsData(),
+		...getDataImportData(),
+		...getPeopleAccessData()
+	};
+}
+
+const SOP_EVENT_DEBT_TYPE_SCOPE = {
+	公司债: ['公司债', '小公募', '私募债', '次级债']
+};
+
+function getActiveSopEventDebtTypes(db) {
+	const activeTypes = db.prepare(`
+		SELECT DISTINCT debt_type AS debtType
+		FROM sop_templates
+		WHERE is_active = 1
+	`).all();
+	return [
+		...new Set(
+			activeTypes.flatMap(({ debtType }) => SOP_EVENT_DEBT_TYPE_SCOPE[debtType] ?? [debtType])
+		)
+	];
+}
+
+export function getActiveSopDebtTypeOptions() {
+	return getActiveSopEventDebtTypes(getDatabase());
+}
+
 /** @param {{ fromDate?: string, toDate?: string, limit?: number }} [options] */
 export function getHomeEvents({ fromDate, toDate, limit = 200 } = {}) {
 	const db = getDatabase();
 	const start = fromDate ?? new Date().toISOString().slice(0, 10);
 	const end = toDate ?? start;
+	const activeDebtTypes = getActiveSopEventDebtTypes(db);
+	const debtTypePlaceholders = activeDebtTypes.map(() => '?').join(', ');
 	const taskEvents = db.prepare(`
 		SELECT
 			'task' AS eventType,
@@ -211,6 +263,7 @@ export function getHomeEvents({ fromDate, toDate, limit = 200 } = {}) {
 			assignee.name AS ownerName
 		FROM project_tasks pt
 		JOIN projects p ON p.id = pt.project_id
+		JOIN sop_templates st ON st.id = p.sop_template_id AND st.is_active = 1
 		LEFT JOIN people assignee ON assignee.id = pt.assignee_id
 		WHERE pt.status != 'completed'
 			AND pt.due_date BETWEEN @fromDate AND @toDate
@@ -218,7 +271,7 @@ export function getHomeEvents({ fromDate, toDate, limit = 200 } = {}) {
 		LIMIT @limit
 	`).all({ fromDate: start, toDate: end, limit });
 
-	const maturityEvents = db.prepare(`
+	const maturityEvents = activeDebtTypes.length ? db.prepare(`
 		SELECT
 			'maturity' AS eventType,
 			MIN(id) AS id,
@@ -227,13 +280,14 @@ export function getHomeEvents({ fromDate, toDate, limit = 200 } = {}) {
 			COUNT(*) AS itemCount,
 			COALESCE(SUM(COALESCE(outstanding_amount, principal_amount, 0)), 0) AS amount
 		FROM debts
-		WHERE maturity_date BETWEEN @fromDate AND @toDate
+		WHERE maturity_date BETWEEN ? AND ?
 			AND status IN ('active', 'planned')
+			AND debt_type IN (${debtTypePlaceholders})
 		GROUP BY maturity_date, debt_type
 		ORDER BY maturity_date, debt_type
-		LIMIT @limit
-	`).all({ fromDate: start, toDate: end, limit });
-	const interestEvents = db.prepare(`
+		LIMIT ?
+	`).all(start, end, ...activeDebtTypes, limit) : [];
+	const interestEvents = activeDebtTypes.length ? db.prepare(`
 		SELECT
 			event_date AS eventDate,
 			source_sheet AS debtType,
@@ -241,11 +295,12 @@ export function getHomeEvents({ fromDate, toDate, limit = 200 } = {}) {
 			COALESCE(SUM(amount), 0) AS amount
 		FROM debt_cashflow_events
 		WHERE event_type = 'interest'
-			AND event_date BETWEEN @fromDate AND @toDate
+			AND event_date BETWEEN ? AND ?
+			AND source_sheet IN (${debtTypePlaceholders})
 		GROUP BY event_date, source_sheet
 		ORDER BY event_date, source_sheet
-		LIMIT @limit
-	`).all({ fromDate: start, toDate: end, limit });
+		LIMIT ?
+	`).all(start, end, ...activeDebtTypes, limit) : [];
 
 	return [
 		...taskEvents.map((event) => ({
@@ -274,7 +329,7 @@ export function getHomeEvents({ fromDate, toDate, limit = 200 } = {}) {
 			owner: null,
 			tone: 'red',
 			level: 'danger',
-			href: `/settings#import`
+			href: `/data`
 		})),
 		...interestEvents.map((event) => ({
 			id: `interest:${event.eventDate}:${event.debtType}`,
@@ -287,7 +342,7 @@ export function getHomeEvents({ fromDate, toDate, limit = 200 } = {}) {
 			owner: null,
 			tone: 'orange',
 			level: 'warning',
-			href: `/settings#import`
+			href: `/data`
 		}))
 	].sort((left, right) => left.date.localeCompare(right.date) || left.title.localeCompare(right.title));
 }

@@ -17,10 +17,11 @@
 		TrendingDown,
 		Upload
 	} from '@lucide/svelte';
+	import MultiSelectFilter from '$lib/MultiSelectFilter.svelte';
 
 	let { data } = $props();
-	let selectedType = $state('全部品种');
-	let selectedOwner = $state('全部人员');
+	let selectedTypes = $state<string[]>([]);
+	let selectedOwners = $state<string[]>([]);
 
 	const fallback = {
 		asOfDate: '2026-07-27',
@@ -63,32 +64,57 @@
 	};
 
 	const dashboard = $derived(data?.dashboard ?? fallback);
+	const typeOptions = $derived(
+		dashboard.allBalances.map((item: { type: string }) => item.type)
+	);
 	const composition = $derived(
-		selectedType === '全部品种'
+		selectedTypes.length === 0
 			? dashboard.composition
 			: dashboard.allBalances
-					.filter((item: { type: string }) => item.type === selectedType)
-					.map((item: { type: string; amountYi: number; color: string }) => ({ ...item, share: 100 }))
+					.filter((item: { type: string }) => selectedTypes.includes(item.type))
+					.map((item: { type: string; amountYi: number; color: string }) => ({
+						...item,
+						share:
+							dashboard.allBalances
+								.filter((balance: { type: string }) => selectedTypes.includes(balance.type))
+								.reduce(
+									(sum: number, balance: { amountYi: number }) => sum + balance.amountYi,
+									0
+								) > 0
+								? (item.amountYi /
+										dashboard.allBalances
+											.filter((balance: { type: string }) => selectedTypes.includes(balance.type))
+											.reduce(
+												(sum: number, balance: { amountYi: number }) => sum + balance.amountYi,
+												0
+											)) *
+									100
+								: 0
+					}))
 	);
 	const outstandingBalanceYi = $derived(
-		selectedType === '全部品种'
+		selectedTypes.length === 0
 			? dashboard.kpis.outstandingBalanceYi
-			: dashboard.allBalances.find((item: { type: string }) => item.type === selectedType)?.amountYi ?? 0
+			: dashboard.allBalances
+					.filter((item: { type: string }) => selectedTypes.includes(item.type))
+					.reduce((sum: number, item: { amountYi: number }) => sum + item.amountYi, 0)
 	);
 	const activeProjects = $derived(
 		dashboard.projectCounts.filter(
 			(project: { active: boolean; type: string; owner: string }) =>
 				project.active &&
-				(selectedType === '全部品种' || project.type === selectedType) &&
-				(selectedOwner === '全部人员' || project.owner === selectedOwner)
+				(selectedTypes.length === 0 || selectedTypes.includes(project.type)) &&
+				(selectedOwners.length === 0 || selectedOwners.includes(project.owner))
 		).length
 	);
 	const ownerOptions = $derived([
-		...new Set(dashboard.projectCounts.map((project: { owner: string }) => project.owner))
+		...new Set<string>(
+			dashboard.projectCounts.map((project: { owner: string }) => project.owner)
+		)
 	]);
 	const matchesFilters = (item: { debtType?: string | null; owner?: string | null }) =>
-		(selectedType === '全部品种' || item.debtType === selectedType) &&
-		(selectedOwner === '全部人员' || item.owner === selectedOwner);
+		(selectedTypes.length === 0 || (item.debtType != null && selectedTypes.includes(item.debtType))) &&
+		(selectedOwners.length === 0 || (item.owner != null && selectedOwners.includes(item.owner)));
 	const alerts = $derived(dashboard.alerts.filter(matchesFilters));
 	const calendarCells = $derived(
 		dashboard.calendarCells.map((cell) => ({
@@ -115,7 +141,7 @@
 			<RefreshCw size={15} />
 			<span>刷新数据</span>
 		</button>
-		<a class="primary-action" href="/settings#import">
+		<a class="primary-action" href="/data">
 			<Upload size={15} />
 			<span>导入 Excel</span>
 		</a>
@@ -127,24 +153,18 @@
 		<Filter size={15} />
 		<span>筛选视图</span>
 	</div>
-	<label>
-		<span>负债品种</span>
-		<select bind:value={selectedType} aria-label="按负债品种筛选">
-			<option>全部品种</option>
-			{#each dashboard.allBalances as item}
-				<option>{item.type}</option>
-			{/each}
-		</select>
-	</label>
-	<label>
-		<span>负责人</span>
-		<select bind:value={selectedOwner} aria-label="按负责人筛选">
-			<option>全部人员</option>
-			{#each ownerOptions as owner}
-				<option>{owner}</option>
-			{/each}
-		</select>
-	</label>
+	<MultiSelectFilter
+		label="负债品种"
+		options={typeOptions}
+		bind:values={selectedTypes}
+		allLabel="全部品种"
+	/>
+	<MultiSelectFilter
+		label="负责人"
+		options={ownerOptions}
+		bind:values={selectedOwners}
+		allLabel="全部人员"
+	/>
 	<div class="filter-meta">
 		<span class="sync-dot"></span>
 		数据截至 {dashboard.asOfDate}
@@ -469,25 +489,8 @@
 		color: #475467;
 	}
 
-	.filter-bar label {
-		display: flex;
-		align-items: center;
-		gap: 0.4375rem;
-		font-size: 0.75rem;
-		color: #98a2b3;
-	}
-
-	.filter-bar select {
-		height: 2rem;
-		min-width: 8.25rem;
-		padding: 0 1.75rem 0 0.5625rem;
-		border: 1px solid #d0d5dd;
-		border-radius: 0.375rem;
-		font-size: 0.75rem;
-		font-weight: 600;
-		color: #344054;
-		background: #fff;
-		cursor: pointer;
+	.filter-bar :global(.multi-filter) {
+		flex: 0 1 17rem;
 	}
 
 	.filter-meta {
@@ -1242,14 +1245,8 @@
 			border-bottom: 1px solid #eaecf0;
 		}
 
-		.filter-bar label {
-			display: grid;
-			gap: 0.25rem;
-		}
-
-		.filter-bar select {
+		.filter-bar :global(.multi-filter) {
 			width: 100%;
-			min-width: 0;
 		}
 
 		.dashboard-grid {

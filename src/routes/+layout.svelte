@@ -9,20 +9,28 @@
 		FileSpreadsheet,
 		LayoutDashboard,
 		LogOut,
-		Settings2,
+		ShieldCheck,
 		Workflow
 	} from '@lucide/svelte';
 
 	let { children, data } = $props();
 
-	const navItems = [
-		{ href: '/', label: '总览', icon: LayoutDashboard },
-		{ href: '/projects', label: '项目进度', icon: BriefcaseBusiness },
-		{ href: '/settings', label: 'SOP 与提醒', icon: Workflow }
+	const workspaceItems = [
+		{ href: '/', label: '总览', mobileLabel: '总览', icon: LayoutDashboard },
+		{ href: '/projects', label: '项目进度', mobileLabel: '项目', icon: BriefcaseBusiness }
 	];
 
-	const isActive = (href: string) =>
-		href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
+	const managementItems = [
+		{ href: '/settings', label: 'SOP 与提醒', mobileLabel: 'SOP', icon: Workflow },
+		{ href: '/data', label: 'Excel 数据', mobileLabel: '数据', icon: FileSpreadsheet },
+		{ href: '/people', label: '人员与权限', mobileLabel: '人员', icon: ShieldCheck }
+	];
+	const navItems = [...workspaceItems, ...managementItems];
+
+	const isActive = (href: string) => {
+		if (href === '/') return page.url.pathname === '/';
+		return page.url.pathname === href || page.url.pathname.startsWith(`${href}/`);
+	};
 </script>
 
 <svelte:head>
@@ -47,21 +55,19 @@
 
 		<nav class="main-nav" aria-label="主导航">
 			<p class="nav-caption">工作空间</p>
-			{#each navItems as item}
+			{#each workspaceItems as item}
 				<a class:active={isActive(item.href)} href={item.href}>
 					<item.icon size={18} strokeWidth={1.8} />
 					<span>{item.label}</span>
 				</a>
 			{/each}
 			<p class="nav-caption nav-caption-spaced">数据管理</p>
-			<a href="/settings#import">
-				<FileSpreadsheet size={18} strokeWidth={1.8} />
-				<span>Excel 导入</span>
-			</a>
-			<a href="/settings#members">
-				<Settings2 size={18} strokeWidth={1.8} />
-				<span>人员与权限</span>
-			</a>
+			{#each managementItems as item}
+				<a class:active={isActive(item.href)} href={item.href}>
+					<item.icon size={18} strokeWidth={1.8} />
+					<span>{item.label}</span>
+				</a>
+			{/each}
 		</nav>
 
 		<div class="sidebar-status">
@@ -115,7 +121,7 @@
 			{#each navItems as item}
 				<a class:active={isActive(item.href)} href={item.href}>
 					<item.icon size={18} />
-					<span>{item.label}</span>
+					<span>{item.mobileLabel}</span>
 				</a>
 			{/each}
 		</div>

@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getDatabase } from '$lib/server/db.js';
-import { getHomeEvents, getProjectGanttData } from '$lib/server/queries.js';
+import {
+	getActiveSopDebtTypeOptions,
+	getHomeEvents,
+	getProjectGanttData
+} from '$lib/server/queries.js';
 import { auditRequestMeta, recordAudit } from '$lib/server/audit.js';
 
 const timelineStart = Date.parse('2026-07-20T00:00:00Z');
@@ -102,6 +106,7 @@ export const load: PageServerLoad = () => {
 	return {
 		projects: mapProjects(),
 		people: db.prepare('SELECT id, name FROM people WHERE active = 1 ORDER BY name').all(),
+		activeSopDebtTypes: getActiveSopDebtTypeOptions(),
 		today,
 		upcoming,
 		attention: upcoming.find((event) => event.level === 'danger') ?? upcoming[0] ?? null
@@ -130,6 +135,9 @@ export const actions: Actions = {
 			)
 			ORDER BY CASE WHEN debt_type = @debtType THEN 0 ELSE 1 END LIMIT 1
 		`).get({ debtType });
+		if (!sop) {
+			return fail(400, { message: '该负债品种没有启用中的 SOP，请先完成 SOP 配置' });
+		}
 		const projectId = randomUUID();
 		const code = `FIN-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`;
 

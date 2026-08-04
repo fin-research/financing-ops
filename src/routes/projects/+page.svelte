@@ -16,11 +16,12 @@
 		Search,
 		Users
 	} from '@lucide/svelte';
+	import MultiSelectFilter from '$lib/MultiSelectFilter.svelte';
 
 	let { data } = $props();
-	let selectedType = $state('全部品种');
-	let selectedOwner = $state('全部人员');
-	let selectedStatus = $state('全部状态');
+	let selectedTypes = $state<string[]>([]);
+	let selectedOwners = $state<string[]>([]);
+	let selectedStatuses = $state<string[]>([]);
 	let view = $state<'month' | 'quarter'>('month');
 	let expandedProject = $state<string | number | null>(null);
 	let newProjectDialog: HTMLDialogElement;
@@ -156,9 +157,9 @@
 	const visibleProjects = $derived(
 		projects.filter(
 			(project: (typeof fallbackProjects)[number]) =>
-				(selectedType === '全部品种' || project.type === selectedType) &&
-				(selectedOwner === '全部人员' || project.owner === selectedOwner) &&
-				(selectedStatus === '全部状态' || project.status === selectedStatus)
+				(selectedTypes.length === 0 || selectedTypes.includes(project.type)) &&
+				(selectedOwners.length === 0 || selectedOwners.includes(project.owner)) &&
+				(selectedStatuses.length === 0 || selectedStatuses.includes(project.status))
 		)
 	);
 	const summary = $derived({
@@ -169,9 +170,21 @@
 		atRisk: projects.filter((project: (typeof fallbackProjects)[number]) => project.tone === 'orange').length,
 		completed: projects.filter((project: (typeof fallbackProjects)[number]) => project.progress === 100).length
 	});
-	const projectTypes = $derived([...new Set(projects.map((project: (typeof fallbackProjects)[number]) => project.type))]);
-	const projectOwners = $derived([...new Set(projects.map((project: (typeof fallbackProjects)[number]) => project.owner))]);
-	const projectStatuses = $derived([...new Set(projects.map((project: (typeof fallbackProjects)[number]) => project.status))]);
+	const projectTypes = $derived([
+		...new Set<string>(
+			projects.map((project: (typeof fallbackProjects)[number]) => String(project.type))
+		)
+	]);
+	const projectOwners = $derived([
+		...new Set<string>(
+			projects.map((project: (typeof fallbackProjects)[number]) => String(project.owner))
+		)
+	]);
+	const projectStatuses = $derived([
+		...new Set<string>(
+			projects.map((project: (typeof fallbackProjects)[number]) => String(project.status))
+		)
+	]);
 
 	const weeks = ['7/20', '7/27', '8/3', '8/10', '8/17', '8/24'];
 </script>
@@ -224,24 +237,24 @@
 	</div>
 	<div class="select-group">
 		<Filter size={14} />
-		<select bind:value={selectedType} aria-label="负债品种">
-			<option>全部品种</option>
-			{#each projectTypes as type}
-				<option>{type}</option>
-			{/each}
-		</select>
-		<select bind:value={selectedOwner} aria-label="负责人">
-			<option>全部人员</option>
-			{#each projectOwners as owner}
-				<option>{owner}</option>
-			{/each}
-		</select>
-		<select bind:value={selectedStatus} aria-label="项目状态">
-			<option>全部状态</option>
-			{#each projectStatuses as status}
-				<option>{status}</option>
-			{/each}
-		</select>
+		<MultiSelectFilter
+			label="负债品种"
+			options={projectTypes}
+			bind:values={selectedTypes}
+			allLabel="全部品种"
+		/>
+		<MultiSelectFilter
+			label="负责人"
+			options={projectOwners}
+			bind:values={selectedOwners}
+			allLabel="全部人员"
+		/>
+		<MultiSelectFilter
+			label="项目状态"
+			options={projectStatuses}
+			bind:values={selectedStatuses}
+			allLabel="全部状态"
+		/>
 	</div>
 	<div class="view-switcher" aria-label="时间视图">
 		<button class:active={view === 'month'} type="button" onclick={() => (view = 'month')}>月</button>
@@ -415,11 +428,9 @@
 				<span>负债品种</span>
 				<select name="debtType" required>
 					<option value="">请选择</option>
-					<option>次级债</option>
-					<option>小公募</option>
-					<option>短期融资券</option>
-					<option>转融资</option>
-					<option>同业拆借</option>
+					{#each data.activeSopDebtTypes as debtType}
+						<option>{debtType}</option>
+					{/each}
 				</select>
 			</label>
 			<label>
@@ -648,16 +659,8 @@
 		color: #98a2b3;
 	}
 
-	.select-group select {
-		height: 2.125rem;
-		padding: 0 1.6875rem 0 0.5625rem;
-		border: 1px solid #d0d5dd;
-		border-radius: 0.4375rem;
-		font-size: 0.75rem;
-		font-weight: 600;
-		color: #475467;
-		background: #fff;
-		cursor: pointer;
+	.select-group :global(.multi-filter) {
+		flex: 1 1 10rem;
 	}
 
 	.view-switcher {
@@ -1355,11 +1358,6 @@
 			width: 100%;
 		}
 
-		.select-group select {
-			flex: 1;
-			min-width: 0;
-		}
-
 		.gantt-panel {
 			overflow: visible;
 			border: 0;
@@ -1440,7 +1438,7 @@
 			grid-template-columns: 1fr 1fr;
 		}
 
-		.select-group select:last-child {
+		.select-group :global(.multi-filter:last-child) {
 			grid-column: 1 / -1;
 		}
 
