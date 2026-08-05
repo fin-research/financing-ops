@@ -69,7 +69,6 @@
 	<div>
 		<p class="eyebrow">{data.project.code}</p>
 		<h1>{data.project.name}</h1>
-		<p>{data.project.debtType} · {data.project.borrower ?? '借款主体未登记'} · 数据更新于 {formatDateTime(data.project.updatedAt)}</p>
 	</div>
 	<span class={`project-state ${data.project.status}`}>{statusLabels[data.project.status] ?? data.project.status}</span>
 </section>

@@ -17,7 +17,6 @@
 		</div>
 		<p class="eyebrow">FINANCING OPS</p>
 		<h1 id="login-title">登录融资工作台</h1>
-		<p class="intro">统一管理负债数据、融资项目与节点提醒。</p>
 
 		{#if form?.message}
 			<div class="login-error" role="alert">{form.message}</div>
@@ -111,11 +110,6 @@
 		margin: 0;
 		font-size: clamp(1.5rem, 4vw, 1.875rem);
 		line-height: 1.3;
-	}
-
-	.intro {
-		margin: 0.625rem 0 1.5rem;
-		color: var(--muted);
 	}
 
 	form {

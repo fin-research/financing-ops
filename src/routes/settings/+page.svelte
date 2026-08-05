@@ -72,7 +72,6 @@
 		<div>
 			<p class="eyebrow">WORKFLOW CONFIGURATION</p>
 			<h1>SOP 管理</h1>
-			<p>只管理融资项目流程模板和与节点关联的提醒规则</p>
 		</div>
 		<button class="primary-action" type="button" onclick={() => sopDialog.showModal()}>
 			<Plus size={16} />

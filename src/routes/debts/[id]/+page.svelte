@@ -3,14 +3,13 @@
 	let { data } = $props();
 	const debt = $derived(data.debt);
 	const amountYi = (value: number | null) => value == null ? '未登记' : `${(value / 100000000).toFixed(4)} 亿元`;
-	const statusLabel: Record<string, string> = { active: '存续', matured: '已到期', planned: '计划中', closed: '已关闭' };
 </script>
 
 <svelte:head><title>{debt.instrumentName ?? debt.debtType} · 负债详情</title></svelte:head>
 
 <a class="back-link" href="/workbench"><ArrowLeft size={16} />返回工作台</a>
 <section class="debt-heading">
-	<div><p class="eyebrow">DEBT DETAIL</p><h1>{debt.instrumentName ?? debt.instrumentCode ?? debt.debtType}</h1><p>{debt.instrumentCode ?? '无独立编码'} · {statusLabel[debt.status] ?? debt.status}</p></div>
+	<div><p class="eyebrow">DEBT DETAIL</p><h1>{debt.instrumentName ?? debt.instrumentCode ?? debt.debtType}</h1></div>
 	<span>{debt.categoryLevel1 ?? debt.debtType} / {debt.categoryLevel2 ?? debt.debtType}</span>
 </section>
 

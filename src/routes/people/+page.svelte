@@ -68,7 +68,6 @@
 		<div>
 			<p class="eyebrow">PEOPLE & ACCESS</p>
 			<h1>人员与权限</h1>
-			<p>融资项目成员与工作台登录权限分开维护、集中查看</p>
 		</div>
 		<button class="primary-action" type="button" onclick={() => openPerson()}>
 			<Plus size={16} />

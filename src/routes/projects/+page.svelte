@@ -197,7 +197,6 @@
 	<div>
 		<p class="eyebrow">PROJECT PORTFOLIO</p>
 		<h1>项目进度</h1>
-		<p>以 SOP 节点为主线，跟踪全部融资项目的执行状态</p>
 	</div>
 	<button class="primary-action" type="button" onclick={() => newProjectDialog.showModal()}>
 		<Plus size={16} />

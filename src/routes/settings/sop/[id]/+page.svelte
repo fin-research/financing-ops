@@ -38,7 +38,6 @@
 	<div>
 		<p class="eyebrow">SOP WORKFLOW</p>
 		<h1>{data.template.name}</h1>
-		<p>{data.template.debtType} · {data.nodes.length} 个节点 · 相对日期以计划发行日为基准</p>
 	</div>
 	<form method="post" action="?/toggleTemplate" use:enhance={enhanceForm('toggle')}>
 		<button class:active={data.template.isActive} class="toggle-button" type="submit" disabled={pendingAction === 'toggle'}>

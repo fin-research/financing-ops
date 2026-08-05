@@ -100,7 +100,6 @@
 		<div>
 			<p class="eyebrow">DATA ADMINISTRATION</p>
 			<h1>数据后台</h1>
-			<p>统一管理借入资金台账、数据质量与监管指标计算参数</p>
 		</div>
 		<form method="post" action="?/reimport" use:enhance={enhanceImport('reimport')}>
 			<button class="primary-action" type="submit" disabled={actionState.status === 'pending'}>
