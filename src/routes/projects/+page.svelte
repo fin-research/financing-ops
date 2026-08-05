@@ -20,7 +20,11 @@
 
 	let { data } = $props();
 	let selectedTypes = $state<string[]>([]);
-	let selectedOwners = $state<string[]>([]);
+	const initialOwnerSelection = () =>
+		data?.viewContext?.defaultOwnProjects && data?.viewContext?.personName
+			? [data.viewContext.personName]
+			: [];
+	let selectedOwners = $state<string[]>(initialOwnerSelection());
 	let selectedStatuses = $state<string[]>([]);
 	let view = $state<'month' | 'quarter'>('month');
 	let expandedProject = $state<string | number | null>(null);
@@ -163,12 +167,12 @@
 		)
 	);
 	const summary = $derived({
-		inProgress: projects.filter((project: (typeof fallbackProjects)[number]) => project.progress < 100).length,
-		dueThisWeek: projects.filter((project: (typeof fallbackProjects)[number]) =>
+		inProgress: visibleProjects.filter((project: (typeof fallbackProjects)[number]) => project.progress < 100).length,
+		dueThisWeek: visibleProjects.filter((project: (typeof fallbackProjects)[number]) =>
 			['今天', '明天', '2天后', '3天后', '4天后', '5天后', '6天后', '7天后'].includes(project.dueText)
 		).length,
-		atRisk: projects.filter((project: (typeof fallbackProjects)[number]) => project.tone === 'orange').length,
-		completed: projects.filter((project: (typeof fallbackProjects)[number]) => project.progress === 100).length
+		atRisk: visibleProjects.filter((project: (typeof fallbackProjects)[number]) => project.tone === 'orange').length,
+		completed: visibleProjects.filter((project: (typeof fallbackProjects)[number]) => project.progress === 100).length
 	});
 	const projectTypes = $derived([
 		...new Set<string>(
@@ -192,17 +196,6 @@
 <svelte:head>
 	<title>项目进度 · 融资工作台</title>
 </svelte:head>
-
-<section class="page-heading">
-	<div>
-		<p class="eyebrow">PROJECT PORTFOLIO</p>
-		<h1>项目进度</h1>
-	</div>
-	<button class="primary-action" type="button" onclick={() => newProjectDialog.showModal()}>
-		<Plus size={16} />
-		新建项目
-	</button>
-</section>
 
 {#if createState.message}
 	<p class:success={createState.success} class="action-feedback" role={createState.success ? 'status' : 'alert'}>
@@ -408,6 +401,16 @@
 	</article>
 </section>
 
+<button
+	class="floating-create-button"
+	type="button"
+	onclick={() => newProjectDialog.showModal()}
+	aria-label="新建项目"
+	title="新建项目"
+>
+	<Plus size={23} />
+</button>
+
 <dialog class="new-project-modal" bind:this={newProjectDialog}>
 	<form method="post" action="?/createProject" use:enhance={enhanceCreate}>
 		<div class="modal-header">
@@ -464,39 +467,9 @@
 </dialog>
 
 <style>
-	.page-heading {
-		display: flex;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: 1.25rem;
-		margin-bottom: 1.125rem;
-	}
-
-	.eyebrow {
-		margin: 0 0 0.25rem;
-		font-size: 0.75rem !important;
-		font-weight: 800;
-		letter-spacing: 0.16em;
-		color: #2f6fed !important;
-	}
-
-	.page-heading h1 {
-		margin: 0;
-		font-size: clamp(1.5rem, 2vw, 1.875rem);
-		font-weight: 730;
-		letter-spacing: -0.035em;
-		color: #101828;
-	}
-
-	.page-heading p {
-		margin: 0.3125rem 0 0;
-		font-size: 1rem;
-		color: #667085;
-	}
-
 	.primary-action {
 		display: inline-flex;
-		min-height: 2.375rem;
+		min-height: 2.75rem;
 		align-items: center;
 		justify-content: center;
 		gap: 0.4375rem;
@@ -1415,19 +1388,6 @@
 	}
 
 	@media (max-width: 35rem) {
-		.page-heading {
-			align-items: flex-start;
-		}
-
-		.page-heading .primary-action {
-			padding: 0 0.625rem;
-			font-size: 0;
-		}
-
-		.page-heading .primary-action :global(svg) {
-			margin: 0;
-		}
-
 		.summary-strip > div {
 			padding: 0.625rem 0.75rem;
 		}

@@ -68,6 +68,7 @@ function mapProjects() {
 			name: project.name,
 			type: project.debtType,
 			owner: project.ownerName ?? '待分配',
+			ownerId: project.ownerId ?? null,
 			status: meta.label,
 			progress,
 			start,
@@ -92,7 +93,7 @@ function mapProjects() {
 	});
 }
 
-export const load: PageServerLoad = () => {
+export const load: PageServerLoad = ({ locals }) => {
 	const db = getDatabase();
 	const today = new Intl.DateTimeFormat('en-CA', {
 		timeZone: 'Asia/Shanghai',
@@ -109,7 +110,13 @@ export const load: PageServerLoad = () => {
 		activeSopDebtTypes: getActiveSopDebtTypeOptions(),
 		today,
 		upcoming,
-		attention: upcoming.find((event) => event.level === 'danger') ?? upcoming[0] ?? null
+		attention: upcoming.find((event) => event.level === 'danger') ?? upcoming[0] ?? null,
+		viewContext: {
+			role: locals.user?.role ?? 'reviewer',
+			personId: locals.user?.personId ?? null,
+			personName: locals.user?.personName ?? null,
+			defaultOwnProjects: locals.user?.role === 'handler'
+		}
 	};
 };
 

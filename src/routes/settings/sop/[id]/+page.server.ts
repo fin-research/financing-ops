@@ -7,6 +7,7 @@ import { getDatabase } from '$lib/server/db.js';
 const MAX_NODE_NAME = 120;
 const MIN_OFFSET = -3650;
 const MAX_OFFSET = 3650;
+const PROJECT_ROLES = new Set(['handler', 'reviewer']);
 
 function templateExists(id: string) {
 	return getDatabase().prepare('SELECT 1 FROM sop_templates WHERE id = ?').get(id);
@@ -22,6 +23,7 @@ function parseNode(data: FormData) {
 		return { error: '相对日期必须是 -3650 至 3650 之间的整数' } as const;
 	}
 	if (ownerRole.length > 80) return { error: '默认角色不能超过 80 个字符' } as const;
+	if (ownerRole && !PROJECT_ROLES.has(ownerRole)) return { error: '默认角色只能选择经办或复核' } as const;
 	return { name, description, ownerRole, offsetDays } as const;
 }
 
@@ -47,11 +49,10 @@ export const load: PageServerLoad = ({ params }) => {
 			default_offset_days AS offsetDays, default_owner_role AS ownerRole
 		FROM sop_nodes WHERE template_id = ? ORDER BY sort_order, created_at
 	`).all(params.id);
-	const roles = db.prepare(`
-		SELECT DISTINCT role FROM people
-		WHERE active = 1 AND role IS NOT NULL AND trim(role) != ''
-		ORDER BY role
-	`).all().map((row: any) => row.role);
+	const roles = [
+		{ code: 'handler', label: '经办' },
+		{ code: 'reviewer', label: '复核' }
+	];
 	return {
 		template: { ...template, isActive: Boolean(template.isActive) },
 		nodes,

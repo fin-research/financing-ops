@@ -12,6 +12,7 @@
 		UserRound,
 		UsersRound
 	} from '@lucide/svelte';
+	import { roleLabel } from '$lib/roles';
 
 	let { data, form } = $props();
 	let pendingAction = $state('');
@@ -61,17 +62,10 @@
 	<title>{data.project.name} · 项目详情</title>
 </svelte:head>
 
-<nav class="back-nav" aria-label="返回项目列表">
+<div class="back-nav detail-toolbar">
 	<a href="/projects"><ArrowLeft size={18} /> 返回项目进度</a>
-</nav>
-
-<section class="page-heading">
-	<div>
-		<p class="eyebrow">{data.project.code}</p>
-		<h1>{data.project.name}</h1>
-	</div>
 	<span class={`project-state ${data.project.status}`}>{statusLabels[data.project.status] ?? data.project.status}</span>
-</section>
+</div>
 
 {#if form?.message}
 	<div class:success={form.success} class="feedback" role={form.success ? 'status' : 'alert'} aria-live="polite">
@@ -220,7 +214,7 @@
 					<select name="ownerId" value={data.project.ownerId ?? ''}>
 						<option value="">待分配</option>
 						{#each data.people as person}
-							<option value={person.id}>{person.name} · {person.role}</option>
+							<option value={person.id}>{person.name} · {roleLabel(person.role)}</option>
 						{/each}
 					</select>
 				</label>
@@ -254,7 +248,7 @@
 						<span>{member.name.slice(0, 1)}</span>
 						<div>
 							<strong>{member.name}</strong>
-							<p>{member.responsibility} · {member.role ?? '未设置角色'}</p>
+							<p>{member.responsibility} · {roleLabel(member.role)}</p>
 							<small>{member.email ?? '未填写邮箱'}</small>
 						</div>
 					</li>
@@ -270,6 +264,12 @@
 	.back-nav {
 		margin-bottom: 1rem;
 	}
+	.detail-toolbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+	}
 	.back-nav a {
 		display: inline-flex;
 		min-height: 2.75rem;
@@ -278,30 +278,6 @@
 		font-size: 1rem;
 		font-weight: 600;
 		color: var(--blue);
-	}
-	.page-heading {
-		display: flex;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: 1rem;
-		margin-bottom: 1rem;
-	}
-	.eyebrow {
-		margin: 0 0 0.25rem;
-		font-size: 0.75rem;
-		font-weight: 800;
-		letter-spacing: 0.14em;
-		color: var(--blue);
-	}
-	h1 {
-		margin: 0;
-		font-size: clamp(1.5rem, 2vw, 1.875rem);
-		color: #101828;
-	}
-	.page-heading p {
-		margin: 0.35rem 0 0;
-		font-size: 1rem;
-		color: var(--muted);
 	}
 	.project-state {
 		padding: 0.5rem 0.75rem;
@@ -657,10 +633,6 @@
 		}
 	}
 	@media (max-width: 51.25rem) {
-		.page-heading {
-			align-items: flex-start;
-			flex-direction: column;
-		}
 		.summary-grid {
 			grid-template-columns: 1fr;
 		}

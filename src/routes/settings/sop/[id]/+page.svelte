@@ -30,21 +30,14 @@
 	<title>{data.template.name} · SOP 配置</title>
 </svelte:head>
 
-<nav class="back-nav" aria-label="返回设置页">
+<div class="back-nav detail-toolbar">
 	<a href="/settings"><ArrowLeft size={18} /> 返回 SOP 管理</a>
-</nav>
-
-<section class="page-heading">
-	<div>
-		<p class="eyebrow">SOP WORKFLOW</p>
-		<h1>{data.template.name}</h1>
-	</div>
 	<form method="post" action="?/toggleTemplate" use:enhance={enhanceForm('toggle')}>
 		<button class:active={data.template.isActive} class="toggle-button" type="submit" disabled={pendingAction === 'toggle'}>
 			{pendingAction === 'toggle' ? '更新中…' : data.template.isActive ? '已启用 · 点击停用' : '已停用 · 点击启用'}
 		</button>
 	</form>
-</section>
+</div>
 
 {#if form?.message}
 	<div class:success={form.success} class="feedback" role={form.success ? 'status' : 'alert'} aria-live="polite">
@@ -100,7 +93,10 @@
 							</label>
 							<label>
 								<span>默认角色</span>
-								<input name="ownerRole" maxlength="80" list="role-options" value={node.ownerRole ?? ''} placeholder="例如：资金管理" />
+								<select name="ownerRole" value={node.ownerRole ?? ''}>
+									<option value="">不指定</option>
+									{#each data.roles as role}<option value={role.code}>{role.label}</option>{/each}
+								</select>
 							</label>
 							<label class="node-description">
 								<span>节点说明</span>
@@ -137,7 +133,10 @@
 				</label>
 				<label>
 					<span>默认角色</span>
-					<input name="ownerRole" maxlength="80" list="role-options" placeholder="例如：资金管理" />
+					<select name="ownerRole">
+						<option value="">不指定</option>
+						{#each data.roles as role}<option value={role.code}>{role.label}</option>{/each}
+					</select>
 				</label>
 				<label>
 					<span>节点说明</span>
@@ -148,9 +147,6 @@
 					{pendingAction === 'add-node' ? '添加中…' : '添加节点'}
 				</button>
 			</form>
-			<datalist id="role-options">
-				{#each data.roles as role}<option value={role}></option>{/each}
-			</datalist>
 		</section>
 	</main>
 
@@ -197,6 +193,12 @@
 	.back-nav {
 		margin-bottom: 1rem;
 	}
+	.detail-toolbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+	}
 	.back-nav a {
 		display: inline-flex;
 		min-height: 2.75rem;
@@ -205,30 +207,6 @@
 		font-size: 1rem;
 		font-weight: 600;
 		color: var(--blue);
-	}
-	.page-heading {
-		display: flex;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: 1rem;
-		margin-bottom: 1rem;
-	}
-	.eyebrow {
-		margin: 0 0 0.25rem;
-		font-size: 0.75rem;
-		font-weight: 800;
-		letter-spacing: 0.14em;
-		color: var(--blue);
-	}
-	h1 {
-		margin: 0;
-		font-size: clamp(1.5rem, 2vw, 1.875rem);
-		color: #101828;
-	}
-	.page-heading p {
-		margin: 0.35rem 0 0;
-		font-size: 1rem;
-		color: var(--muted);
 	}
 	.toggle-button {
 		min-height: 2.75rem;
@@ -474,7 +452,7 @@
 		}
 	}
 	@media (max-width: 51.25rem) {
-		.page-heading {
+		.detail-toolbar {
 			align-items: flex-start;
 			flex-direction: column;
 		}

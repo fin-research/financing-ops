@@ -68,17 +68,6 @@
 </svelte:head>
 
 <div class="management-page workflow-page">
-	<section class="page-heading">
-		<div>
-			<p class="eyebrow">WORKFLOW CONFIGURATION</p>
-			<h1>SOP 管理</h1>
-		</div>
-		<button class="primary-action" type="button" onclick={() => sopDialog.showModal()}>
-			<Plus size={16} />
-			新建 SOP
-		</button>
-	</section>
-
 	{#if actionState.status !== 'idle'}
 		<div
 			class={`action-feedback ${actionState.status}`}
@@ -193,6 +182,16 @@
 			</div>
 		</article>
 	</section>
+
+	<button
+		class="floating-create-button"
+		type="button"
+		onclick={() => sopDialog.showModal()}
+		aria-label="新建 SOP"
+		title="新建 SOP"
+	>
+		<Plus size={23} />
+	</button>
 
 	<dialog class="config-modal" bind:this={reminderDialog}>
 		<form method="post" action="?/createReminder" use:enhance={enhanceAction('reminder', '提醒规则已保存')}>
@@ -397,6 +396,12 @@
 	@media (max-width: 64rem) {
 		.workflow-grid {
 			grid-template-columns: 1fr;
+		}
+	}
+
+	@media (max-width: 51.25rem) {
+		.add-rule {
+			margin-right: 4.75rem;
 		}
 	}
 </style>

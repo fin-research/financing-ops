@@ -7,7 +7,9 @@ declare global {
 			user: {
 				id: string;
 				username: string;
-				role: 'admin' | 'viewer';
+				role: 'admin' | 'handler' | 'reviewer';
+				personId: string;
+				personName: string;
 			} | null;
 		}
 		interface PageData {

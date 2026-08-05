@@ -1,5 +1,5 @@
 // @ts-nocheck
-const schemaVersion = 4;
+const schemaVersion = 5;
 
 function ensureColumn(db, table, column, definition) {
 	const columns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((item) => item.name));
@@ -30,6 +30,119 @@ function migrateAuditLogEntityTypes(db) {
 	`);
 }
 
+function migrateIdentityModel(db) {
+	const authSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'auth_users'").get()?.sql ?? '';
+	if (!authSchema || (authSchema.includes('person_id') && authSchema.includes("'handler'") && authSchema.includes("'reviewer'"))) return;
+
+	db.pragma('foreign_keys = OFF');
+	try {
+		db.transaction(() => {
+			db.exec(`
+				ALTER TABLE audit_logs RENAME TO audit_logs_identity_legacy;
+				ALTER TABLE auth_sessions RENAME TO auth_sessions_identity_legacy;
+				ALTER TABLE auth_users RENAME TO auth_users_identity_legacy;
+
+				UPDATE people
+				SET role = CASE
+					WHEN lower(trim(COALESCE(role, ''))) = 'admin' OR trim(COALESCE(role, '')) = '管理员' THEN 'admin'
+					WHEN lower(trim(COALESCE(role, ''))) IN ('reviewer', 'viewer')
+						OR trim(COALESCE(role, '')) IN ('复核', '风险合规') THEN 'reviewer'
+					ELSE 'handler'
+				END,
+				updated_at = CURRENT_TIMESTAMP;
+
+				UPDATE sop_nodes
+				SET default_owner_role = CASE
+					WHEN lower(trim(COALESCE(default_owner_role, ''))) IN ('reviewer', 'viewer')
+						OR trim(COALESCE(default_owner_role, '')) IN ('复核', '风险合规') THEN 'reviewer'
+					ELSE 'handler'
+				END,
+				updated_at = CURRENT_TIMESTAMP
+				WHERE default_owner_role IS NOT NULL AND trim(default_owner_role) != '';
+
+				INSERT INTO people (id, name, email, role, active)
+				SELECT 'person-auth-' || u.id, u.username, NULL,
+					CASE WHEN u.role = 'admin' THEN 'admin' ELSE 'reviewer' END,
+					u.active
+				FROM auth_users_identity_legacy u
+				WHERE NOT EXISTS (
+					SELECT 1 FROM people p WHERE lower(p.name) = lower(u.username)
+				);
+
+				CREATE TABLE auth_users (
+					id TEXT PRIMARY KEY,
+					person_id TEXT NOT NULL UNIQUE REFERENCES people(id) ON DELETE CASCADE,
+					username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+					password_hash TEXT NOT NULL,
+					role TEXT NOT NULL CHECK (role IN ('admin', 'handler', 'reviewer')),
+					active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+					failed_login_count INTEGER NOT NULL DEFAULT 0,
+					locked_until TEXT,
+					last_login_at TEXT,
+					created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+				);
+
+				INSERT INTO auth_users (
+					id, person_id, username, password_hash, role, active,
+					failed_login_count, locked_until, last_login_at, created_at, updated_at
+				)
+				SELECT u.id,
+					COALESCE(
+						(SELECT p.id FROM people p WHERE lower(p.name) = lower(u.username) ORDER BY p.created_at LIMIT 1),
+						'person-auth-' || u.id
+					),
+					u.username, u.password_hash,
+					CASE WHEN u.role = 'admin' THEN 'admin' ELSE 'reviewer' END,
+					u.active, u.failed_login_count, u.locked_until, u.last_login_at, u.created_at, u.updated_at
+				FROM auth_users_identity_legacy u;
+
+				UPDATE people
+				SET role = (
+					SELECT u.role FROM auth_users u WHERE u.person_id = people.id
+				),
+				active = (
+					SELECT u.active FROM auth_users u WHERE u.person_id = people.id
+				),
+				updated_at = CURRENT_TIMESTAMP
+				WHERE EXISTS (SELECT 1 FROM auth_users u WHERE u.person_id = people.id);
+
+				CREATE TABLE auth_sessions (
+					id TEXT PRIMARY KEY,
+					token_hash TEXT NOT NULL UNIQUE,
+					user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+					expires_at TEXT NOT NULL,
+					created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+				);
+				INSERT INTO auth_sessions SELECT * FROM auth_sessions_identity_legacy;
+
+				CREATE TABLE audit_logs (
+					id TEXT PRIMARY KEY,
+					actor_user_id TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
+					actor_username TEXT,
+					action TEXT NOT NULL,
+					entity_type TEXT NOT NULL CHECK (entity_type IN ('project', 'sop', 'person', 'reminder_rule', 'auth', 'finance_parameter', 'debt_limit')),
+					entity_id TEXT,
+					summary TEXT NOT NULL,
+					before_json TEXT,
+					after_json TEXT,
+					request_ip TEXT,
+					user_agent TEXT,
+					created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+				);
+				INSERT INTO audit_logs SELECT * FROM audit_logs_identity_legacy;
+
+				DROP TABLE audit_logs_identity_legacy;
+				DROP TABLE auth_sessions_identity_legacy;
+				DROP TABLE auth_users_identity_legacy;
+			`);
+		})();
+	} finally {
+		db.pragma('foreign_keys = ON');
+	}
+}
+
 export function createSchema(db) {
 	db.exec(`
 		PRAGMA foreign_keys = ON;
@@ -42,9 +155,10 @@ export function createSchema(db) {
 
 		CREATE TABLE IF NOT EXISTS auth_users (
 			id TEXT PRIMARY KEY,
+			person_id TEXT NOT NULL UNIQUE REFERENCES people(id) ON DELETE CASCADE,
 			username TEXT NOT NULL UNIQUE COLLATE NOCASE,
 			password_hash TEXT NOT NULL,
-			role TEXT NOT NULL CHECK (role IN ('admin', 'viewer')),
+			role TEXT NOT NULL CHECK (role IN ('admin', 'handler', 'reviewer')),
 			active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
 			failed_login_count INTEGER NOT NULL DEFAULT 0,
 			locked_until TEXT,
@@ -329,11 +443,13 @@ export function createSchema(db) {
 	ensureColumn(db, 'debt_balance_daily', 'source_file', 'TEXT');
 	ensureColumn(db, 'debts', 'category_level_1', 'TEXT');
 	ensureColumn(db, 'debts', 'category_level_2', 'TEXT');
+	migrateIdentityModel(db);
 	migrateAuditLogEntityTypes(db);
 	db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id, created_at);
 		CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at);
 		CREATE INDEX IF NOT EXISTS idx_debts_categories ON debts(category_level_1, category_level_2, status);
+		CREATE INDEX IF NOT EXISTS idx_auth_users_person ON auth_users(person_id);
 	`);
 
 	db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)').run(schemaVersion);

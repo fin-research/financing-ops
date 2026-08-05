@@ -1,70 +1,3 @@
-.dashboard-heading {
-	display: flex;
-	align-items: flex-end;
-	justify-content: space-between;
-	gap: 1rem;
-	margin-bottom: 1rem;
-}
-
-.dashboard-heading h1 {
-	margin: 0;
-	font-size: var(--font-title-lg);
-	letter-spacing: -0.035em;
-	color: #0f172a;
-}
-
-.dashboard-heading p {
-	margin: 0.25rem 0 0;
-	color: var(--muted);
-}
-
-.eyebrow {
-	font-size: 0.75rem !important;
-	font-weight: 800;
-	letter-spacing: 0.14em;
-	color: #2563eb !important;
-}
-
-.heading-actions {
-	display: flex;
-	gap: 0.625rem;
-}
-
-.primary-action,
-.secondary-action {
-	display: inline-flex;
-	min-height: 2.75rem;
-	align-items: center;
-	justify-content: center;
-	gap: 0.5rem;
-	padding: 0 0.875rem;
-	border: 1px solid #2563eb;
-	border-radius: 0.5rem;
-	font-weight: 650;
-	transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
-}
-
-.primary-action {
-	color: #fff;
-	background: #2563eb;
-	box-shadow: 0 0.25rem 0.625rem rgb(37 99 235 / 16%);
-}
-
-.primary-action:hover {
-	background: #1d4ed8;
-}
-
-.secondary-action {
-	color: #334155;
-	background: #fff;
-	border-color: #cbd5e1;
-}
-
-.secondary-action:hover {
-	border-color: #94a3b8;
-	background: #f8fafc;
-}
-
 .metric-grid {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -491,20 +424,16 @@
 	.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.overview-row,
 	.summary-row { grid-template-columns: 1fr; }
-	.dashboard-heading { align-items: stretch; flex-direction: column; }
 }
 
 @media (max-width: 51.25rem) {
 	.structure-body { grid-template-columns: 1fr; }
 	.metric-grid { grid-template-columns: 1fr; }
-	.heading-actions { width: 100%; }
-	.heading-actions > * { flex: 1; }
 	.dashboard-panel th,
 	.dashboard-panel td { padding: 0.5rem; font-size: 0.75rem; }
 }
 
 @media (max-width: 35rem) {
-	.heading-actions { flex-direction: column; }
 	.metric-card { grid-template-columns: 3.25rem minmax(0, 1fr); }
 	.metric-icon { width: 3.25rem; height: 3.25rem; }
 	.maturity-chart { grid-template-columns: 2.25rem minmax(0, 1fr); padding-inline: 0.5rem; }

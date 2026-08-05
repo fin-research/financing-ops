@@ -468,7 +468,7 @@ export function getProjectGanttData(filters = {}) {
 	const projects = db.prepare(`
 		SELECT p.id, p.code, p.name, p.debt_type AS debtType, p.status, p.planned_start_date AS plannedStartDate,
 			p.planned_issue_date AS plannedIssueDate, p.planned_maturity_date AS plannedMaturityDate, p.amount,
-			owner.name AS ownerName
+			p.owner_id AS ownerId, owner.name AS ownerName
 		FROM projects p LEFT JOIN people owner ON owner.id = p.owner_id
 		${clause} ORDER BY COALESCE(p.planned_start_date, p.planned_issue_date), p.name
 	`).all(params);
@@ -726,17 +726,26 @@ export function getDataImportData() {
 
 export function getPeopleAccessData() {
 	const db = getDatabase();
+	const people = db.prepare(`
+		SELECT p.id, p.name, p.email, p.role, p.active,
+			u.id AS accountId, u.username, u.active AS accountActive,
+			u.last_login_at AS lastLoginAt
+		FROM people p
+		LEFT JOIN auth_users u ON u.person_id = p.id
+		ORDER BY p.active DESC,
+			CASE p.role WHEN 'admin' THEN 1 WHEN 'handler' THEN 2 ELSE 3 END,
+			p.name
+	`).all().map((person) => ({
+		...person,
+		active: Boolean(person.active),
+		accountActive: person.accountId ? Boolean(person.accountActive) : null
+	}));
 	return {
-		people: db.prepare(`
-			SELECT id, name, email, role, active
-			FROM people
-			ORDER BY active DESC, name
-		`).all().map((person) => ({ ...person, active: Boolean(person.active) })),
-		accounts: db.prepare(`
-			SELECT id, username, role, active, last_login_at AS lastLoginAt
-			FROM auth_users
-			ORDER BY active DESC, username
-		`).all().map((account) => ({ ...account, active: Boolean(account.active) }))
+		people,
+		roleCounts: ['admin', 'handler', 'reviewer'].map((role) => ({
+			role,
+			count: people.filter((person) => person.role === role).length
+		}))
 	};
 }
 

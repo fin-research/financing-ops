@@ -21,13 +21,9 @@
 	<title>提醒发送历史 · 融资工作台</title>
 </svelte:head>
 
-<section class="page-heading">
-	<div>
-		<a class="back-link" href="/settings"><ArrowLeft size={16} /> 返回 SOP 管理</a>
-		<p class="eyebrow">REMINDER DELIVERY</p>
-		<h1>提醒发送历史</h1>
-	</div>
-</section>
+<nav class="back-nav" aria-label="返回 SOP 管理">
+	<a class="back-link" href="/settings"><ArrowLeft size={16} /> 返回 SOP 管理</a>
+</nav>
 
 <section class="summary-grid" aria-label="提醒发送汇总">
 	<article>
@@ -123,7 +119,7 @@
 </section>
 
 <style>
-	.page-heading {
+	.back-nav {
 		margin-bottom: 1.25rem;
 	}
 
@@ -132,30 +128,9 @@
 		min-height: 2.75rem;
 		align-items: center;
 		gap: 0.5rem;
-		margin-bottom: 0.5rem;
 		font-size: 0.75rem;
 		font-weight: 650;
 		color: #475467;
-	}
-
-	.eyebrow {
-		margin: 0 0 0.25rem;
-		font-size: 0.75rem;
-		font-weight: 800;
-		letter-spacing: 0.16em;
-		color: #2f6fed;
-	}
-
-	h1 {
-		margin: 0;
-		font-size: clamp(1.5rem, 2vw, 1.875rem);
-		color: #101828;
-	}
-
-	.page-heading p:last-child {
-		margin: 0.375rem 0 0;
-		font-size: 1rem;
-		color: #667085;
 	}
 
 	.summary-grid {

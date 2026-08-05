@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import {
 		Activity, CalendarClock, CircleDollarSign, Clock3, Gauge, Landmark,
-		Percent, RefreshCw, ShieldAlert, TrendingUp, Upload
+		Percent, ShieldAlert, TrendingUp
 	} from '@lucide/svelte';
 	import DebtPresetFilter from '$lib/DebtPresetFilter.svelte';
 	import './dashboard.css';
@@ -114,14 +114,6 @@
 </script>
 
 <svelte:head><title>仪表盘 · 融资工作台</title></svelte:head>
-
-<section class="page-heading dashboard-heading">
-	<div><p class="eyebrow">FINANCING DASHBOARD</p><h1>仪表盘</h1></div>
-	<div class="heading-actions">
-		<button class="secondary-action" type="button" onclick={() => goto(page.url, { invalidateAll: true })}><RefreshCw size={16} />刷新数据</button>
-		<a class="primary-action" href="/data"><Upload size={16} />导入 Excel</a>
-	</div>
-</section>
 
 <DebtPresetFilter options={dashboard.typeOptions} {presets} bind:preset bind:values={selectedTypes} note={`数据截至 ${dashboard.asOfDate}`} />
 

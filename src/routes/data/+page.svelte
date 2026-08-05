@@ -10,7 +10,6 @@
 		History,
 		Landmark,
 		LoaderCircle,
-		RefreshCw,
 		ShieldCheck,
 		Upload
 	} from '@lucide/svelte';
@@ -96,23 +95,6 @@
 </svelte:head>
 
 <div class="management-page data-page">
-	<section class="page-heading">
-		<div>
-			<p class="eyebrow">DATA ADMINISTRATION</p>
-			<h1>数据后台</h1>
-		</div>
-		<form method="post" action="?/reimport" use:enhance={enhanceImport('reimport')}>
-			<button class="primary-action" type="submit" disabled={actionState.status === 'pending'}>
-				{#if actionState.status === 'pending' && actionState.key === 'reimport'}
-					<LoaderCircle size={16} class="spin" />
-				{:else}
-					<RefreshCw size={16} />
-				{/if}
-				重新导入基准表
-			</button>
-		</form>
-	</section>
-
 	{#if actionState.status !== 'idle'}
 		<div
 			class={`action-feedback ${actionState.status}`}

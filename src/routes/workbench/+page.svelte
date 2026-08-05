@@ -53,10 +53,6 @@
 
 <svelte:head><title>工作台 · 融资工作台</title></svelte:head>
 
-<section class="page-heading workbench-heading">
-	<div><p class="eyebrow">FINANCING OPERATIONS</p><h1>工作台</h1></div>
-</section>
-
 <DebtPresetFilter options={workbench.typeOptions} {presets} bind:preset bind:values={selectedTypes} note={`台账截至 ${workbench.asOfDate}`} />
 
 {#if workbench.financeParameterReminder}

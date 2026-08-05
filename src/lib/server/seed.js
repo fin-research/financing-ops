@@ -1,9 +1,9 @@
 // @ts-nocheck
 
 const DEFAULT_PEOPLE = [
-	['person-finance', '陈语桐', 'yutong.chen@example.com', '资金管理'],
-	['person-business', '王岚', 'lan.wang@example.com', '业务部门'],
-	['person-risk', '周明远', 'mingyuan.zhou@example.com', '风险合规']
+	['person-finance', '陈语桐', 'yutong.chen@example.com', 'handler'],
+	['person-business', '王岚', 'lan.wang@example.com', 'handler'],
+	['person-risk', '周明远', 'mingyuan.zhou@example.com', 'reviewer']
 ];
 
 const DEFAULT_SOPS = [
@@ -13,11 +13,11 @@ const DEFAULT_SOPS = [
 		debtType: '短期融资券',
 		description: '适用于短期融资券的立项、申报、发行和存续期管理。',
 		nodes: [
-			['立项与方案确认', -45, '资金管理'],
-			['材料准备与内部审批', -30, '业务部门'],
-			['监管申报', -20, '风险合规'],
-			['簿记发行', 0, '资金管理'],
-			['发行后归档', 5, '资金管理']
+			['立项与方案确认', -45, 'handler'],
+			['材料准备与内部审批', -30, 'handler'],
+			['监管申报', -20, 'reviewer'],
+			['簿记发行', 0, 'handler'],
+			['发行后归档', 5, 'handler']
 		]
 	},
 	{
@@ -26,11 +26,11 @@ const DEFAULT_SOPS = [
 		debtType: '公司债',
 		description: '适用于公司债、小公募及私募债的标准发行流程。',
 		nodes: [
-			['融资方案确认', -75, '资金管理'],
-			['中介机构协调', -60, '业务部门'],
-			['申报材料定稿', -35, '风险合规'],
-			['发行窗口确认', -10, '资金管理'],
-			['簿记与缴款', 0, '资金管理']
+			['融资方案确认', -75, 'handler'],
+			['中介机构协调', -60, 'handler'],
+			['申报材料定稿', -35, 'reviewer'],
+			['发行窗口确认', -10, 'handler'],
+			['簿记与缴款', 0, 'handler']
 		]
 	}
 ];

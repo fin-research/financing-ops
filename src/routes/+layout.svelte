@@ -12,6 +12,7 @@
 		ShieldCheck,
 		Workflow
 	} from '@lucide/svelte';
+	import { roleLabel } from '$lib/roles';
 
 	let { children, data } = $props();
 
@@ -33,6 +34,19 @@
 		if (href === '/') return page.url.pathname === '/';
 		if (href === '/workbench' && page.url.pathname.startsWith('/debts/')) return true;
 		return page.url.pathname === href || page.url.pathname.startsWith(`${href}/`);
+	};
+
+	const currentPageTitle = () => {
+		const pathname = page.url.pathname;
+		if (/^\/projects\/[^/]+$/.test(pathname)) {
+			return String((page.data as any)?.project?.name ?? '项目详情');
+		}
+		if (/^\/settings\/sop\/[^/]+$/.test(pathname)) {
+			return String((page.data as any)?.template?.name ?? 'SOP 配置');
+		}
+		if (pathname === '/settings/reminders') return '提醒发送历史';
+		if (pathname.startsWith('/debts/')) return '负债详情';
+		return navItems.find((item) => isActive(item.href))?.label ?? '工作台';
 	};
 </script>
 
@@ -87,14 +101,15 @@
 		<header class="topbar">
 			<div class="mobile-brand">
 				<span class="brand-mark"><BarChart3 size={18} /></span>
-				<strong>融资工作台</strong>
 			</div>
 			<div class="breadcrumb">
-				<span>资金运营中心</span>
-				<span class="breadcrumb-divider">/</span>
-				<strong>
-					{navItems.find((item) => isActive(item.href))?.label ?? '工作台'}
-				</strong>
+				<strong>{currentPageTitle()}</strong>
+				<span
+					class={`role-chip role-${data.user.role}`}
+					aria-label={`当前角色：${roleLabel(data.user.role)}`}
+				>
+					<span>{roleLabel(data.user.role)}</span>
+				</span>
 			</div>
 			<div class="top-actions">
 				<a class="today-pill" href="/workbench">
@@ -106,11 +121,8 @@
 					<span class="notification-dot"></span>
 				</button>
 				<div class="profile-button" aria-label="当前登录账号">
-					<span class="avatar">{data.user.username.slice(0, 1).toUpperCase()}</span>
-					<span class="profile-copy">
-						<strong>{data.user.username}</strong>
-						<small>{data.user.role === 'admin' ? '管理员' : '只读用户'}</small>
-					</span>
+					<span class="avatar">{data.user.personName.slice(0, 1).toUpperCase()}</span>
+					<strong class="profile-name">{data.user.personName}</strong>
 				</div>
 				<form method="POST" action="/logout">
 					<button class="icon-button" type="submit" aria-label="退出登录" title="退出登录">

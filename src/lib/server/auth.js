@@ -6,7 +6,8 @@ import { getDatabase } from './db.js';
 export const SESSION_COOKIE = 'financing_session';
 export const AUTH_ROLES = Object.freeze({
 	admin: 'admin',
-	viewer: 'viewer'
+	handler: 'handler',
+	reviewer: 'reviewer'
 });
 
 const scrypt = promisify(scryptCallback);
@@ -63,23 +64,50 @@ export async function ensureAdminUser(config = runtimeConfig) {
 
 	const db = getDatabase();
 	const existing = db.prepare(`
-		SELECT id, password_hash AS passwordHash
+		SELECT id, person_id AS personId, password_hash AS passwordHash
 		FROM auth_users WHERE username = ? COLLATE NOCASE
 	`).get(username);
 	if (!existing) {
 		const passwordHash = await hashPassword(password);
-		db.prepare(`
-			INSERT INTO auth_users (id, username, password_hash, role, active)
-			VALUES (?, ?, ?, 'admin', 1)
-		`).run(randomUUID(), username, passwordHash);
+		db.transaction(() => {
+			const matchedPerson = db.prepare('SELECT id FROM people WHERE lower(name) = lower(?) LIMIT 1').get(username);
+			const personId = matchedPerson?.id ?? randomUUID();
+			if (!matchedPerson) {
+				db.prepare(`
+					INSERT INTO people (id, name, role, active) VALUES (?, ?, 'admin', 1)
+				`).run(personId, username);
+			} else {
+				db.prepare(`
+					UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+				`).run(personId);
+			}
+			db.prepare(`
+				INSERT INTO auth_users (id, person_id, username, password_hash, role, active)
+				VALUES (?, ?, ?, ?, 'admin', 1)
+			`).run(randomUUID(), personId, username, passwordHash);
+		})();
 	} else if (!(await verifyPassword(password, existing.passwordHash))) {
 		const passwordHash = await hashPassword(password);
-		db.prepare(`
-			UPDATE auth_users
-			SET password_hash = ?, role = 'admin', active = 1,
-				failed_login_count = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?
-		`).run(passwordHash, existing.id);
+		db.transaction(() => {
+			db.prepare(`
+				UPDATE auth_users
+				SET password_hash = ?, role = 'admin', active = 1,
+					failed_login_count = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`).run(passwordHash, existing.id);
+			db.prepare(`
+				UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+			`).run(existing.personId);
+		})();
+	} else {
+		db.transaction(() => {
+			db.prepare(`
+				UPDATE auth_users SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+			`).run(existing.id);
+			db.prepare(`
+				UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+			`).run(existing.personId);
+		})();
 	}
 	adminReady = true;
 }
@@ -126,7 +154,11 @@ export async function authenticate(username, password) {
 			last_login_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`).run(user.id);
-	return { id: user.id, username: user.username, role: user.role };
+	const identity = db.prepare(`
+		SELECT u.id, u.username, u.role, u.person_id AS personId, p.name AS personName
+		FROM auth_users u JOIN people p ON p.id = u.person_id WHERE u.id = ?
+	`).get(user.id);
+	return identity ?? null;
 }
 
 export function createSession(userId) {
@@ -145,10 +177,11 @@ export function getSessionUser(token) {
 	const db = getDatabase();
 	db.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(new Date().toISOString());
 	const user = db.prepare(`
-		SELECT u.id, u.username, u.role
+		SELECT u.id, u.username, u.role, u.person_id AS personId, p.name AS personName
 		FROM auth_sessions s
 		JOIN auth_users u ON u.id = s.user_id
-		WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1
+		JOIN people p ON p.id = u.person_id
+		WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1 AND p.active = 1
 	`).get(sha256(token), new Date().toISOString());
 	if (!user) return null;
 	db.prepare(`
