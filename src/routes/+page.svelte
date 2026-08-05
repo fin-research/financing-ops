@@ -87,9 +87,6 @@
 	]);
 	const compositionTotal = $derived(dashboard.composition.reduce((sum: number, item: any) => sum + item.amountYi, 0));
 	const maxMaturity = $derived(Math.max(1, ...dashboard.maturityDistribution.map((item: any) => item.amountYi)));
-	const dueTotals = $derived(dashboard.dueRows.reduce((result: any, row: any) => ({
-		principal: result.principal + (row.principalYi ?? 0), interest: result.interest + row.interestYi
-	}), { principal: 0, interest: 0 }));
 </script>
 
 <svelte:head><title>仪表盘 · 融资工作台</title></svelte:head>
@@ -151,37 +148,18 @@
 	</article>
 </section>
 
-<section class="detail-layout">
-	<article class="dashboard-panel due-panel">
-		<header><div><h2>未来30天到期负债</h2><p>到期本金与付息事件逐笔列示</p></div><span>{dashboard.dueRows.length}笔</span></header>
-		<table>
-			<thead><tr><th>品种/负债</th><th>对手方</th><th>本金</th><th>利息</th><th>利率</th><th>到期日</th></tr></thead>
-			<tbody>
-				{#each dashboard.dueRows as row}
-					<tr>
-						<td>{#if row.id || row.debtId}<a href={`/debts/${row.debtId ?? row.id}`}>{row.instrumentName}</a>{:else}{row.instrumentName}{/if}<small>{row.debtType === '收益凭证' ? '收益凭证' : row.debtType}</small></td>
-						<td>{row.counterparty}</td><td>{row.principalYi == null ? '-' : row.principalYi.toFixed(2)}</td><td>{row.interestYi.toFixed(2)}</td><td>{row.annualRate == null ? '-' : `${(row.annualRate * 100).toFixed(2)}%`}</td><td>{row.dueDate.replaceAll('-', '/')}</td>
-					</tr>
-				{/each}
-				{#if dashboard.dueRows.length === 0}<tr><td colspan="6" class="empty-cell">当前筛选口径下暂无30天内到期负债</td></tr>{/if}
-			</tbody>
-			<tfoot><tr><th>合计</th><th>-</th><th>{dueTotals.principal.toFixed(2)}</th><th>{dueTotals.interest.toFixed(2)}</th><th>加权见上方</th><th>-</th></tr></tfoot>
-		</table>
+<section class="summary-row">
+	<article class="dashboard-panel project-panel">
+		<header><div><h2>推进中的融资项目</h2><p>规划、执行与风险状态项目</p></div></header>
+		<table><thead><tr><th>融资方式</th><th>融资金额</th><th>期限</th><th>融资成本</th><th>落地时间</th></tr></thead><tbody>
+			{#each dashboard.projects as project}<tr><td><a href={`/projects/${project.id}`}>{project.debtType}</a><small>{project.name}</small></td><td>{project.amountYi.toFixed(2)}</td><td>{project.tenor}</td><td>{project.cost}</td><td>{project.landingDate ? `${project.landingDate.replaceAll('-', '/')}簿记` : '待定'}</td></tr>{/each}
+		</tbody><tfoot><tr><th>合计</th><th>{dashboard.metrics.projectAmountYi.toFixed(2)}</th><th colspan="3"></th></tr></tfoot></table>
 	</article>
 
-	<div class="side-detail-stack">
-		<article class="dashboard-panel project-panel">
-			<header><div><h2>推进中的融资项目</h2><p>规划、执行与风险状态项目</p></div></header>
-			<table><thead><tr><th>融资方式</th><th>融资金额</th><th>期限</th><th>融资成本</th><th>落地时间</th></tr></thead><tbody>
-				{#each dashboard.projects as project}<tr><td><a href={`/projects/${project.id}`}>{project.debtType}</a><small>{project.name}</small></td><td>{project.amountYi.toFixed(2)}</td><td>{project.tenor}</td><td>{project.cost}</td><td>{project.landingDate ? `${project.landingDate.replaceAll('-', '/')}簿记` : '待定'}</td></tr>{/each}
-			</tbody><tfoot><tr><th>合计</th><th>{dashboard.metrics.projectAmountYi.toFixed(2)}</th><th colspan="3"></th></tr></tfoot></table>
-		</article>
-
-		<article class="dashboard-panel issuance-panel">
-			<header><div><h2>月度发行统计</h2><p>按起息日归属发行月份，亿元</p></div></header>
-			<table><thead><tr><th>品种</th><th>{dashboard.monthlyIssuance.currentMonth.replace('-', '年')}月</th><th>{dashboard.monthlyIssuance.comparisonMonth.replace('-', '年')}月</th></tr></thead><tbody>
-				{#each dashboard.monthlyIssuance.rows as row}<tr><td>{row.label}</td><td>{row.currentYi.toFixed(2)}</td><td>{row.comparisonYi.toFixed(2)}</td></tr>{/each}
-			</tbody></table>
-		</article>
-	</div>
+	<article class="dashboard-panel issuance-panel">
+		<header><div><h2>月度发行统计</h2><p>按起息日归属发行月份，亿元</p></div></header>
+		<table><thead><tr><th>品种</th><th>{dashboard.monthlyIssuance.currentMonth.replace('-', '年')}月</th><th>{dashboard.monthlyIssuance.comparisonMonth.replace('-', '年')}月</th></tr></thead><tbody>
+			{#each dashboard.monthlyIssuance.rows as row}<tr><td>{row.label}</td><td>{row.currentYi.toFixed(2)}</td><td>{row.comparisonYi.toFixed(2)}</td></tr>{/each}
+		</tbody></table>
+	</article>
 </section>

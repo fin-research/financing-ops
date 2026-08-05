@@ -457,7 +457,6 @@ export function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 		parameters,
 		composition,
 		maturityDistribution: maturityMonths.map((month) => ({ month, amountYi: maturityMap.get(month) ?? 0 })),
-		dueRows,
 		projects,
 		monthlyIssuance
 	};
