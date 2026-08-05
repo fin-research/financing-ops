@@ -123,7 +123,7 @@ pnpm dev
 
 - `pnpm check`：0 error、0 warning。
 - `pnpm build`：成功。
-- 核心路由 `/`、`/workbench`、`/debts/[id]`、`/projects`、`/settings`、`/data`、`/people` 可访问。
+- 核心路由 `/`、`/workbench`、`/debts/[id]`、`/projects`、`/sop`、`/settings`、`/data`、`/people` 可访问。
 - Excel 导入能够重复执行且汇总保持一致。
 - 新增表单具有失败反馈，不得静默失败。
 - 新增可见文字满足 `1rem / 0.75rem` 字号规则。
@@ -136,7 +136,7 @@ pnpm dev
 ### P1 — 质量保障
 
 - [ ] 增加 Excel 解析、余额断言、提醒频率和项目建档的单元测试。
-- [ ] 增加 `/`、`/projects`、`/settings`、`/data`、`/people` 核心路由与关键表单的端到端测试。
+- [ ] 增加 `/`、`/projects`、`/sop`、`/settings`、`/data`、`/people` 核心路由与关键表单的端到端测试。
 - [ ] 补充大字号/200% 缩放模式的视觉回归；375px、768px、1024px 和 1440px 已于 2026-08-04 检查。
 - [ ] 复核字号放大后的 Dashboard、甘特图和设置页信息密度，必要时通过折叠、分组或横向局部滚动优化，而不是缩小文字。
 

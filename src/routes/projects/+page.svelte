@@ -358,49 +358,6 @@
 	</div>
 </section>
 
-<section class="below-grid">
-	<article class="insight-card">
-		<div class="insight-top">
-			<span class="summary-icon orange"><Flag size={17} /></span>
-			<div>
-				<h2>待办与预警</h2>
-				<p>从原仪表盘迁入，由节点完成度与截止时间判断</p>
-			</div>
-		</div>
-		{#if data.attention}
-			<a href={data.attention.href}>
-				<div>
-					<strong>{data.attention.title}</strong>
-					<p>{data.attention.meta}</p>
-				</div>
-				<span>{data.attention.date}</span>
-			</a>
-		{:else}
-			<p class="empty-insight">未来 7 天暂无需要关注的事件</p>
-		{/if}
-	</article>
-	<article class="insight-card">
-		<div class="insight-top">
-			<span class="summary-icon blue"><CalendarDays size={17} /></span>
-			<div>
-				<h2>未来 7 天</h2>
-				<p>共 {data.upcoming.length} 个任务、付息或到期事件</p>
-			</div>
-		</div>
-		<div class="upcoming-list">
-			{#each data.upcoming.slice(0, 5) as event}
-				<a href={event.href}>
-					<i class={event.tone}></i>
-					{event.shortTitle}
-					<small>{event.date}</small>
-				</a>
-			{:else}
-				<p class="empty-insight">未来 7 天暂无事件</p>
-			{/each}
-		</div>
-	</article>
-</section>
-
 <button
 	class="floating-create-button"
 	type="button"
@@ -1057,124 +1014,6 @@
 		color: #2f6fed;
 	}
 
-	.below-grid {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 0.75rem;
-	}
-
-	.insight-card {
-		border: 1px solid #e4e7ec;
-		border-radius: 0.625rem;
-		background: #fff;
-		box-shadow: 0 1px 2px rgb(16 24 40 / 4%);
-	}
-
-	.insight-top {
-		display: flex;
-		align-items: center;
-		gap: 0.625rem;
-		padding: 0.8125rem 0.9375rem;
-		border-bottom: 1px solid #eaecf0;
-	}
-
-	.insight-top h2 {
-		margin: 0;
-		font-size: 0.75rem;
-		color: #1d2939;
-	}
-
-	.insight-top p {
-		margin: 0.1875rem 0 0;
-		font-size: 0.75rem;
-		color: #98a2b3;
-	}
-
-	.insight-card > a {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-		padding: 0.8125rem 0.9375rem;
-	}
-
-	.insight-card > a strong {
-		font-size: 0.75rem;
-		color: #344054;
-	}
-
-	.insight-card > a p {
-		margin: 0.1875rem 0 0;
-		font-size: 0.75rem;
-		color: #98a2b3;
-	}
-
-	.insight-card > a > span {
-		padding: 0.25rem 0.4375rem;
-		border-radius: 0.3125rem;
-		font-size: 0.75rem;
-		font-weight: 700;
-		color: #b42318;
-		background: #fef3f2;
-	}
-
-	.upcoming-list {
-		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: 0.5rem;
-		padding: 0.875rem 0.9375rem;
-	}
-
-	.upcoming-list > a {
-		display: grid;
-		grid-template-columns: auto 1fr;
-		align-items: center;
-		gap: 0.3125rem;
-		font-size: 0.75rem;
-		color: #475467;
-		transition: color 180ms ease;
-	}
-
-	.upcoming-list > a:hover {
-		color: #175cd3;
-	}
-
-	.upcoming-list i {
-		width: 0.375rem;
-		height: 0.375rem;
-		border-radius: 2px;
-		background: #2f6fed;
-	}
-
-	.upcoming-list i.teal {
-		background: #0e9384;
-	}
-
-	.upcoming-list i.violet {
-		background: #6941c6;
-	}
-
-	.upcoming-list i.red {
-		background: #d92d20;
-	}
-
-	.upcoming-list i.orange {
-		background: #dc6803;
-	}
-
-	.upcoming-list small {
-		grid-column: 2;
-		font-size: 0.75rem;
-		color: #98a2b3;
-	}
-
-	.empty-insight {
-		margin: 0;
-		padding: 0.875rem 0.9375rem;
-		font-size: 1rem;
-		color: #667085;
-	}
-
 	.new-project-modal {
 		width: min(35rem, calc(100vw - 2rem));
 		padding: 0;
@@ -1382,9 +1221,6 @@
 			display: none;
 		}
 
-		.below-grid {
-			grid-template-columns: 1fr;
-		}
 	}
 
 	@media (max-width: 35rem) {
@@ -1399,10 +1235,6 @@
 
 		.select-group :global(.multi-filter:last-child) {
 			grid-column: 1 / -1;
-		}
-
-		.upcoming-list {
-			grid-template-columns: 1fr;
 		}
 
 		.form-grid {

@@ -10,6 +10,7 @@ declare global {
 				role: 'admin' | 'handler' | 'reviewer';
 				personId: string;
 				personName: string;
+				avatarDataUrl: string | null;
 			} | null;
 		}
 		interface PageData {

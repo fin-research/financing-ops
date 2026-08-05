@@ -31,7 +31,7 @@
 </svelte:head>
 
 <div class="back-nav detail-toolbar">
-	<a href="/settings"><ArrowLeft size={18} /> 返回 SOP 管理</a>
+	<a href="/sop"><ArrowLeft size={18} /> 返回 SOP 管理</a>
 	<form method="post" action="?/toggleTemplate" use:enhance={enhanceForm('toggle')}>
 		<button class:active={data.template.isActive} class="toggle-button" type="submit" disabled={pendingAction === 'toggle'}>
 			{pendingAction === 'toggle' ? '更新中…' : data.template.isActive ? '已启用 · 点击停用' : '已停用 · 点击启用'}

@@ -15,6 +15,8 @@
 	import { roleLabel } from '$lib/roles';
 
 	let { children, data } = $props();
+	let remindersOpen = $state(false);
+	let reminderMenu = $state<HTMLDivElement>();
 
 	const workspaceItems = [
 		{ href: '/', label: '仪表盘', mobileLabel: '仪表盘', icon: LayoutDashboard },
@@ -23,7 +25,7 @@
 	];
 
 	const managementItems = [
-		{ href: '/settings', label: 'SOP 管理', mobileLabel: 'SOP', icon: Workflow },
+		{ href: '/sop', label: 'SOP 管理', mobileLabel: 'SOP', icon: Workflow },
 		{ href: '/data', label: '数据后台', mobileLabel: '数据', icon: FileSpreadsheet },
 		{ href: '/people', label: '人员与权限', mobileLabel: '人员', icon: ShieldCheck }
 	];
@@ -41,14 +43,27 @@
 		if (/^\/projects\/[^/]+$/.test(pathname)) {
 			return String((page.data as any)?.project?.name ?? '项目详情');
 		}
-		if (/^\/settings\/sop\/[^/]+$/.test(pathname)) {
+		if (/^\/sop\/[^/]+$/.test(pathname) && pathname !== '/sop/reminders') {
 			return String((page.data as any)?.template?.name ?? 'SOP 配置');
 		}
-		if (pathname === '/settings/reminders') return '提醒发送历史';
+		if (pathname === '/settings') return '个人设置';
+		if (pathname === '/sop/reminders') return '提醒发送历史';
 		if (pathname.startsWith('/debts/')) return '负债详情';
 		return navItems.find((item) => isActive(item.href))?.label ?? '工作台';
 	};
+
+	const closeReminderMenu = (event: MouseEvent) => {
+		if (remindersOpen && reminderMenu && !reminderMenu.contains(event.target as Node)) {
+			remindersOpen = false;
+		}
+	};
+
+	const handleReminderKey = (event: KeyboardEvent) => {
+		if (event.key === 'Escape') remindersOpen = false;
+	};
 </script>
+
+<svelte:window onclick={closeReminderMenu} onkeydown={handleReminderKey} />
 
 <svelte:head>
 	<title>融资工作台</title>
@@ -112,18 +127,58 @@
 				</span>
 			</div>
 			<div class="top-actions">
-				<a class="today-pill" href="/workbench">
-					<CalendarDays size={15} />
-					<span>{data.today}</span>
-				</a>
-				<button class="icon-button" type="button" aria-label="查看提醒">
-					<Bell size={18} />
-					<span class="notification-dot"></span>
-				</button>
-				<div class="profile-button" aria-label="当前登录账号">
-					<span class="avatar">{data.user.personName.slice(0, 1).toUpperCase()}</span>
-					<strong class="profile-name">{data.user.personName}</strong>
+				<div class="notification-menu" bind:this={reminderMenu}>
+					<button
+						class="reminder-button"
+						type="button"
+						aria-label={`查看提醒，共 ${data.reminders.total} 条`}
+						aria-expanded={remindersOpen}
+						aria-controls="topbar-reminder-list"
+						onclick={() => (remindersOpen = !remindersOpen)}
+					>
+						<Bell size={18} />
+						<span>提醒</span>
+						{#if data.reminders.total > 0}
+							<span class="notification-count" aria-hidden="true">
+								{data.reminders.total > 99 ? '99+' : data.reminders.total}
+							</span>
+						{/if}
+					</button>
+					{#if remindersOpen}
+						<section class="notification-popover" id="topbar-reminder-list" aria-label="待办与预警">
+							<header>
+								<div>
+									<strong>待办与预警</strong>
+									<span>未来 7 天及已逾期节点</span>
+								</div>
+								<span>{data.reminders.total} 条</span>
+							</header>
+							<div class="notification-list">
+								{#each data.reminders.items as reminder}
+									<a href={reminder.href} onclick={() => (remindersOpen = false)}>
+										<span class={`reminder-level ${reminder.level}`} aria-hidden="true"></span>
+										<span class="reminder-copy">
+											<strong>{reminder.projectName}</strong>
+											<span>{reminder.taskName}</span>
+											<small>{reminder.debtType} · {reminder.assigneeName ? `负责人：${reminder.assigneeName}` : '待分配'}</small>
+										</span>
+										<span class={`reminder-due ${reminder.level}`}>{reminder.dueLabel}</span>
+									</a>
+								{:else}
+									<p class="notification-empty">当前没有需要处理的项目节点</p>
+								{/each}
+							</div>
+						</section>
+					{/if}
 				</div>
+				<a class="profile-button" href="/settings" aria-label="打开个人设置">
+					{#if data.user.avatarDataUrl}
+						<img class="avatar" src={data.user.avatarDataUrl} alt="" />
+					{:else}
+						<span class="avatar">{data.user.personName.slice(0, 1).toUpperCase()}</span>
+					{/if}
+					<strong class="profile-name">{data.user.personName}</strong>
+				</a>
 				<form method="POST" action="/logout">
 					<button class="icon-button" type="submit" aria-label="退出登录" title="退出登录">
 						<LogOut size={18} />

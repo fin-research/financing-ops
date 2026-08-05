@@ -63,8 +63,27 @@ export async function ensureAdminUser(config = runtimeConfig) {
 	}
 
 	const db = getDatabase();
+	const existingAdmin = db.prepare(`
+		SELECT id, person_id AS personId
+		FROM auth_users
+		WHERE role = 'admin'
+		ORDER BY active DESC, created_at
+		LIMIT 1
+	`).get();
+	if (existingAdmin) {
+		db.transaction(() => {
+			db.prepare(`
+				UPDATE auth_users SET active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+			`).run(existingAdmin.id);
+			db.prepare(`
+				UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+			`).run(existingAdmin.personId);
+		})();
+		adminReady = true;
+		return;
+	}
 	const existing = db.prepare(`
-		SELECT id, person_id AS personId, password_hash AS passwordHash
+		SELECT id, person_id AS personId
 		FROM auth_users WHERE username = ? COLLATE NOCASE
 	`).get(username);
 	if (!existing) {
@@ -85,19 +104,6 @@ export async function ensureAdminUser(config = runtimeConfig) {
 				INSERT INTO auth_users (id, person_id, username, password_hash, role, active)
 				VALUES (?, ?, ?, ?, 'admin', 1)
 			`).run(randomUUID(), personId, username, passwordHash);
-		})();
-	} else if (!(await verifyPassword(password, existing.passwordHash))) {
-		const passwordHash = await hashPassword(password);
-		db.transaction(() => {
-			db.prepare(`
-				UPDATE auth_users
-				SET password_hash = ?, role = 'admin', active = 1,
-					failed_login_count = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
-				WHERE id = ?
-			`).run(passwordHash, existing.id);
-			db.prepare(`
-				UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-			`).run(existing.personId);
 		})();
 	} else {
 		db.transaction(() => {
@@ -155,7 +161,8 @@ export async function authenticate(username, password) {
 		WHERE id = ?
 	`).run(user.id);
 	const identity = db.prepare(`
-		SELECT u.id, u.username, u.role, u.person_id AS personId, p.name AS personName
+		SELECT u.id, u.username, u.role, u.person_id AS personId, p.name AS personName,
+			u.avatar_data_url AS avatarDataUrl
 		FROM auth_users u JOIN people p ON p.id = u.person_id WHERE u.id = ?
 	`).get(user.id);
 	return identity ?? null;
@@ -177,7 +184,8 @@ export function getSessionUser(token) {
 	const db = getDatabase();
 	db.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(new Date().toISOString());
 	const user = db.prepare(`
-		SELECT u.id, u.username, u.role, u.person_id AS personId, p.name AS personName
+		SELECT u.id, u.username, u.role, u.person_id AS personId, p.name AS personName,
+			u.avatar_data_url AS avatarDataUrl
 		FROM auth_sessions s
 		JOIN auth_users u ON u.id = s.user_id
 		JOIN people p ON p.id = u.person_id
@@ -193,6 +201,14 @@ export function getSessionUser(token) {
 export function deleteSession(token) {
 	if (!token) return;
 	getDatabase().prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(sha256(token));
+}
+
+export function deleteOtherSessions(userId, currentToken) {
+	if (!userId || !currentToken) return;
+	getDatabase().prepare(`
+		DELETE FROM auth_sessions
+		WHERE user_id = ? AND token_hash != ?
+	`).run(userId, sha256(currentToken));
 }
 
 export function sessionCookieOptions(expires, secure = false) {

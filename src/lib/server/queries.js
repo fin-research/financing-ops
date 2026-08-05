@@ -778,6 +778,74 @@ export function getActiveSopDebtTypeOptions() {
 	return getActiveSopEventDebtTypes(getDatabase());
 }
 
+/**
+ * @param {{ today: string, toDate: string, personId?: string | null, ownOnly?: boolean, limit?: number }} options
+ */
+export function getTopbarReminders({ today, toDate, personId = null, ownOnly = false, limit = 10 }) {
+	const db = getDatabase();
+	const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 30);
+	const ownClause = ownOnly && personId
+		? 'AND (pt.assignee_id = @personId OR p.owner_id = @personId)'
+		: '';
+	const rows = db.prepare(`
+		SELECT pt.id, pt.name AS taskName, pt.status, pt.due_date AS dueDate,
+			p.id AS projectId, p.name AS projectName, p.debt_type AS debtType,
+			assignee.name AS assigneeName,
+			COUNT(*) OVER() AS totalCount
+		FROM project_tasks pt
+		JOIN projects p ON p.id = pt.project_id
+		JOIN sop_templates st ON st.id = p.sop_template_id AND st.is_active = 1
+		LEFT JOIN people assignee ON assignee.id = pt.assignee_id
+		WHERE pt.status != 'completed'
+			AND p.status NOT IN ('completed', 'cancelled')
+			AND pt.due_date IS NOT NULL
+			AND pt.due_date <= @toDate
+			${ownClause}
+		ORDER BY
+			CASE
+				WHEN pt.status = 'blocked' THEN 0
+				WHEN pt.due_date < @today THEN 1
+				WHEN pt.due_date = @today THEN 2
+				ELSE 3
+			END,
+			pt.due_date, p.name, pt.sort_order
+		LIMIT @limit
+	`).all({ today, toDate, personId, limit: safeLimit });
+
+	const items = rows.map((item) => {
+		const dueDays = Math.round(
+			(Date.parse(`${item.dueDate}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000
+		);
+		const isDanger = item.status === 'blocked' || dueDays < 0;
+		const dueLabel = item.status === 'blocked'
+			? '节点阻塞'
+			: dueDays < 0
+				? `逾期 ${Math.abs(dueDays)} 天`
+				: dueDays === 0
+					? '今天到期'
+					: dueDays === 1
+						? '明天到期'
+						: `${dueDays} 天后到期`;
+		return {
+			id: item.id,
+			projectId: item.projectId,
+			projectName: item.projectName,
+			taskName: item.taskName,
+			debtType: item.debtType,
+			assigneeName: item.assigneeName,
+			dueDate: item.dueDate,
+			dueLabel,
+			level: isDanger ? 'danger' : dueDays <= 1 ? 'warning' : 'info',
+			href: `/projects/${item.projectId}`
+		};
+	});
+
+	return {
+		items,
+		total: rows.length ? number(rows[0].totalCount) : 0
+	};
+}
+
 /** @param {{ fromDate?: string, toDate?: string, limit?: number }} [options] */
 export function getHomeEvents({ fromDate, toDate, limit = 200 } = {}) {
 	const db = getDatabase();

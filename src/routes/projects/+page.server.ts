@@ -4,7 +4,6 @@ import type { Actions, PageServerLoad } from './$types';
 import { getDatabase } from '$lib/server/db.js';
 import {
 	getActiveSopDebtTypeOptions,
-	getHomeEvents,
 	getProjectGanttData
 } from '$lib/server/queries.js';
 import { auditRequestMeta, recordAudit } from '$lib/server/audit.js';
@@ -101,16 +100,11 @@ export const load: PageServerLoad = ({ locals }) => {
 		month: '2-digit',
 		day: '2-digit'
 	}).format(new Date());
-	const toDate = new Date(Date.parse(`${today}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
-	const upcoming = getHomeEvents({ fromDate: today, toDate, limit: 20 });
-
 	return {
 		projects: mapProjects(),
 		people: db.prepare('SELECT id, name FROM people WHERE active = 1 ORDER BY name').all(),
 		activeSopDebtTypes: getActiveSopDebtTypeOptions(),
 		today,
-		upcoming,
-		attention: upcoming.find((event) => event.level === 'danger') ?? upcoming[0] ?? null,
 		viewContext: {
 			role: locals.user?.role ?? 'reviewer',
 			personId: locals.user?.personId ?? null,

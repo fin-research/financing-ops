@@ -56,7 +56,7 @@
 <DebtPresetFilter options={workbench.typeOptions} {presets} bind:preset bind:values={selectedTypes} note={`台账截至 ${workbench.asOfDate}`} />
 
 {#if workbench.financeParameterReminder}
-	<div class="parameter-reminder" role="status"><CircleAlert size={18} /><span>请在本月初更新“上月末净资本”，收益凭证可发行额度按其 60% 计算。</span><a href="/settings">去配置</a></div>
+	<div class="parameter-reminder" role="status"><CircleAlert size={18} /><span>请在本月初更新“上月末净资本”，收益凭证可发行额度按其 60% 计算。</span><a href="/data">去配置</a></div>
 {/if}
 
 <section class="workbench-card calendar-card">

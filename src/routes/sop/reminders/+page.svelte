@@ -22,7 +22,7 @@
 </svelte:head>
 
 <nav class="back-nav" aria-label="返回 SOP 管理">
-	<a class="back-link" href="/settings"><ArrowLeft size={16} /> 返回 SOP 管理</a>
+	<a class="back-link" href="/sop"><ArrowLeft size={16} /> 返回 SOP 管理</a>
 </nav>
 
 <section class="summary-grid" aria-label="提醒发送汇总">
@@ -66,7 +66,7 @@
 		</div>
 	</label>
 	<button type="submit">查询</button>
-	<a href="/settings/reminders">清除</a>
+	<a href="/sop/reminders">清除</a>
 </form>
 
 <section class="history-panel">

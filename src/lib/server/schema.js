@@ -1,5 +1,5 @@
 // @ts-nocheck
-const schemaVersion = 5;
+const schemaVersion = 6;
 
 function ensureColumn(db, table, column, definition) {
 	const columns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((item) => item.name));
@@ -163,6 +163,7 @@ export function createSchema(db) {
 			failed_login_count INTEGER NOT NULL DEFAULT 0,
 			locked_until TEXT,
 			last_login_at TEXT,
+			avatar_data_url TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
@@ -444,6 +445,7 @@ export function createSchema(db) {
 	ensureColumn(db, 'debts', 'category_level_1', 'TEXT');
 	ensureColumn(db, 'debts', 'category_level_2', 'TEXT');
 	migrateIdentityModel(db);
+	ensureColumn(db, 'auth_users', 'avatar_data_url', 'TEXT');
 	migrateAuditLogEntityTypes(db);
 	db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id, created_at);

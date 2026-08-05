@@ -24,7 +24,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 		throw redirect(303, `/login?redirectTo=${encodeURIComponent(redirectTo)}`);
 	}
 
-	if (!isPublic && !SAFE_METHODS.has(event.request.method) && !canWrite(event.locals.user)) {
+	const isOwnSettingsWrite = pathname === '/settings' && event.request.method === 'POST';
+	if (!isPublic && !SAFE_METHODS.has(event.request.method) && !isOwnSettingsWrite && !canWrite(event.locals.user)) {
 		return new Response('当前账号仅有只读权限', { status: 403 });
 	}
 
