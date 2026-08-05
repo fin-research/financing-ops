@@ -1,5 +1,34 @@
 // @ts-nocheck
-const schemaVersion = 3;
+const schemaVersion = 4;
+
+function ensureColumn(db, table, column, definition) {
+	const columns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((item) => item.name));
+	if (!columns.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+function migrateAuditLogEntityTypes(db) {
+	const schema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'audit_logs'").get()?.sql ?? '';
+	if (!schema || schema.includes("'finance_parameter'")) return;
+	db.exec(`
+		ALTER TABLE audit_logs RENAME TO audit_logs_legacy;
+		CREATE TABLE audit_logs (
+			id TEXT PRIMARY KEY,
+			actor_user_id TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
+			actor_username TEXT,
+			action TEXT NOT NULL,
+			entity_type TEXT NOT NULL CHECK (entity_type IN ('project', 'sop', 'person', 'reminder_rule', 'auth', 'finance_parameter', 'debt_limit')),
+			entity_id TEXT,
+			summary TEXT NOT NULL,
+			before_json TEXT,
+			after_json TEXT,
+			request_ip TEXT,
+			user_agent TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO audit_logs SELECT * FROM audit_logs_legacy;
+		DROP TABLE audit_logs_legacy;
+	`);
+}
 
 export function createSchema(db) {
 	db.exec(`
@@ -38,7 +67,7 @@ export function createSchema(db) {
 			actor_user_id TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
 			actor_username TEXT,
 			action TEXT NOT NULL,
-			entity_type TEXT NOT NULL CHECK (entity_type IN ('project', 'sop', 'person', 'reminder_rule', 'auth')),
+			entity_type TEXT NOT NULL CHECK (entity_type IN ('project', 'sop', 'person', 'reminder_rule', 'auth', 'finance_parameter', 'debt_limit')),
 			entity_id TEXT,
 			summary TEXT NOT NULL,
 			before_json TEXT,
@@ -123,6 +152,8 @@ export function createSchema(db) {
 			external_key TEXT NOT NULL UNIQUE,
 			project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
 			debt_type TEXT NOT NULL,
+			category_level_1 TEXT,
+			category_level_2 TEXT,
 			instrument_name TEXT,
 			instrument_code TEXT,
 			borrower TEXT,
@@ -244,6 +275,41 @@ export function createSchema(db) {
 			error_message TEXT
 		);
 
+		CREATE TABLE IF NOT EXISTS debt_type_catalog (
+			code TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			parent_code TEXT REFERENCES debt_type_catalog(code) ON DELETE RESTRICT,
+			compact_name TEXT,
+			display_name TEXT NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(parent_code, name)
+		);
+
+		CREATE TABLE IF NOT EXISTS finance_parameters (
+			code TEXT PRIMARY KEY,
+			label TEXT NOT NULL,
+			value_yi REAL,
+			period_end TEXT,
+			notes TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS debt_limit_configs (
+			debt_type TEXT PRIMARY KEY,
+			limit_yi REAL NOT NULL CHECK (limit_yi >= 0),
+			usage_basis TEXT NOT NULL DEFAULT 'outstanding' CHECK (usage_basis IN ('outstanding', 'since_approval')),
+			approved_date TEXT,
+			expiry_date TEXT,
+			calculation_mode TEXT NOT NULL DEFAULT 'manual' CHECK (calculation_mode IN ('manual', 'net_capital_60')),
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_debts_type_status ON debts(debt_type, status);
 		CREATE INDEX IF NOT EXISTS idx_debts_maturity ON debts(maturity_date);
 		CREATE INDEX IF NOT EXISTS idx_debt_balance_daily_date ON debt_balance_daily(as_of_date);
@@ -260,12 +326,15 @@ export function createSchema(db) {
 		CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at);
 	`);
 
-	const balanceColumns = new Set(
-		db.prepare('PRAGMA table_info(debt_balance_daily)').all().map((column) => column.name)
-	);
-	if (!balanceColumns.has('source_file')) {
-		db.exec('ALTER TABLE debt_balance_daily ADD COLUMN source_file TEXT');
-	}
+	ensureColumn(db, 'debt_balance_daily', 'source_file', 'TEXT');
+	ensureColumn(db, 'debts', 'category_level_1', 'TEXT');
+	ensureColumn(db, 'debts', 'category_level_2', 'TEXT');
+	migrateAuditLogEntityTypes(db);
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id, created_at);
+		CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at);
+		CREATE INDEX IF NOT EXISTS idx_debts_categories ON debts(category_level_1, category_level_2, status);
+	`);
 
 	db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)').run(schemaVersion);
 }

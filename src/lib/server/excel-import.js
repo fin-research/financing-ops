@@ -239,11 +239,33 @@ function assertPersistedDebtBalanceSnapshot(db, snapshot) {
 
 function mapStatus(value, maturityDate) {
 	const candidate = text(value)?.toLowerCase() ?? '';
-	if (/已到期|到期|兑付/.test(candidate)) return 'matured';
+	if (/未到期|存续/.test(candidate)) return 'active';
+	if (/发行失败|作废|取消/.test(candidate)) return 'closed';
+	if (/已到期|已兑付|兑付完毕/.test(candidate)) return 'matured';
 	if (/计划|拟/.test(candidate)) return 'planned';
 	if (/结束|注销|终止|偿还/.test(candidate)) return 'closed';
 	if (maturityDate && maturityDate < new Date().toISOString().slice(0, 10)) return 'matured';
 	return 'active';
+}
+
+function debtCategories(sheetName, rawData) {
+	if (sheetName === '收益凭证') {
+		let returnType = '';
+		try {
+			const cells = JSON.parse(rawData);
+			returnType = String(cells.find((cell) => String(cell.header ?? '').includes('收益类型'))?.formatted ?? '');
+		} catch {
+			returnType = '';
+		}
+		return {
+			categoryLevel1: '收益凭证',
+			categoryLevel2: returnType.includes('浮动') ? '浮动收益凭证' : '固定收益凭证'
+		};
+	}
+	if (['小公募', '次级债', '私募债', '科创债', '短期融资券', '公司债'].includes(sheetName)) {
+		return { categoryLevel1: '债券', categoryLevel2: sheetName };
+	}
+	return { categoryLevel1: sheetName, categoryLevel2: null };
 }
 
 function valueAt(row, fields, field) {
@@ -379,6 +401,7 @@ function rowToDebt(row, fields, sheetName, sourceRow, headers, rawData) {
 		id: crypto.randomUUID(),
 		externalKey: crypto.createHash('sha256').update(`${sheetName}:${sourceRow}`).digest('hex'),
 		debtType: sheetName,
+		...debtCategories(sheetName, rawData),
 		instrumentName,
 		instrumentCode,
 		borrower: text(valueAt(row, fields, 'borrower')),
@@ -401,10 +424,11 @@ function rowToDebt(row, fields, sheetName, sourceRow, headers, rawData) {
  * are matched by source worksheet + Excel row so importing an updated workbook
  * refreshes records instead of appending duplicates.
  */
-export function importDebtWorkbook(workbookPath) {
+export function importDebtWorkbook(workbookPath, options = {}) {
 	const db = getDatabase();
 	const resolvedPath = path.resolve(workbookPath);
-	const sourceFile = path.basename(resolvedPath);
+	const sourceFile = path.basename(options.sourceFileName || resolvedPath);
+	const replaceExisting = options.replaceExisting === true;
 	const fileHash = crypto.createHash('sha256').update(fs.readFileSync(resolvedPath)).digest('hex');
 	const runId = crypto.randomUUID();
 	db.prepare('INSERT INTO import_runs (id, source_file, file_hash, status) VALUES (?, ?, ?, ?)').run(runId, sourceFile, fileHash, 'running');
@@ -418,16 +442,17 @@ export function importDebtWorkbook(workbookPath) {
 
 	const upsert = db.prepare(`
 		INSERT INTO debts (
-			id, external_key, debt_type, instrument_name, instrument_code, borrower, counterparty,
+			id, external_key, debt_type, category_level_1, category_level_2, instrument_name, instrument_code, borrower, counterparty,
 			principal_amount, outstanding_amount, currency, annual_rate, issue_date, maturity_date, status,
 			source_sheet, source_row, source_file, raw_data
 		) VALUES (
-			@id, @externalKey, @debtType, @instrumentName, @instrumentCode, @borrower, @counterparty,
+			@id, @externalKey, @debtType, @categoryLevel1, @categoryLevel2, @instrumentName, @instrumentCode, @borrower, @counterparty,
 			@principalAmount, @outstandingAmount, @currency, @annualRate, @issueDate, @maturityDate, @status,
 			@sourceSheet, @sourceRow, @sourceFile, @rawData
 		)
 		ON CONFLICT(external_key) DO UPDATE SET
-			debt_type = excluded.debt_type, instrument_name = excluded.instrument_name, instrument_code = excluded.instrument_code,
+			debt_type = excluded.debt_type, category_level_1 = excluded.category_level_1, category_level_2 = excluded.category_level_2,
+			instrument_name = excluded.instrument_name, instrument_code = excluded.instrument_code,
 			borrower = excluded.borrower, counterparty = excluded.counterparty, principal_amount = excluded.principal_amount,
 			outstanding_amount = excluded.outstanding_amount, currency = excluded.currency, annual_rate = excluded.annual_rate,
 			issue_date = excluded.issue_date, maturity_date = excluded.maturity_date, status = excluded.status,
@@ -472,10 +497,19 @@ export function importDebtWorkbook(workbookPath) {
 		const workbook = XLSX.readFile(resolvedPath, { cellDates: false });
 		history = parseSummaryHistory(workbook, sourceFile);
 		db.transaction(() => {
-			db.prepare('DELETE FROM debt_balance_history WHERE source_file = ?').run(sourceFile);
+			if (replaceExisting) {
+				db.exec(`
+					DELETE FROM debt_balance_history;
+					DELETE FROM debt_balance_daily;
+					DELETE FROM debt_source_rows;
+					DELETE FROM debt_cashflow_events;
+				`);
+			} else {
+				db.prepare('DELETE FROM debt_balance_history WHERE source_file = ?').run(sourceFile);
+				db.prepare('DELETE FROM debt_source_rows WHERE source_file = ?').run(sourceFile);
+				db.prepare('DELETE FROM debt_cashflow_events WHERE source_file = ?').run(sourceFile);
+			}
 			upsertSummarySnapshots(db, history.snapshots, sourceFile);
-			db.prepare('DELETE FROM debt_source_rows WHERE source_file = ?').run(sourceFile);
-			db.prepare('DELETE FROM debt_cashflow_events WHERE source_file = ?').run(sourceFile);
 			db.exec(`
 				CREATE TEMP TABLE IF NOT EXISTS current_import_debt_keys (
 					external_key TEXT PRIMARY KEY
@@ -569,11 +603,18 @@ export function importDebtWorkbook(workbookPath) {
 					}
 				}
 			}
-			db.prepare(`
-				DELETE FROM debts
-				WHERE source_file = ?
-					AND external_key NOT IN (SELECT external_key FROM current_import_debt_keys)
-			`).run(sourceFile);
+			if (replaceExisting) {
+				db.prepare(`
+					DELETE FROM debts
+					WHERE external_key NOT IN (SELECT external_key FROM current_import_debt_keys)
+				`).run();
+			} else {
+				db.prepare(`
+					DELETE FROM debts
+					WHERE source_file = ?
+						AND external_key NOT IN (SELECT external_key FROM current_import_debt_keys)
+				`).run(sourceFile);
+			}
 		})();
 		assertPersistedDebtBalanceSnapshot(db, history.latest);
 		const persistedDailyCount = db.prepare(`

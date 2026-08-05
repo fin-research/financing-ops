@@ -1,0 +1,9 @@
+import { error } from '@sveltejs/kit';
+import type { PageServerLoad } from './$types';
+import { getDebtDetail } from '$lib/server/queries.js';
+
+export const load: PageServerLoad = ({ params }) => {
+	const debt = getDebtDetail(params.id);
+	if (!debt) throw error(404, '未找到该负债记录');
+	return { debt };
+};

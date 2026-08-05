@@ -3,12 +3,14 @@
 		label,
 		options,
 		values = $bindable([]),
-		allLabel = '全部'
+		allLabel = '全部',
+		optionLabels = {}
 	}: {
 		label: string;
 		options: string[];
 		values: string[];
 		allLabel?: string;
+		optionLabels?: Record<string, string>;
 	} = $props();
 
 	const summary = $derived(
@@ -51,7 +53,7 @@
 					onclick={() => toggle(option)}
 				>
 					<span class="checkbox-mark" aria-hidden="true">{values.includes(option) ? '✓' : ''}</span>
-					{option}
+					{optionLabels[option] ?? option}
 				</button>
 			{/each}
 		</div>

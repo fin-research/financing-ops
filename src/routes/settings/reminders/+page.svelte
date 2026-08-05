@@ -23,7 +23,7 @@
 
 <section class="page-heading">
 	<div>
-		<a class="back-link" href="/settings"><ArrowLeft size={16} /> 返回 SOP 与提醒</a>
+		<a class="back-link" href="/settings"><ArrowLeft size={16} /> 返回 SOP 管理</a>
 		<p class="eyebrow">REMINDER DELIVERY</p>
 		<h1>提醒发送历史</h1>
 		<p>查询 Resend 邮件发送结果、待发记录和失败原因</p>

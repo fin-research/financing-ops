@@ -31,7 +31,7 @@
 </svelte:head>
 
 <nav class="back-nav" aria-label="返回设置页">
-	<a href="/settings"><ArrowLeft size={18} /> 返回 SOP 与提醒</a>
+	<a href="/settings"><ArrowLeft size={18} /> 返回 SOP 管理</a>
 </nav>
 
 <section class="page-heading">

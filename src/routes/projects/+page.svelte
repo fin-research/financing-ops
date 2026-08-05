@@ -371,8 +371,8 @@
 		<div class="insight-top">
 			<span class="summary-icon orange"><Flag size={17} /></span>
 			<div>
-				<h2>需要关注</h2>
-				<p>由节点完成度与截止时间自动判断</p>
+				<h2>待办与预警</h2>
+				<p>从原仪表盘迁入，由节点完成度与截止时间判断</p>
 			</div>
 		</div>
 		{#if data.attention}

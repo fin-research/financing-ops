@@ -16,19 +16,22 @@
 	let { children, data } = $props();
 
 	const workspaceItems = [
-		{ href: '/', label: '总览', mobileLabel: '总览', icon: LayoutDashboard },
+		{ href: '/', label: '仪表盘', mobileLabel: '仪表盘', icon: LayoutDashboard },
+		{ href: '/workbench', label: '工作台', mobileLabel: '工作台', icon: CalendarDays },
 		{ href: '/projects', label: '项目进度', mobileLabel: '项目', icon: BriefcaseBusiness }
 	];
 
 	const managementItems = [
-		{ href: '/settings', label: 'SOP 与提醒', mobileLabel: 'SOP', icon: Workflow },
-		{ href: '/data', label: 'Excel 数据', mobileLabel: '数据', icon: FileSpreadsheet },
+		{ href: '/settings', label: 'SOP 管理', mobileLabel: 'SOP', icon: Workflow },
+		{ href: '/data', label: '数据后台', mobileLabel: '数据', icon: FileSpreadsheet },
 		{ href: '/people', label: '人员与权限', mobileLabel: '人员', icon: ShieldCheck }
 	];
 	const navItems = [...workspaceItems, ...managementItems];
+	const mobileItems = [...workspaceItems, managementItems[0], managementItems[1]];
 
 	const isActive = (href: string) => {
 		if (href === '/') return page.url.pathname === '/';
+		if (href === '/workbench' && page.url.pathname.startsWith('/debts/')) return true;
 		return page.url.pathname === href || page.url.pathname.startsWith(`${href}/`);
 	};
 </script>
@@ -45,7 +48,7 @@
 <div class="app-shell">
 	<a class="skip-link" href="#main-content">跳到主要内容</a>
 	<aside class="sidebar">
-		<a class="brand" href="/" aria-label="融资工作台首页">
+		<a class="brand" href="/workbench" aria-label="融资工作台首页">
 			<span class="brand-mark"><BarChart3 size={19} strokeWidth={2.2} /></span>
 			<span>
 				<strong>融资工作台</strong>
@@ -76,7 +79,7 @@
 				<span>数据已同步</span>
 			</div>
 			<p>借入资金台账</p>
-			<small>更新至 2026-07-27</small>
+			<small>更新至 {data.dataAsOfDate ?? '待导入'}</small>
 		</div>
 	</aside>
 
@@ -94,9 +97,9 @@
 				</strong>
 			</div>
 			<div class="top-actions">
-				<a class="today-pill" href="/#calendar">
+				<a class="today-pill" href="/workbench">
 					<CalendarDays size={15} />
-					<span>2026年7月28日</span>
+					<span>{data.today}</span>
 				</a>
 				<button class="icon-button" type="button" aria-label="查看提醒">
 					<Bell size={18} />
@@ -118,7 +121,7 @@
 		</header>
 
 		<div class="mobile-nav" aria-label="移动端导航">
-			{#each navItems as item}
+			{#each mobileItems as item}
 				<a class:active={isActive(item.href)} href={item.href}>
 					<item.icon size={18} />
 					<span>{item.mobileLabel}</span>

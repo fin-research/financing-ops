@@ -2,7 +2,15 @@
 import { randomUUID } from 'node:crypto';
 import { getDatabase } from './db.js';
 
-const ALLOWED_ENTITY_TYPES = new Set(['project', 'sop', 'person', 'reminder_rule', 'auth']);
+const ALLOWED_ENTITY_TYPES = new Set([
+	'project',
+	'sop',
+	'person',
+	'reminder_rule',
+	'auth',
+	'finance_parameter',
+	'debt_limit'
+]);
 const SENSITIVE_KEYS = /password|secret|token|api[_-]?key|authorization|cookie/i;
 
 function redact(value) {

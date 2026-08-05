@@ -2,7 +2,7 @@
 
 本文件适用于仓库根目录及全部子目录，是人类开发者和 Codex 在本项目中的长期协作约定。
 
-具体业务验证日期、金额和数量不写入仓库。
+最后更新：2026-08-05
 
 ## 1. 项目目标
 
@@ -70,6 +70,8 @@ pnpm dev
 - `src/lib/server/excel-import.js`：Excel 解析、明细幂等写入和余额快照核对。
 - `src/lib/server/queries.js`：Dashboard、甘特图和设置页查询。
 - `src/lib/server/reminders.js`：提醒计算、去重、Resend 发送和发送日志。
+- `src/routes/workbench/`：融资日历、负债额度管理和发行试算。
+- `src/routes/debts/[id]/`：单笔负债与来源单元格追溯。
 - `scripts/`：数据库、导入和提醒 CLI。
 - `data/`：原始 Excel；不得静默改写源文件。
 - `database/`：本地 SQLite 数据库。
@@ -120,7 +122,7 @@ pnpm dev
 
 - `pnpm check`：0 error、0 warning。
 - `pnpm build`：成功。
-- 核心路由 `/`、`/projects`、`/settings`、`/data`、`/people` 可访问。
+- 核心路由 `/`、`/workbench`、`/debts/[id]`、`/projects`、`/settings`、`/data`、`/people` 可访问。
 - Excel 导入能够重复执行且汇总保持一致。
 - 新增表单具有失败反馈，不得静默失败。
 - 新增可见文字满足 `1rem / 0.75rem` 字号规则。
@@ -134,7 +136,7 @@ pnpm dev
 
 - [ ] 增加 Excel 解析、余额断言、提醒频率和项目建档的单元测试。
 - [ ] 增加 `/`、`/projects`、`/settings`、`/data`、`/people` 核心路由与关键表单的端到端测试。
-- [ ] 在 375px、768px、1024px、1440px 和大字号模式下完成视觉回归。
+- [ ] 补充大字号/200% 缩放模式的视觉回归；375px、768px、1024px 和 1440px 已于 2026-08-04 检查。
 - [ ] 复核字号放大后的 Dashboard、甘特图和设置页信息密度，必要时通过折叠、分组或横向局部滚动优化，而不是缩小文字。
 
 ### P1 — 权限闭环
@@ -145,6 +147,11 @@ pnpm dev
 
 - [ ] 将筛选状态同步到 URL，支持刷新、返回和分享后保持。
 - [ ] 增加负债明细表、排序、导出及从图表下钻能力。
+
+### P2 — 发行试算
+
+- [ ] 建立可按期间维护的财务指标数据表，接入 LCR、NSFR、资产负债率和长短期负债比试算。
+- [ ] 将拟发行品种、起息日、规模和期限纳入到期当月集中度预估。
 
 ### P2 — 样式维护
 

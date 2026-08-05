@@ -3,10 +3,12 @@
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import {
+		AlertCircle,
 		CheckCircle2,
 		Database,
 		FileSpreadsheet,
 		History,
+		Landmark,
 		LoaderCircle,
 		RefreshCw,
 		ShieldCheck,
@@ -22,7 +24,9 @@
 	}>({ key: '', status: 'idle', message: '' });
 
 	const fallback = {
+		financeParameters: [],
 		lastImport: null,
+		currentSnapshot: null,
 		importStats: {
 			debtCount: 0,
 			sourceRowCount: 0,
@@ -39,11 +43,14 @@
 			actionState = { key, status: 'pending', message: '正在导入并核对，请稍候…' };
 			return async ({ result, update }) => {
 				if (result.type === 'success') {
+					const imported = result.data?.importResult;
 					await update({ reset: false, invalidateAll: true });
 					actionState = {
 						key,
 						status: 'success',
-						message: 'Excel 已导入，余额与来源记录已完成核对'
+						message: imported
+							? `${imported.sourceFile} 已更新至 ${imported.snapshot.asOfDate}，余额 ${imported.snapshot.totalYi.toFixed(4)} 亿元`
+							: 'Excel 已导入，余额与来源记录已完成核对'
 					};
 					return;
 				}
@@ -59,18 +66,41 @@
 			};
 		};
 	};
+
+	const enhanceParameters: SubmitFunction = () => {
+		actionState = { key: 'finance', status: 'pending', message: '正在保存计算参数…' };
+		return async ({ result, update }) => {
+			if (result.type === 'success') {
+				await update({ reset: false, invalidateAll: true });
+				actionState = {
+					key: 'finance',
+					status: 'success',
+					message: String(result.data?.message ?? '监管指标计算参数已更新')
+				};
+				return;
+			}
+			await update({ reset: false, invalidateAll: false });
+			actionState = {
+				key: 'finance',
+				status: 'error',
+				message: result.type === 'failure'
+					? String(result.data?.message ?? '保存失败，请检查后重试')
+					: '保存失败，请稍后重试'
+			};
+		};
+	};
 </script>
 
 <svelte:head>
-	<title>Excel 数据 · 融资工作台</title>
+	<title>数据后台 · 融资工作台</title>
 </svelte:head>
 
 <div class="management-page data-page">
 	<section class="page-heading">
 		<div>
-			<p class="eyebrow">DEBT DATA</p>
-			<h1>Excel 数据</h1>
-			<p>独立管理借入资金台账导入、来源追溯和余额核对</p>
+			<p class="eyebrow">DATA ADMINISTRATION</p>
+			<h1>数据后台</h1>
+			<p>统一管理借入资金台账、数据质量与监管指标计算参数</p>
 		</div>
 		<form method="post" action="?/reimport" use:enhance={enhanceImport('reimport')}>
 			<button class="primary-action" type="submit" disabled={actionState.status === 'pending'}>
@@ -90,7 +120,13 @@
 			role={actionState.status === 'error' ? 'alert' : 'status'}
 			aria-live="polite"
 		>
-			{#if actionState.status === 'pending'}<LoaderCircle size={17} class="spin" />{:else}<CheckCircle2 size={17} />{/if}
+			{#if actionState.status === 'pending'}
+				<LoaderCircle size={17} class="spin" />
+			{:else if actionState.status === 'error'}
+				<AlertCircle size={17} />
+			{:else}
+				<CheckCircle2 size={17} />
+			{/if}
 			<span>{actionState.message}</span>
 		</div>
 	{/if}
@@ -110,12 +146,12 @@
 					<span class="file-icon">XLSX</span>
 					<div>
 						<strong>{importData.lastImport?.sourceFile ?? '尚未导入'}</strong>
-						<p>基准日期 2026-07-27</p>
+						<p>当前口径 {importData.currentSnapshot?.asOfDate ?? '待导入'}</p>
 					</div>
 				</div>
 				<div class="reconcile-block">
 					<span>存续余额对账</span>
-					<strong>1,180.7206 亿元</strong>
+					<strong>{importData.currentSnapshot ? `${importData.currentSnapshot.totalYi.toFixed(4)} 亿元` : '待导入'}</strong>
 					<small><ShieldCheck size={14} /> 与汇总表一致</small>
 				</div>
 			</div>
@@ -144,6 +180,41 @@
 					<Upload size={15} />
 					上传、校验并导入
 				</button>
+			</form>
+		</article>
+
+		<article class="section-card parameter-card">
+			<div class="card-header">
+				<div class="header-icon blue"><Landmark size={19} /></div>
+				<div>
+					<h2>监管指标计算参数</h2>
+					<p>由管理员维护；未配置时仪表盘明确显示“待配置”</p>
+				</div>
+			</div>
+			<form class="parameter-form" method="post" action="?/updateFinanceParameters" use:enhance={enhanceParameters}>
+				{#each importData.financeParameters as parameter}
+					<div class="parameter-row">
+						<div class="parameter-copy">
+							<span>计算基数</span>
+							<strong>{parameter.label}</strong>
+							<small>{parameter.notes}</small>
+						</div>
+						<label>
+							<span>金额（亿元）</span>
+							<input name={parameter.code} type="number" min="0.0001" step="0.0001" value={parameter.valueYi ?? ''} placeholder="待配置" />
+						</label>
+						<label>
+							<span>口径日期</span>
+							<input name={`${parameter.code}_period_end`} type="date" value={parameter.periodEnd ?? ''} />
+						</label>
+					</div>
+				{/each}
+				<div class="parameter-actions">
+					<p>上月末净资本用于一年内短期负债占比和收益凭证额度计算。</p>
+					<button class="primary-action" type="submit" disabled={actionState.status === 'pending'}>
+						{actionState.status === 'pending' && actionState.key === 'finance' ? '保存中…' : '保存参数'}
+					</button>
+				</div>
 			</form>
 		</article>
 
@@ -186,7 +257,8 @@
 		gap: 1rem;
 	}
 
-	.detail-card {
+	.detail-card,
+	.parameter-card {
 		grid-column: 1 / -1;
 	}
 
@@ -266,6 +338,86 @@
 		border-radius: 0.5rem;
 	}
 
+	.parameter-form {
+		display: grid;
+		border-top: 1px solid var(--line);
+	}
+
+	.parameter-row {
+		display: grid;
+		grid-template-columns: minmax(13rem, 1.1fr) minmax(10rem, 0.8fr) minmax(10rem, 0.7fr);
+		align-items: end;
+		gap: 1rem;
+		padding: 0.875rem 1.125rem;
+		border-bottom: 1px solid var(--line);
+	}
+
+	.parameter-copy {
+		display: grid;
+		gap: 0.125rem;
+	}
+
+	.parameter-copy > span {
+		width: fit-content;
+		padding: 0.125rem 0.375rem;
+		border-radius: 999rem;
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: #175cd3;
+		background: #eff4ff;
+	}
+
+	.parameter-copy strong {
+		font-size: 1rem;
+		color: #1d2939;
+	}
+
+	.parameter-copy small {
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: #667085;
+	}
+
+	.parameter-form label {
+		display: grid;
+		gap: 0.25rem;
+	}
+
+	.parameter-form label span {
+		font-size: 0.75rem;
+		font-weight: 650;
+		color: #475467;
+	}
+
+	.parameter-form input {
+		min-height: 2.75rem;
+		padding: 0 0.75rem;
+		border: 1px solid #d0d5dd;
+		border-radius: 0.5rem;
+		color: #344054;
+		background: #fff;
+		transition: border-color 180ms ease, box-shadow 180ms ease;
+	}
+
+	.parameter-form input:hover {
+		border-color: #98a2b3;
+	}
+
+	.parameter-actions {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.875rem 1.125rem;
+		background: #f8faff;
+	}
+
+	.parameter-actions p {
+		margin: 0;
+		font-size: 1rem;
+		color: #475467;
+	}
+
 	.stats-grid {
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -319,6 +471,15 @@
 
 		.reconcile-block small {
 			justify-content: flex-start;
+		}
+
+		.parameter-row {
+			grid-template-columns: 1fr;
+		}
+
+		.parameter-actions {
+			align-items: stretch;
+			flex-direction: column;
 		}
 	}
 </style>

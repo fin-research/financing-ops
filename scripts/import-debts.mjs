@@ -5,4 +5,4 @@ import { getDatabase } from '../src/lib/server/db.js';
 
 const source = process.argv[2] ?? path.resolve('data', 'ledger.xlsx');
 seedDatabase(getDatabase());
-console.log(JSON.stringify(importDebtWorkbook(source), null, 2));
+console.log(JSON.stringify(importDebtWorkbook(source, { replaceExisting: true }), null, 2));
