@@ -87,17 +87,17 @@
 		},
 		{
 			label: '新增单笔借款较证券上年末净资产', value: ratioText(dashboard.metrics.largestBorrowingRatio), icon: ShieldAlert,
-			accent: 'red', tone: ratioTone(dashboard.metrics.largestBorrowingRatio, 20), comparisons: [],
+			accent: 'red', tone: ratioTone(dashboard.metrics.largestBorrowingRatio, 20), comparisons: [], compact: true,
 			details: [{ label: '监管上限', value: '20%' }, { label: '最大单笔', value: `${dashboard.metrics.largestBorrowingYi.toFixed(2)}亿元` }]
 		},
 		{
 			label: '月末累计新增借款较证券上年末净资产', value: ratioText(dashboard.metrics.cumulativeSecuritiesRatio), icon: Activity,
-			accent: 'amber', tone: ratioTone(dashboard.metrics.cumulativeSecuritiesRatio, 50), comparisons: [],
+			accent: 'amber', tone: ratioTone(dashboard.metrics.cumulativeSecuritiesRatio, 50), comparisons: [], compact: true,
 			details: [{ label: '监管上限', value: '50%' }, { label: '净新增', value: `${dashboard.metrics.cumulativeBorrowingYi > 0 ? '+' : ''}${dashboard.metrics.cumulativeBorrowingYi.toFixed(2)}亿元` }]
 		},
 		{
 			label: '月末累计新增借款较集团上年末净资产', value: ratioText(dashboard.metrics.cumulativeGroupRatio), icon: TrendingUp,
-			accent: 'indigo', tone: ratioTone(dashboard.metrics.cumulativeGroupRatio, 10), comparisons: [],
+			accent: 'indigo', tone: ratioTone(dashboard.metrics.cumulativeGroupRatio, 10), comparisons: [], compact: true,
 			details: [{ label: '监管上限', value: '10%' }, { label: '净新增', value: `${dashboard.metrics.cumulativeBorrowingYi > 0 ? '+' : ''}${dashboard.metrics.cumulativeBorrowingYi.toFixed(2)}亿元` }]
 		}
 	]);
@@ -119,8 +119,8 @@
 
 <section class="metric-grid" aria-label="融资指标">
 	{#each metricCards as metric}
-		<article class={`metric-card accent-${metric.accent}`}>
-			<div class="metric-icon" aria-hidden="true"><metric.icon size={30} strokeWidth={1.8} /></div>
+		<article class={`metric-card accent-${metric.accent}`} class:compact={metric.compact}>
+			<div class="metric-icon" aria-hidden="true"><metric.icon size={metric.compact ? 20 : 30} strokeWidth={1.8} /></div>
 			<div class="metric-content">
 				<div class="metric-title-row">
 					<h2>{metric.label}</h2>

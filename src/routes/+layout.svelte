@@ -9,6 +9,7 @@
 		FileSpreadsheet,
 		LayoutDashboard,
 		LogOut,
+		Megaphone,
 		ShieldCheck,
 		Workflow
 	} from '@lucide/svelte';
@@ -195,6 +196,30 @@
 				</a>
 			{/each}
 		</div>
+
+		{#if data.reminders.total > 0}
+			<div class="reminder-ticker" role="region" aria-label="待办提醒滚动播报">
+				<span class="ticker-label"><Megaphone size={15} /><span>提醒</span></span>
+				<div class="ticker-viewport">
+					<div
+						class="ticker-track"
+						style={`--ticker-duration: ${Math.max(16, data.reminders.items.length * 8)}s`}
+					>
+						{#each [0, 1] as copy}
+							<div class="ticker-run" aria-hidden={copy === 1}>
+								{#each data.reminders.items as reminder}
+									<a class={`ticker-item ${reminder.level}`} href={reminder.href}>
+										<strong>{reminder.projectName}</strong>
+										<span>{reminder.taskName}</span>
+										<b>{reminder.dueLabel}</b>
+									</a>
+								{/each}
+							</div>
+						{/each}
+					</div>
+				</div>
+			</div>
+		{/if}
 
 		<main class="page-content" id="main-content" tabindex="-1">
 			{@render children()}

@@ -9,7 +9,8 @@
 		preset = $bindable('all'),
 		values = $bindable([]),
 		ariaLabel = '筛选视图',
-		note = ''
+		note = '',
+		compact = false
 	}: {
 		options: string[];
 		presets: Preset[];
@@ -17,6 +18,7 @@
 		values: string[];
 		ariaLabel?: string;
 		note?: string;
+		compact?: boolean;
 	} = $props();
 
 	const optionLabels = {
@@ -42,9 +44,9 @@
 	});
 </script>
 
-<section class="debt-filter" aria-label={ariaLabel}>
+<section class="debt-filter" class:compact={compact} aria-label={ariaLabel}>
 	<label>
-		<span>预设</span>
+		{#if !compact}<span>预设</span>{/if}
 		<select value={preset} onchange={(event) => applyPreset(event.currentTarget.value)}>
 			{#each presets as item}
 				<option value={item.key}>{item.label}</option>
@@ -59,7 +61,6 @@
 		allLabel="全部品种"
 		{optionLabels}
 	/>
-	<div class="filter-note"><span></span>{note}</div>
 </section>
 
 <style>
@@ -104,32 +105,23 @@
 		border-color: #94a3b8;
 	}
 
-	.filter-note {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin-left: auto;
-		font-size: 0.75rem;
-		color: #64748b;
-		white-space: nowrap;
+	.debt-filter.compact {
+		min-height: 0;
+		padding: 0;
+		border: 0;
+		border-radius: 0;
+		background: none;
+		box-shadow: none;
 	}
 
-	.filter-note span {
-		width: 0.5rem;
-		height: 0.5rem;
-		border-radius: 50%;
-		background: #12b76a;
+	.debt-filter.compact select {
+		min-width: 12rem;
 	}
 
 	@media (max-width: 64rem) {
 		.debt-filter {
 			align-items: stretch;
 			flex-wrap: wrap;
-		}
-
-		.filter-note {
-			width: 100%;
-			margin-left: 0;
 		}
 	}
 

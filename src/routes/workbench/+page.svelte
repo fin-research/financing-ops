@@ -53,14 +53,23 @@
 
 <svelte:head><title>工作台 · 融资工作台</title></svelte:head>
 
-<DebtPresetFilter options={workbench.typeOptions} {presets} bind:preset bind:values={selectedTypes} note={`台账截至 ${workbench.asOfDate}`} />
+<section class="workbench-card limit-card">
+	<header><span class="section-icon violet"><WalletCards size={19} /></span><div><h2>负债额度管理</h2><p>已发行额度从台账自动计算，其余按当前批复口径</p></div></header>
+	<table><thead><tr><th>融资品种</th><th>可发行额度</th><th>已发行额度</th><th>剩余可用额度</th><th>获批日期</th><th>到期日期</th></tr></thead><tbody>
+		{#each workbench.limits as item}<tr><td><strong>{item.debtType}</strong>{#if item.calculationMode === 'net_capital_60'}<small>净资本×60%</small>{/if}</td><td>{item.limitYi.toFixed(2)}</td><td>{item.issuedYi.toFixed(2)}</td><td class:negative={item.remainingYi < 0}><strong>{item.remainingYi.toFixed(2)}</strong><span class="quota-track" aria-label={`已使用 ${item.limitYi > 0 ? Math.min(100, item.issuedYi / item.limitYi * 100).toFixed(0) : 0}%`}><i class:over-limit={item.remainingYi < 0} style:width={`${item.limitYi > 0 ? Math.min(100, item.issuedYi / item.limitYi * 100) : 0}%`}></i></span></td><td>{dateLabel(item.approvedDate)}</td><td>{dateLabel(item.expiryDate)}</td></tr>{/each}
+	</tbody><tfoot><tr><th>合计</th><th>{workbench.limitTotals.limitYi.toFixed(2)}</th><th>{workbench.limitTotals.issuedYi.toFixed(2)}</th><th>{workbench.limitTotals.remainingYi.toFixed(2)}</th><th></th><th></th></tr></tfoot></table>
+</section>
 
 {#if workbench.financeParameterReminder}
 	<div class="parameter-reminder" role="status"><CircleAlert size={18} /><span>请在本月初更新“上月末净资本”，收益凭证可发行额度按其 60% 计算。</span><a href="/data">去配置</a></div>
 {/if}
 
 <section class="workbench-card calendar-card">
-	<header><span class="section-icon blue"><CalendarDays size={19} /></span><div><h2>融资日历</h2><p>本月到期{calendarSubtitle}</p></div><strong class="period-badge">{workbench.calendarMonth.replace('-', '年')}月</strong></header>
+	<header>
+		<span class="section-icon blue"><CalendarDays size={19} /></span>
+		<div><h2>融资日历</h2><p>本月到期{calendarSubtitle}</p></div>
+		<div class="calendar-filter"><DebtPresetFilter options={workbench.typeOptions} {presets} bind:preset bind:values={selectedTypes} note={`台账截至 ${workbench.asOfDate}`} compact /></div>
+	</header>
 	<div class="calendar-grid">
 		{#each weekdays as weekday}<div class="weekday">{weekday}</div>{/each}
 		{#each calendarCells as cell}
@@ -72,13 +81,6 @@
 			</div>
 		{/each}
 	</div>
-</section>
-
-<section class="workbench-card limit-card">
-	<header><span class="section-icon violet"><WalletCards size={19} /></span><div><h2>负债额度管理</h2><p>已发行额度从台账自动计算，其余按当前批复口径</p></div></header>
-	<table><thead><tr><th>融资品种</th><th>可发行额度</th><th>已发行额度</th><th>剩余可用额度</th><th>获批日期</th><th>到期日期</th></tr></thead><tbody>
-		{#each workbench.limits as item}<tr><td><strong>{item.debtType}</strong>{#if item.calculationMode === 'net_capital_60'}<small>净资本×60%</small>{/if}</td><td>{item.limitYi.toFixed(2)}</td><td>{item.issuedYi.toFixed(2)}</td><td class:negative={item.remainingYi < 0}><strong>{item.remainingYi.toFixed(2)}</strong><span class="quota-track" aria-label={`已使用 ${item.limitYi > 0 ? Math.min(100, item.issuedYi / item.limitYi * 100).toFixed(0) : 0}%`}><i class:over-limit={item.remainingYi < 0} style:width={`${item.limitYi > 0 ? Math.min(100, item.issuedYi / item.limitYi * 100) : 0}%`}></i></span></td><td>{dateLabel(item.approvedDate)}</td><td>{dateLabel(item.expiryDate)}</td></tr>{/each}
-	</tbody><tfoot><tr><th>合计</th><th>{workbench.limitTotals.limitYi.toFixed(2)}</th><th>{workbench.limitTotals.issuedYi.toFixed(2)}</th><th>{workbench.limitTotals.remainingYi.toFixed(2)}</th><th></th><th></th></tr></tfoot></table>
 </section>
 
 <section class="workbench-card simulator-card">

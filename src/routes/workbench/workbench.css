@@ -50,14 +50,18 @@
 	color: #64748b;
 }
 
-.period-badge {
+.calendar-card {
+	overflow: visible;
+}
+
+.calendar-card > header {
+	border-radius: 0.75rem 0.75rem 0 0;
+}
+
+.calendar-filter {
+	display: flex;
+	min-width: 0;
 	margin-left: auto;
-	padding: 0.3125rem 0.6875rem;
-	border: 1px solid #dbeafe;
-	border-radius: 999rem;
-	font-size: 0.75rem;
-	color: #1d4ed8;
-	background: #eff6ff;
 }
 
 .section-icon {
@@ -77,6 +81,8 @@
 .calendar-grid {
 	display: grid;
 	grid-template-columns: repeat(7, minmax(0, 1fr));
+	border-radius: 0 0 0.75rem 0.75rem;
+	overflow: hidden;
 	background: #e7ebf1;
 	gap: 1px;
 }
@@ -281,6 +287,8 @@
 .simulation-results span { font-size: 0.75rem; line-height: 1.5; }
 
 @media (max-width: 64rem) {
+	.calendar-card > header { flex-wrap: wrap; }
+	.calendar-filter { width: 100%; margin-left: 0; }
 	.simulator-form,
 	.simulation-results { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
