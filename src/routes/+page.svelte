@@ -2,8 +2,8 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import {
-		Activity, CalendarClock, CircleDollarSign, Clock3, Gauge, Landmark,
-		Percent, ShieldAlert, TrendingUp
+		CalendarClock, ChevronLeft, ChevronRight, CircleAlert, CircleDollarSign, Clock3,
+		Info, Landmark, Percent
 	} from '@lucide/svelte';
 	import DebtPresetFilter from '$lib/DebtPresetFilter.svelte';
 	import './dashboard.css';
@@ -15,6 +15,7 @@
 	let preset = $state(initialPreset());
 	let lastQuery = $state(page.url.search);
 	const dashboard = $derived(data.dashboard);
+	const reminders = $derived(page.data.reminders);
 	const colors = ['#2f6fed', '#16a394', '#6941c6', '#f79009', '#d92d20', '#0ba5ec', '#6172f3', '#12b76a'];
 	const presets = [
 		{ key: 'all', label: '全量', exclude: [] },
@@ -53,7 +54,17 @@
 		text: `${value > 0 ? '+' : ''}${value.toFixed(digits)}${unit}`,
 		direction: value > 0 ? 'increase' : value < 0 ? 'decrease' : 'flat'
 	});
-	const metricCards = $derived([
+	const dateLabel = (date: string | null) => date ? date.replaceAll('-', '/') : '';
+	type MetricCard = {
+		label: string;
+		value: string;
+		icon: typeof CircleDollarSign;
+		accent: string;
+		tone: string;
+		details: { label: string; value: string }[];
+		comparisons: { label: string; text: string; direction: string }[];
+	};
+	const metricCards = $derived<MetricCard[]>([
 		{
 			label: '存续负债余额', value: `${dashboard.metrics.balanceYi.toFixed(2)}亿元`, icon: CircleDollarSign,
 			accent: 'blue', tone: 'normal', details: [],
@@ -79,26 +90,28 @@
 			]
 		},
 		{ label: '未来30天到期', value: `${dashboard.metrics.due30Yi.toFixed(2)}亿元`, icon: CalendarClock, accent: 'orange', tone: 'normal', details: [], comparisons: [] },
-		{ label: '推进中的融资项目', value: `${dashboard.metrics.projectAmountYi.toFixed(2)}亿元`, icon: Landmark, accent: 'purple', tone: 'normal', details: [], comparisons: [] },
+		{ label: '推进中的融资项目', value: `${dashboard.metrics.projectAmountYi.toFixed(2)}亿元`, icon: Landmark, accent: 'purple', tone: 'normal', details: [], comparisons: [] }
+	]);
+	const regulatoryItems = $derived([
 		{
-			label: '1年以内短期负债占净资本', value: ratioText(dashboard.metrics.shortDebtRatio), icon: Gauge,
-			accent: 'cyan', tone: ratioTone(dashboard.metrics.shortDebtRatio, 100), comparisons: [],
-			details: [{ label: '监管上限', value: '100%' }, { label: '短期负债', value: `${dashboard.metrics.shortDebtYi.toFixed(2)}亿元` }]
+			label: '1年以内短期负债占净资本', value: ratioText(dashboard.metrics.shortDebtRatio),
+			tone: ratioTone(dashboard.metrics.shortDebtRatio, 100),
+			limit: '100%', detailLabel: '短期负债', detailValue: `${dashboard.metrics.shortDebtYi.toFixed(2)}亿元`
 		},
 		{
-			label: '新增单笔借款较证券上年末净资产', value: ratioText(dashboard.metrics.largestBorrowingRatio), icon: ShieldAlert,
-			accent: 'red', tone: ratioTone(dashboard.metrics.largestBorrowingRatio, 20), comparisons: [], compact: true,
-			details: [{ label: '监管上限', value: '20%' }, { label: '最大单笔', value: `${dashboard.metrics.largestBorrowingYi.toFixed(2)}亿元` }]
+			label: '新增单笔借款较证券上年末净资产', value: ratioText(dashboard.metrics.largestBorrowingRatio),
+			tone: ratioTone(dashboard.metrics.largestBorrowingRatio, 20),
+			limit: '20%', detailLabel: '最大单笔', detailValue: `${dashboard.metrics.largestBorrowingYi.toFixed(2)}亿元`
 		},
 		{
-			label: '月末累计新增借款较证券上年末净资产', value: ratioText(dashboard.metrics.cumulativeSecuritiesRatio), icon: Activity,
-			accent: 'amber', tone: ratioTone(dashboard.metrics.cumulativeSecuritiesRatio, 50), comparisons: [], compact: true,
-			details: [{ label: '监管上限', value: '50%' }, { label: '净新增', value: `${dashboard.metrics.cumulativeBorrowingYi > 0 ? '+' : ''}${dashboard.metrics.cumulativeBorrowingYi.toFixed(2)}亿元` }]
+			label: '累计新增借款较证券上年末净资产', value: ratioText(dashboard.metrics.cumulativeSecuritiesRatio),
+			tone: ratioTone(dashboard.metrics.cumulativeSecuritiesRatio, 50),
+			limit: '50%', detailLabel: '净新增', detailValue: `${dashboard.metrics.cumulativeBorrowingYi > 0 ? '+' : ''}${dashboard.metrics.cumulativeBorrowingYi.toFixed(2)}亿元`
 		},
 		{
-			label: '月末累计新增借款较集团上年末净资产', value: ratioText(dashboard.metrics.cumulativeGroupRatio), icon: TrendingUp,
-			accent: 'indigo', tone: ratioTone(dashboard.metrics.cumulativeGroupRatio, 10), comparisons: [], compact: true,
-			details: [{ label: '监管上限', value: '10%' }, { label: '净新增', value: `${dashboard.metrics.cumulativeBorrowingYi > 0 ? '+' : ''}${dashboard.metrics.cumulativeBorrowingYi.toFixed(2)}亿元` }]
+			label: '累计新增借款较集团上年末净资产', value: ratioText(dashboard.metrics.cumulativeGroupRatio),
+			tone: ratioTone(dashboard.metrics.cumulativeGroupRatio, 10),
+			limit: '10%', detailLabel: '净新增', detailValue: `${dashboard.metrics.cumulativeBorrowingYi > 0 ? '+' : ''}${dashboard.metrics.cumulativeBorrowingYi.toFixed(2)}亿元`
 		}
 	]);
 	const compositionTotal = $derived(dashboard.composition.reduce((sum: number, item: any) => sum + item.amountYi, 0));
@@ -111,6 +124,55 @@
 	});
 	const maturityScaleMax = $derived(maturityStep * 4);
 	const maturityTicks = $derived(Array.from({ length: 5 }, (_, index) => maturityScaleMax - index * maturityStep));
+
+	const calendarPresets = [
+		{ key: 'default', label: '不含拆借、浮动收益凭证', exclude: ['同业拆借', '浮动收益凭证'] },
+		{ key: 'all', label: '全部', exclude: [] }
+	];
+	let calendarPreset = $state('default');
+	const initialCalendarTypes = () => data.dashboard.typeOptions.filter((type: string) => !['同业拆借', '浮动收益凭证'].includes(type));
+	let calendarTypes = $state<string[]>(initialCalendarTypes());
+	let calendarExpanded = $state(false);
+	const visibleEvents = $derived(dashboard.events.filter((event: any) => calendarTypes.length === 0 || calendarTypes.includes(event.filterType)));
+	const cellsPerWeek = $derived(calendarExpanded ? 7 : 5);
+	const calendarStart = $derived.by(() => {
+		const firstDate = new Date(`${dashboard.calendarMonth}-01T00:00:00Z`);
+		const startOffset = firstDate.getUTCDay();
+		firstDate.setUTCDate(firstDate.getUTCDate() - startOffset);
+		if (!calendarExpanded) firstDate.setUTCDate(firstDate.getUTCDate() + 1);
+		return firstDate;
+	});
+	const calendarCells = $derived(Array.from({ length: 6 * cellsPerWeek }, (_, index) => {
+		const date = new Date(calendarStart); date.setUTCDate(date.getUTCDate() + index);
+		const key = date.toISOString().slice(0, 10);
+		return { date: key, day: date.getUTCDate(), other: key.slice(0, 7) !== dashboard.calendarMonth, today: key === dashboard.today, events: visibleEvents.filter((event: any) => event.date === key) };
+	}));
+	const calendarWeekdays = $derived(calendarExpanded ? ['日', '一', '二', '三', '四', '五', '六'] : ['一', '二', '三', '四', '五']);
+	const calendarSummaryDefinitions = [
+		{ label: '公司债券', types: ['小公募', '私募债', '科创债'] },
+		{ label: '次级债', types: ['次级债'] }, { label: '短融', types: ['短期融资券'] },
+		{ label: '固定收益凭证', types: ['固定收益凭证'] }, { label: '转融资', types: ['转融资'] },
+		{ label: '集团借款', types: ['集团借款'] }
+	];
+	const calendarSubtitle = $derived(calendarSummaryDefinitions.map((group) => {
+		const amount = visibleEvents.filter((event: any) => event.id.startsWith('maturity:') && group.types.includes(event.filterType)).reduce((sum: number, event: any) => sum + event.amountYi, 0);
+		return `${amount.toFixed(2)}亿元${group.label}`;
+	}).join('、'));
+
+	let simulationType = $state('小公募');
+	const initialToday = () => data.dashboard.today;
+	let simulationDate = $state(initialToday());
+	let simulationAmount = $state<number | null>(null);
+	let simulationTenor = $state('3Y');
+	const simulationLimit = $derived(dashboard.limits.find((item: any) => item.debtType === simulationType));
+	const simulationResult = $derived.by(() => {
+		if (!simulationAmount || simulationAmount <= 0) return null;
+		if (!simulationLimit) return { pass: false, message: '该品种尚未配置发行额度' };
+		const remaining = simulationLimit.remainingYi - simulationAmount;
+		return remaining >= 0
+			? { pass: true, message: `额度校验通过，试算后剩余 ${remaining.toFixed(2)} 亿元` }
+			: { pass: false, message: `超出可用额度 ${Math.abs(remaining).toFixed(2)} 亿元` };
+	});
 </script>
 
 <svelte:head><title>仪表盘 · 融资工作台</title></svelte:head>
@@ -119,8 +181,8 @@
 
 <section class="metric-grid" aria-label="融资指标">
 	{#each metricCards as metric}
-		<article class={`metric-card accent-${metric.accent}`} class:compact={metric.compact}>
-			<div class="metric-icon" aria-hidden="true"><metric.icon size={metric.compact ? 20 : 30} strokeWidth={1.8} /></div>
+		<article class={`metric-card accent-${metric.accent}`}>
+			<div class="metric-icon" aria-hidden="true"><metric.icon size={30} strokeWidth={1.8} /></div>
 			<div class="metric-content">
 				<div class="metric-title-row">
 					<h2>{metric.label}</h2>
@@ -145,6 +207,24 @@
 			</div>
 		</article>
 	{/each}
+
+	<div class="regulatory-region" aria-label="监管监控指标">
+		<div class="regulatory-grid">
+			{#each regulatoryItems as item}
+				<div class="regulatory-cell">
+					<div class="regulatory-title">
+						<span>{item.label}</span>
+						<span class={`status-light ${item.tone}`} role="img" aria-label={toneLabel(item.tone)} title={toneLabel(item.tone)}></span>
+					</div>
+					<strong class:muted-value={item.value === '待配置'}>{item.value}</strong>
+					<div class="regulatory-details">
+						<span>上限 <b class={item.tone}>{item.limit}</b></span>
+						<span>{item.detailLabel} <b class={item.tone}>{item.detailValue}</b></span>
+					</div>
+				</div>
+			{/each}
+		</div>
+	</div>
 </section>
 
 <section class="overview-row">
@@ -188,7 +268,7 @@
 	</article>
 </section>
 
-<section class="summary-row">
+<section class="dashboard-grid">
 	<article class="dashboard-panel project-panel">
 		<header><h2>推进中的融资项目</h2></header>
 		<table><thead><tr><th>融资方式</th><th>融资金额</th><th>期限</th><th>融资成本</th><th>落地时间</th></tr></thead><tbody>
@@ -201,5 +281,79 @@
 		<table><thead><tr><th>品种</th><th>{dashboard.monthlyIssuance.currentMonth.replace('-', '年')}月</th><th>{dashboard.monthlyIssuance.comparisonMonth.replace('-', '年')}月</th></tr></thead><tbody>
 			{#each dashboard.monthlyIssuance.rows as row}<tr><td>{row.label}</td><td>{row.currentYi.toFixed(2)}</td><td>{row.comparisonYi.toFixed(2)}</td></tr>{/each}
 		</tbody></table>
+	</article>
+
+	<article class="dashboard-panel limit-card">
+		<header><h2>负债额度管理</h2></header>
+		<table><thead><tr><th>融资品种</th><th>可发行额度</th><th>已发行额度</th><th>剩余可用额度</th><th>获批日期</th><th>到期日期</th></tr></thead><tbody>
+			{#each dashboard.limits as item}<tr><td><strong>{item.debtType}</strong></td><td>{item.limitYi.toFixed(2)}</td><td>{item.issuedYi.toFixed(2)}</td><td class:negative={item.remainingYi < 0}><strong>{item.remainingYi.toFixed(2)}</strong><span class="quota-track" aria-label={`已使用 ${item.limitYi > 0 ? Math.min(100, item.issuedYi / item.limitYi * 100).toFixed(0) : 0}%`}><i class:over-limit={item.remainingYi < 0} style:width={`${item.limitYi > 0 ? Math.min(100, item.issuedYi / item.limitYi * 100) : 0}%`}></i></span></td><td>{dateLabel(item.approvedDate)}</td><td>{dateLabel(item.expiryDate)}</td></tr>{/each}
+		</tbody><tfoot><tr><th>合计</th><th>{dashboard.limitTotals.limitYi.toFixed(2)}</th><th>{dashboard.limitTotals.issuedYi.toFixed(2)}</th><th>{dashboard.limitTotals.remainingYi.toFixed(2)}</th><th></th><th></th></tr></tfoot></table>
+		{#if dashboard.financeParameterReminder}
+			<div class="parameter-reminder" role="status"><CircleAlert size={18} /><span>请在本月初更新“上月末净资本”，收益凭证可发行额度按其 60% 计算。</span><a href="/data">去配置</a></div>
+		{/if}
+	</article>
+
+	<article class="dashboard-panel simulator-card">
+		<header><h2>发行试算</h2></header>
+		<div class="simulator-form">
+			<label><span>拟发行品种</span><select bind:value={simulationType}>{#each dashboard.limits as item}<option>{item.debtType}</option>{/each}</select></label>
+			<label><span>起息日</span><input type="date" bind:value={simulationDate} /></label>
+			<label><span>规模（亿元）</span><input type="number" min="0.01" step="0.01" bind:value={simulationAmount} placeholder="0.00" /></label>
+			<label><span>期限</span><input bind:value={simulationTenor} placeholder="例如 3Y/5Y" /></label>
+		</div>
+		<div class="simulation-results">
+			<div class:pass={simulationResult?.pass} class:fail={simulationResult && !simulationResult.pass}><Landmark size={18} /><span><strong>负债额度</strong>{simulationResult?.message ?? '输入发行规模后自动校验'}</span></div>
+			<div class="todo"><Info size={18} /><span><strong>到期当月集中度</strong>TODO：纳入拟发行后的月度到期分布</span></div>
+			<div class="todo"><Info size={18} /><span><strong>LCR / NSFR / 资产负债率 / 长短期负债比</strong>TODO：接入财务数据后试算</span></div>
+		</div>
+	</article>
+
+	<article class="dashboard-panel calendar-card">
+		<header>
+			<h2>融资日历</h2>
+			<div class="calendar-filter"><DebtPresetFilter options={dashboard.typeOptions} presets={calendarPresets} bind:preset={calendarPreset} bind:values={calendarTypes} note={`台账截至 ${dashboard.asOfDate}`} compact /></div>
+		</header>
+		<div class="calendar-wrap" class:expanded={calendarExpanded}>
+			<div class="calendar-grid" style={`--cols: ${cellsPerWeek}`}>
+				{#each calendarWeekdays as weekday}<div class="weekday">{weekday}</div>{/each}
+				{#each calendarCells as cell}
+					<div class:other={cell.other} class:today={cell.today} class="calendar-cell">
+						<span class="day-number">{cell.day}</span>
+						<div class="calendar-events">
+							{#each cell.events as event}<a class={event.tone} href={event.href} title={event.title}>{event.title}</a>{/each}
+						</div>
+					</div>
+				{/each}
+			</div>
+			<button
+				class="calendar-expand"
+				type="button"
+				aria-expanded={calendarExpanded}
+				aria-label={calendarExpanded ? '收起周末，仅显示工作日' : '展开周末，显示完整日历'}
+				title={calendarExpanded ? '收起周末' : '展开周末'}
+				onclick={() => (calendarExpanded = !calendarExpanded)}
+			>
+				{#if calendarExpanded}<ChevronLeft size={16} />{:else}<ChevronRight size={16} />{/if}
+			</button>
+		</div>
+	</article>
+
+	<article class="dashboard-panel reminder-card">
+		<header><h2>待办与提醒</h2><span>{reminders.total} 条</span></header>
+		<div class="reminder-list">
+			{#each reminders.items as reminder}
+				<a href={reminder.href} class="reminder-item">
+					<span class={`reminder-dot ${reminder.level}`} aria-hidden="true"></span>
+					<div class="reminder-copy">
+						<strong>{reminder.projectName}</strong>
+						<span>{reminder.taskName}</span>
+						<small>{reminder.debtType} · {reminder.assigneeName ? `负责人：${reminder.assigneeName}` : '待分配'}</small>
+					</div>
+					<span class={`reminder-due ${reminder.level}`}>{reminder.dueLabel}</span>
+				</a>
+			{:else}
+				<p class="reminder-empty">当前没有需要处理的项目节点</p>
+			{/each}
+		</div>
 	</article>
 </section>

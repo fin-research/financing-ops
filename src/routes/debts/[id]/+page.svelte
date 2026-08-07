@@ -7,7 +7,7 @@
 
 <svelte:head><title>{debt.instrumentName ?? debt.debtType} · 负债详情</title></svelte:head>
 
-<a class="back-link" href="/workbench"><ArrowLeft size={16} />返回工作台</a>
+<a class="back-link" href="/"><ArrowLeft size={16} />返回仪表盘</a>
 <section class="debt-heading">
 	<div><p class="eyebrow">DEBT DETAIL</p><h1>{debt.instrumentName ?? debt.instrumentCode ?? debt.debtType}</h1></div>
 	<span>{debt.categoryLevel1 ?? debt.debtType} / {debt.categoryLevel2 ?? debt.debtType}</span>

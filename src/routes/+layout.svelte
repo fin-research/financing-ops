@@ -3,9 +3,7 @@
 	import { page } from '$app/state';
 	import {
 		BarChart3,
-		Bell,
 		BriefcaseBusiness,
-		CalendarDays,
 		FileSpreadsheet,
 		LayoutDashboard,
 		LogOut,
@@ -16,12 +14,9 @@
 	import { roleLabel } from '$lib/roles';
 
 	let { children, data } = $props();
-	let remindersOpen = $state(false);
-	let reminderMenu = $state<HTMLDivElement>();
 
 	const workspaceItems = [
 		{ href: '/', label: '仪表盘', mobileLabel: '仪表盘', icon: LayoutDashboard },
-		{ href: '/workbench', label: '工作台', mobileLabel: '工作台', icon: CalendarDays },
 		{ href: '/projects', label: '项目进度', mobileLabel: '项目', icon: BriefcaseBusiness }
 	];
 
@@ -34,8 +29,7 @@
 	const mobileItems = [...workspaceItems, managementItems[0], managementItems[1]];
 
 	const isActive = (href: string) => {
-		if (href === '/') return page.url.pathname === '/';
-		if (href === '/workbench' && page.url.pathname.startsWith('/debts/')) return true;
+		if (href === '/') return page.url.pathname === '/' || page.url.pathname.startsWith('/debts/');
 		return page.url.pathname === href || page.url.pathname.startsWith(`${href}/`);
 	};
 
@@ -50,21 +44,9 @@
 		if (pathname === '/settings') return '个人设置';
 		if (pathname === '/sop/reminders') return '提醒发送历史';
 		if (pathname.startsWith('/debts/')) return '负债详情';
-		return navItems.find((item) => isActive(item.href))?.label ?? '工作台';
-	};
-
-	const closeReminderMenu = (event: MouseEvent) => {
-		if (remindersOpen && reminderMenu && !reminderMenu.contains(event.target as Node)) {
-			remindersOpen = false;
-		}
-	};
-
-	const handleReminderKey = (event: KeyboardEvent) => {
-		if (event.key === 'Escape') remindersOpen = false;
+		return navItems.find((item) => isActive(item.href))?.label ?? '仪表盘';
 	};
 </script>
-
-<svelte:window onclick={closeReminderMenu} onkeydown={handleReminderKey} />
 
 <svelte:head>
 	<title>融资工作台</title>
@@ -78,7 +60,7 @@
 <div class="app-shell">
 	<a class="skip-link" href="#main-content">跳到主要内容</a>
 	<aside class="sidebar">
-		<a class="brand" href="/workbench" aria-label="融资工作台首页">
+		<a class="brand" href="/" aria-label="融资工作台首页">
 			<span class="brand-mark"><BarChart3 size={19} strokeWidth={2.2} /></span>
 			<span>
 				<strong>融资工作台</strong>
@@ -128,50 +110,6 @@
 				</span>
 			</div>
 			<div class="top-actions">
-				<div class="notification-menu" bind:this={reminderMenu}>
-					<button
-						class="reminder-button"
-						type="button"
-						aria-label={`查看提醒，共 ${data.reminders.total} 条`}
-						aria-expanded={remindersOpen}
-						aria-controls="topbar-reminder-list"
-						onclick={() => (remindersOpen = !remindersOpen)}
-					>
-						<Bell size={18} />
-						<span>提醒</span>
-						{#if data.reminders.total > 0}
-							<span class="notification-count" aria-hidden="true">
-								{data.reminders.total > 99 ? '99+' : data.reminders.total}
-							</span>
-						{/if}
-					</button>
-					{#if remindersOpen}
-						<section class="notification-popover" id="topbar-reminder-list" aria-label="待办与预警">
-							<header>
-								<div>
-									<strong>待办与预警</strong>
-									<span>未来 7 天及已逾期节点</span>
-								</div>
-								<span>{data.reminders.total} 条</span>
-							</header>
-							<div class="notification-list">
-								{#each data.reminders.items as reminder}
-									<a href={reminder.href} onclick={() => (remindersOpen = false)}>
-										<span class={`reminder-level ${reminder.level}`} aria-hidden="true"></span>
-										<span class="reminder-copy">
-											<strong>{reminder.projectName}</strong>
-											<span>{reminder.taskName}</span>
-											<small>{reminder.debtType} · {reminder.assigneeName ? `负责人：${reminder.assigneeName}` : '待分配'}</small>
-										</span>
-										<span class={`reminder-due ${reminder.level}`}>{reminder.dueLabel}</span>
-									</a>
-								{:else}
-									<p class="notification-empty">当前没有需要处理的项目节点</p>
-								{/each}
-							</div>
-						</section>
-					{/if}
-				</div>
 				<a class="profile-button" href="/settings" aria-label="打开个人设置">
 					{#if data.user.avatarDataUrl}
 						<img class="avatar" src={data.user.avatarDataUrl} alt="" />

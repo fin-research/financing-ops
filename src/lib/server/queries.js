@@ -430,9 +430,12 @@ export function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 	const netCapital = parameters.prior_month_net_capital?.valueYi;
 	const ratio = (numerator, denominator) => denominator ? number(numerator) / denominator * 100 : null;
 	const projectAmountYi = projects.reduce((sum, item) => sum + item.amountYi, 0);
+	const { limits, limitTotals, financeParameterReminder } = getDebtLimitSummary();
+	const calendarMonth = today.slice(0, 7);
+	const events = getCalendarMonthEvents();
 
 	return {
-		asOfDate, today, selectedTypes, typeOptions: getDebtTypeOptions(),
+		asOfDate, today, selectedTypes, typeOptions: getDebtTypeOptions(), calendarMonth, events,
 		metrics: {
 			balanceYi: currentSnapshot.balanceYi,
 			balanceMonthChangeYi: currentSnapshot.balanceYi - previousMonthBalance,
@@ -458,7 +461,10 @@ export function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 		composition,
 		maturityDistribution: maturityMonths.map((month) => ({ month, amountYi: maturityMap.get(month) ?? 0 })),
 		projects,
-		monthlyIssuance
+		monthlyIssuance,
+		limits,
+		limitTotals,
+		financeParameterReminder
 	};
 }
 
@@ -505,10 +511,47 @@ function debtLimitUsage(db, config, asOfDate) {
 	`).get(asOfDate, mappedType === '公募次级' ? '次级债' : mappedType)?.value);
 }
 
-export function getWorkbenchData() {
+export function getDebtLimitSummary() {
 	const db = getDatabase();
-	const snapshot = snapshotBalance(db, '9999-12-31');
-	const asOfDate = snapshot.asOfDate ?? dateInShanghai();
+	const today = dateInShanghai();
+	const asOfDate = snapshotBalance(db, '9999-12-31').asOfDate ?? today;
+	const limits = db.prepare(`
+		SELECT debt_type AS debtType, limit_yi AS limitYi, usage_basis AS usageBasis,
+			approved_date AS approvedDate, expiry_date AS expiryDate,
+			calculation_mode AS calculationMode, sort_order AS sortOrder
+		FROM debt_limit_configs ORDER BY sort_order, debt_type
+	`).all();
+	const parameters = financeParameterMap(db);
+	const effectiveLimits = limits.map((item) => {
+		const configured = number(item.limitYi);
+		const calculated = item.calculationMode === 'net_capital_60' && parameters.prior_month_net_capital?.valueYi != null
+			? parameters.prior_month_net_capital.valueYi * 0.6
+			: configured;
+		const issuedYi = debtLimitUsage(db, item, asOfDate);
+		return {
+			...item,
+			limitYi: calculated,
+			configuredLimitYi: configured,
+			issuedYi,
+			remainingYi: calculated - issuedYi,
+			needsNetCapitalUpdate: item.calculationMode === 'net_capital_60'
+				&& (!parameters.prior_month_net_capital?.periodEnd || parameters.prior_month_net_capital.periodEnd < endOfPreviousMonth(today))
+		};
+	});
+	const limitTotals = effectiveLimits.reduce((total, item) => ({
+		limitYi: total.limitYi + item.limitYi,
+		issuedYi: total.issuedYi + item.issuedYi,
+		remainingYi: total.remainingYi + item.remainingYi
+	}), { limitYi: 0, issuedYi: 0, remainingYi: 0 });
+	return {
+		limits: effectiveLimits,
+		limitTotals,
+		financeParameterReminder: effectiveLimits.some((item) => item.needsNetCapitalUpdate)
+	};
+}
+
+export function getCalendarMonthEvents() {
+	const db = getDatabase();
 	const today = dateInShanghai();
 	const monthStart = `${today.slice(0, 7)}-01`;
 	const nextMonth = new Date(`${monthStart}T00:00:00Z`);
@@ -591,55 +634,8 @@ export function getWorkbenchData() {
 		href: `/projects/${row.id}`,
 		amountYi: number(row.amountYi)
 	}));
-	const events = [...debtEvents, ...interestEvents, ...projectEvents]
+	return [...debtEvents, ...interestEvents, ...projectEvents]
 		.sort((left, right) => left.date.localeCompare(right.date) || left.title.localeCompare(right.title));
-
-	const limits = db.prepare(`
-		SELECT debt_type AS debtType, limit_yi AS limitYi, usage_basis AS usageBasis,
-			approved_date AS approvedDate, expiry_date AS expiryDate,
-			calculation_mode AS calculationMode, sort_order AS sortOrder
-		FROM debt_limit_configs ORDER BY sort_order, debt_type
-	`).all();
-	const parameters = financeParameterMap(db);
-	const effectiveLimits = limits.map((item) => {
-		const configured = number(item.limitYi);
-		const calculated = item.calculationMode === 'net_capital_60' && parameters.prior_month_net_capital?.valueYi != null
-			? parameters.prior_month_net_capital.valueYi * 0.6
-			: configured;
-		const issuedYi = debtLimitUsage(db, item, asOfDate);
-		return {
-			...item,
-			limitYi: calculated,
-			configuredLimitYi: configured,
-			issuedYi,
-			remainingYi: calculated - issuedYi,
-			needsNetCapitalUpdate: item.calculationMode === 'net_capital_60'
-				&& (!parameters.prior_month_net_capital?.periodEnd || parameters.prior_month_net_capital.periodEnd < endOfPreviousMonth(today))
-		};
-	});
-	const limitTotals = effectiveLimits.reduce((total, item) => ({
-		limitYi: total.limitYi + item.limitYi,
-		issuedYi: total.issuedYi + item.issuedYi,
-		remainingYi: total.remainingYi + item.remainingYi
-	}), { limitYi: 0, issuedYi: 0, remainingYi: 0 });
-	const summaryGroups = [
-		{ label: '公司债券', types: ['小公募', '私募债', '科创债'] },
-		{ label: '次级债', types: ['次级债'] },
-		{ label: '短融', types: ['短期融资券'] },
-		{ label: '固定收益凭证', types: ['固定收益凭证'] },
-		{ label: '转融资', types: ['转融资'] },
-		{ label: '集团借款', types: ['集团借款'] }
-	];
-	const monthMaturitySummary = summaryGroups.map((group) => ({
-		label: group.label,
-		amountYi: debtEvents.filter((event) => group.types.includes(event.filterType)).reduce((sum, event) => sum + event.amountYi, 0)
-	}));
-
-	return {
-		asOfDate, today, calendarMonth: today.slice(0, 7), typeOptions: getDebtTypeOptions(),
-		events, monthMaturitySummary, limits: effectiveLimits, limitTotals,
-		financeParameterReminder: effectiveLimits.some((item) => item.needsNetCapitalUpdate)
-	};
 }
 
 export function getDebtDetail(id) {

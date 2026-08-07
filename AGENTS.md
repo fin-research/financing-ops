@@ -2,7 +2,7 @@
 
 本文件适用于仓库根目录及全部子目录，是人类开发者和 Codex 在本项目中的长期协作约定。
 
-最后更新：2026-08-06
+最后更新：2026-08-07
 
 ## 1. 项目目标
 
@@ -63,14 +63,13 @@ pnpm dev
 
 ## 4. 目录与职责
 
-- `src/routes/`：页面、页面服务端加载和表单动作。
+- `src/routes/`：页面、页面服务端加载和表单动作；仪表盘聚合指标卡、存量结构、到期分布、推进项目、月度发行、负债额度、发行试算、融资日历与待办提醒。
 - `src/lib/server/db.js`：SQLite 连接。
 - `src/lib/server/schema.js`：表结构和索引。
 - `src/lib/server/seed.js`：可重复执行的基础人员、SOP、项目和提醒种子。
 - `src/lib/server/excel-import.js`：Excel 解析、明细幂等写入和余额快照核对。
-- `src/lib/server/queries.js`：Dashboard、甘特图和设置页查询。
+- `src/lib/server/queries.js`：Dashboard、甘特图和设置页查询；`getDebtLimitSummary()` 供额度表与试算复用，`getCalendarMonthEvents()` 供融资日历复用。
 - `src/lib/server/reminders.js`：提醒计算、去重、Resend 发送和发送日志。
-- `src/routes/workbench/`：融资日历、负债额度管理和发行试算。
 - `src/routes/debts/[id]/`：单笔负债与来源单元格追溯。
 - `scripts/`：数据库、导入和提醒 CLI。
 - `data/`：原始 Excel；不得静默改写源文件。
@@ -123,7 +122,7 @@ pnpm dev
 
 - `pnpm check`：0 error、0 warning。
 - `pnpm build`：成功。
-- 核心路由 `/`、`/workbench`、`/debts/[id]`、`/projects`、`/sop`、`/settings`、`/data`、`/people` 可访问。
+- 核心路由 `/`、`/debts/[id]`、`/projects`、`/sop`、`/settings`、`/data`、`/people` 可访问。
 - Excel 导入能够重复执行且汇总保持一致。
 - 新增表单具有失败反馈，不得静默失败。
 - 新增可见文字满足 `1rem / 0.75rem` 字号规则。
