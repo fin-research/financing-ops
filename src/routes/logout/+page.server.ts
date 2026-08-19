@@ -4,11 +4,11 @@ import { deleteSession, SESSION_COOKIE } from '$lib/server/auth.js';
 import { auditRequestMeta, recordAudit } from '$lib/server/audit.js';
 
 export const actions: Actions = {
-	default: (event) => {
+	default: async (event) => {
 		const user = event.locals.user;
 		const token = event.cookies.get(SESSION_COOKIE);
 		if (user) {
-			recordAudit({
+			await recordAudit({
 				...auditRequestMeta(event),
 				action: 'logout',
 				entityType: 'auth',
@@ -16,7 +16,7 @@ export const actions: Actions = {
 				summary: `${user.username} 退出系统`
 			});
 		}
-		deleteSession(token);
+		await deleteSession(token);
 		event.cookies.delete(SESSION_COOKIE, { path: '/' });
 		throw redirect(303, '/login');
 	}

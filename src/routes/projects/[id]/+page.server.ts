@@ -1,21 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { auditRequestMeta, getAuditLogs, recordAudit } from '$lib/server/audit.js';
+import { auditRequestMeta, getAuditLogs, prepareAudit } from '$lib/server/audit.js';
 import { getDatabase } from '$lib/server/db.js';
 
 const PROJECT_STATUSES = new Set(['planning', 'in_progress', 'at_risk', 'completed', 'cancelled']);
 const TASK_STATUSES = new Set(['not_started', 'in_progress', 'blocked', 'completed']);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-function resolveProjectId(rawId: string) {
+async function resolveProjectId(rawId: string) {
 	const db = getDatabase();
-	const exact = db.prepare('SELECT id FROM projects WHERE id = ?').get(rawId) as { id: string } | undefined;
+	const exact = await db.prepare('SELECT id FROM projects WHERE id = ?').get(rawId) as { id: string } | undefined;
 	if (exact) return exact.id;
 
 	const index = Number(rawId);
 	if (!Number.isInteger(index) || index < 1) return null;
-	const legacy = db.prepare(`
+	const legacy = await db.prepare(`
 		SELECT id FROM projects
 		ORDER BY COALESCE(planned_start_date, planned_issue_date), name
 		LIMIT 1 OFFSET ?
@@ -23,9 +23,9 @@ function resolveProjectId(rawId: string) {
 	return legacy?.id ?? null;
 }
 
-function loadProject(projectId: string) {
+async function loadProject(projectId: string) {
 	const db = getDatabase();
-	const project = db.prepare(`
+	const project = await db.prepare(`
 		SELECT p.id, p.code, p.name, p.debt_type AS debtType, p.borrower, p.amount, p.currency,
 			p.status, p.planned_start_date AS plannedStartDate, p.planned_issue_date AS plannedIssueDate,
 			p.planned_maturity_date AS plannedMaturityDate, p.notes, p.created_at AS createdAt,
@@ -38,7 +38,7 @@ function loadProject(projectId: string) {
 	`).get(projectId);
 	if (!project) throw error(404, '项目不存在');
 
-	const tasks = db.prepare(`
+	const tasks = await db.prepare(`
 		SELECT pt.id, pt.name, pt.status, pt.assignee_id AS assigneeId,
 			assignee.name AS assigneeName, pt.planned_start_date AS plannedStartDate,
 			pt.due_date AS dueDate, pt.completed_at AS completedAt,
@@ -49,7 +49,7 @@ function loadProject(projectId: string) {
 		ORDER BY pt.sort_order, pt.due_date, pt.name
 	`).all(projectId);
 
-	const people = db.prepare(`
+	const people = await db.prepare(`
 		SELECT id, name, email, role
 		FROM people WHERE active = 1 ORDER BY name
 	`).all();
@@ -65,7 +65,7 @@ function loadProject(projectId: string) {
 		if (person) membersById.set(person.id, { ...person, responsibility: '任务执行人' });
 	}
 
-	const auditLogs = getAuditLogs({ entityType: 'project', entityId: projectId, limit: 30 } as any).map((item: any) => ({
+	const auditLogs = (await getAuditLogs({ entityType: 'project', entityId: projectId, limit: 30 } as any)).map((item: any) => ({
 		action: item.action,
 		detail: item.summary,
 		actor: item.actorUsername ?? '系统',
@@ -97,8 +97,8 @@ function loadProject(projectId: string) {
 	};
 }
 
-export const load: PageServerLoad = ({ params }) => {
-	const projectId = resolveProjectId(params.id);
+export const load: PageServerLoad = async ({ params }) => {
+	const projectId = await resolveProjectId(params.id);
 	if (!projectId) throw error(404, '项目不存在');
 	return loadProject(projectId);
 };
@@ -106,7 +106,7 @@ export const load: PageServerLoad = ({ params }) => {
 export const actions: Actions = {
 	updateProject: async (event) => {
 		const { request, params } = event;
-		const projectId = resolveProjectId(params.id);
+		const projectId = await resolveProjectId(params.id);
 		if (!projectId) return fail(404, { message: '项目不存在' });
 		const data = await request.formData();
 		const status = String(data.get('status') ?? '');
@@ -114,17 +114,17 @@ export const actions: Actions = {
 		const notes = String(data.get('notes') ?? '').trim();
 		if (!PROJECT_STATUSES.has(status)) return fail(400, { message: '项目状态无效' });
 		const db = getDatabase();
-		if (ownerId && !db.prepare('SELECT 1 FROM people WHERE id = ? AND active = 1').get(ownerId)) {
+		if (ownerId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = 1').get(ownerId)) {
 			return fail(400, { message: '负责人不存在或已停用' });
 		}
 		const selectState = db.prepare('SELECT status, owner_id AS ownerId, notes FROM projects WHERE id = ?');
-		const before = selectState.get(projectId);
-		db.transaction(() => {
+		const before = await selectState.get(projectId);
+		await db.batch([
 			db.prepare(`
 				UPDATE projects SET status = ?, owner_id = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
-			`).run(status, ownerId || null, notes || null, projectId);
-			recordAudit({
+			`).bind(status, ownerId || null, notes || null, projectId),
+			prepareAudit({
 				db,
 				...auditRequestMeta(event),
 				action: 'project.update',
@@ -132,14 +132,14 @@ export const actions: Actions = {
 				entityId: projectId,
 				summary: '更新项目状态、负责人或说明',
 				before,
-				after: selectState.get(projectId)
-			});
-		})();
+				after: { status, ownerId: ownerId || null, notes: notes || null }
+			})
+		]);
 		return { success: true, message: '项目状态与负责人已更新' };
 	},
 	updateTask: async (event) => {
 		const { request, params } = event;
-		const projectId = resolveProjectId(params.id);
+		const projectId = await resolveProjectId(params.id);
 		if (!projectId) return fail(404, { message: '项目不存在' });
 		const data = await request.formData();
 		const taskId = String(data.get('taskId') ?? '');
@@ -149,18 +149,18 @@ export const actions: Actions = {
 		if (!taskId || !TASK_STATUSES.has(status)) return fail(400, { message: '任务参数无效' });
 		if (dueDate && !ISO_DATE.test(dueDate)) return fail(400, { message: '截止日期格式无效' });
 		const db = getDatabase();
-		if (!db.prepare('SELECT 1 FROM project_tasks WHERE id = ? AND project_id = ?').get(taskId, projectId)) {
+		if (!await db.prepare('SELECT 1 FROM project_tasks WHERE id = ? AND project_id = ?').get(taskId, projectId)) {
 			return fail(404, { message: '任务节点不存在' });
 		}
-		if (assigneeId && !db.prepare('SELECT 1 FROM people WHERE id = ? AND active = 1').get(assigneeId)) {
+		if (assigneeId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = 1').get(assigneeId)) {
 			return fail(400, { message: '任务负责人不存在或已停用' });
 		}
 		const selectState = db.prepare(`
 			SELECT id, name, status, assignee_id AS assigneeId, due_date AS dueDate, completed_at AS completedAt
 			FROM project_tasks WHERE id = ? AND project_id = ?
 		`);
-		const before = selectState.get(taskId, projectId) as any;
-		db.transaction(() => {
+		const before = await selectState.get(taskId, projectId) as any;
+		await db.batch([
 			db.prepare(`
 				UPDATE project_tasks
 				SET status = ?, assignee_id = ?, due_date = ?,
@@ -170,8 +170,8 @@ export const actions: Actions = {
 					END,
 					updated_at = CURRENT_TIMESTAMP
 				WHERE id = ? AND project_id = ?
-			`).run(status, assigneeId || null, dueDate || null, status, taskId, projectId);
-			recordAudit({
+			`).bind(status, assigneeId || null, dueDate || null, status, taskId, projectId),
+			prepareAudit({
 				db,
 				...auditRequestMeta(event),
 				action: 'project.task.update',
@@ -179,14 +179,14 @@ export const actions: Actions = {
 				entityId: projectId,
 				summary: `更新任务节点：${before.name}`,
 				before,
-				after: selectState.get(taskId, projectId)
-			});
-		})();
+				after: { ...before, status, assigneeId: assigneeId || null, dueDate: dueDate || null }
+			})
+		]);
 		return { success: true, message: '任务节点已更新' };
 	},
 	addTask: async (event) => {
 		const { request, params } = event;
-		const projectId = resolveProjectId(params.id);
+		const projectId = await resolveProjectId(params.id);
 		if (!projectId) return fail(404, { message: '项目不存在' });
 		const data = await request.formData();
 		const name = String(data.get('name') ?? '').trim();
@@ -195,21 +195,21 @@ export const actions: Actions = {
 		if (!name || name.length > 120) return fail(400, { message: '请输入 1–120 个字符的任务名称' });
 		if (dueDate && !ISO_DATE.test(dueDate)) return fail(400, { message: '截止日期格式无效' });
 		const db = getDatabase();
-		if (assigneeId && !db.prepare('SELECT 1 FROM people WHERE id = ? AND active = 1').get(assigneeId)) {
+		if (assigneeId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = 1').get(assigneeId)) {
 			return fail(400, { message: '任务负责人不存在或已停用' });
 		}
-		const nextOrder = (db.prepare(`
+		const nextOrder = (await db.prepare(`
 			SELECT COALESCE(MAX(sort_order), 0) + 1 AS nextOrder
 			FROM project_tasks WHERE project_id = ?
 		`).get(projectId) as { nextOrder: number }).nextOrder;
 		const taskId = randomUUID();
-		db.transaction(() => {
+		await db.batch([
 			db.prepare(`
 				INSERT INTO project_tasks (
 					id, project_id, name, status, assignee_id, due_date, sort_order
 				) VALUES (?, ?, ?, 'not_started', ?, ?, ?)
-			`).run(taskId, projectId, name, assigneeId || null, dueDate || null, nextOrder);
-			recordAudit({
+			`).bind(taskId, projectId, name, assigneeId || null, dueDate || null, nextOrder),
+			prepareAudit({
 				db,
 				...auditRequestMeta(event),
 				action: 'project.task.create',
@@ -217,8 +217,8 @@ export const actions: Actions = {
 				entityId: projectId,
 				summary: `添加任务节点：${name}`,
 				after: { id: taskId, name, assigneeId: assigneeId || null, dueDate: dueDate || null, sortOrder: nextOrder }
-			});
-		})();
+			})
+		]);
 		return { success: true, message: '任务节点已添加' };
 	}
 };

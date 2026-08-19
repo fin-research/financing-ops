@@ -32,13 +32,13 @@ export const actions: Actions = {
 			return fail(400, { message: '用户名或密码错误', username });
 		}
 
-		const { token, expiresAt } = createSession(user.id);
+		const { token, expiresAt } = await createSession(user.id);
 		event.cookies.set(
 			SESSION_COOKIE,
 			token,
 			sessionCookieOptions(expiresAt, event.url.protocol === 'https:')
 		);
-		recordAudit({
+		await recordAudit({
 			...auditRequestMeta({ ...event, locals: { ...event.locals, user } }),
 			action: 'login',
 			entityType: 'auth',

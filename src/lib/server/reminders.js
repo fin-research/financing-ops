@@ -1,7 +1,6 @@
 // @ts-nocheck
 import { randomUUID } from 'node:crypto';
 import { Resend } from 'resend';
-import { getDatabase } from './db.js';
 
 const DAY_MS = 86_400_000;
 const TRIGGER_COLUMNS = {
@@ -49,9 +48,14 @@ function escapeHtml(value) {
 		.replaceAll("'", '&#039;');
 }
 
-export function collectDueReminders({ asOfDate = isoDate() } = {}) {
-	const db = getDatabase();
-	const rules = db.prepare(`
+async function resolveDatabase(db) {
+	if (db) return db;
+	return (await import('./db.js')).getDatabase();
+}
+
+export async function collectDueReminders({ asOfDate = isoDate(), db } = {}) {
+	db = await resolveDatabase(db);
+	const rules = await db.prepare(`
 		SELECT id, name, target_type AS targetType, debt_type AS debtType,
 			trigger_field AS triggerField, offset_days AS offsetDays, frequency,
 			recipient_mode AS recipientMode, recipients
@@ -63,7 +67,7 @@ export function collectDueReminders({ asOfDate = isoDate() } = {}) {
 		if (rule.targetType !== 'project_task') continue;
 		const triggerColumn = TRIGGER_COLUMNS[rule.triggerField];
 		if (!triggerColumn) continue;
-		const rows = db.prepare(`
+		const rows = await db.prepare(`
 			SELECT pt.id AS targetId, pt.name AS taskName, p.name AS projectName,
 				p.debt_type AS debtType, ${triggerColumn} AS triggerDate,
 				assignee.email AS assigneeEmail, owner.email AS ownerEmail
@@ -96,18 +100,18 @@ export function collectDueReminders({ asOfDate = isoDate() } = {}) {
 	return reminders;
 }
 
-export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false } = {}) {
-	const db = getDatabase();
-	const reminders = collectDueReminders({ asOfDate });
-	const apiKey = process.env.RESEND_API_KEY;
-	const from = process.env.FROM_EMAIL
-		?? process.env.REMINDER_FROM_EMAIL
+export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false, db, config = process.env } = {}) {
+	db = await resolveDatabase(db);
+	const reminders = await collectDueReminders({ asOfDate, db });
+	const apiKey = config.RESEND_API_KEY;
+	const from = config.FROM_EMAIL
+		?? config.REMINDER_FROM_EMAIL
 		?? '融资工作台 <onboarding@resend.dev>';
 	const resend = apiKey ? new Resend(apiKey) : null;
 	const results = [];
 
 	for (const reminder of reminders) {
-		const existing = db.prepare(`
+		const existing = await db.prepare(`
 			SELECT id, status FROM reminder_deliveries
 			WHERE rule_id = ? AND target_id = ? AND delivery_date = ?
 		`).get(reminder.ruleId, reminder.targetId, reminder.deliveryDate);
@@ -118,7 +122,7 @@ export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false } 
 
 		const deliveryId = existing?.id ?? randomUUID();
 		if (dryRun || !resend) {
-			db.prepare(`
+			await db.prepare(`
 				INSERT INTO reminder_deliveries
 					(id, rule_id, target_type, target_id, delivery_date, recipients, status)
 				VALUES (?, ?, ?, ?, ?, ?, 'pending')
@@ -148,7 +152,7 @@ export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false } 
 					<p>负债品种：${escapeHtml(reminder.debtType)}</p>`
 			});
 			if (response.error) throw new Error(response.error.message);
-			db.prepare(`
+			await db.prepare(`
 				INSERT INTO reminder_deliveries
 					(id, rule_id, target_type, target_id, delivery_date, recipients, status, provider_message_id, sent_at)
 				VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, CURRENT_TIMESTAMP)
@@ -167,7 +171,7 @@ export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false } 
 			);
 			results.push({ ...reminder, status: 'sent', messageId: response.data?.id ?? null });
 		} catch (error) {
-			db.prepare(`
+			await db.prepare(`
 				INSERT INTO reminder_deliveries
 					(id, rule_id, target_type, target_id, delivery_date, recipients, status, error_message)
 				VALUES (?, ?, ?, ?, ?, ?, 'failed', ?)

@@ -7,15 +7,15 @@ import {
 	SESSION_COOKIE,
 	verifyPassword
 } from '$lib/server/auth.js';
-import { auditRequestMeta, recordAudit } from '$lib/server/audit.js';
+import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 
 const usernamePattern = /^[A-Za-z0-9._-]{3,64}$/;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const avatarTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const maxAvatarBytes = 512 * 1024;
 
-function currentProfile(userId: string) {
-	return getDatabase().prepare(`
+async function currentProfile(userId: string) {
+	return await getDatabase().prepare(`
 		SELECT u.id, u.username, u.password_hash AS passwordHash,
 			u.avatar_data_url AS avatarDataUrl,
 			p.id AS personId, p.name, p.email, p.role
@@ -36,7 +36,7 @@ function currentProfile(userId: string) {
 		| undefined;
 }
 
-function publicProfile(profile: NonNullable<ReturnType<typeof currentProfile>>) {
+function publicProfile(profile: NonNullable<Awaited<ReturnType<typeof currentProfile>>>) {
 	return {
 		username: profile.username,
 		avatarDataUrl: profile.avatarDataUrl,
@@ -53,9 +53,9 @@ function constraintMessage(error: unknown) {
 	return '保存失败，请稍后重试';
 }
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = async ({ locals }) => {
 	if (!locals.user) throw error(401, '登录已失效，请重新登录');
-	const profile = currentProfile(locals.user.id);
+	const profile = await currentProfile(locals.user.id);
 	if (!profile) throw error(404, '未找到当前账号');
 	return { profile: publicProfile(profile) };
 };
@@ -63,7 +63,7 @@ export const load: PageServerLoad = ({ locals }) => {
 export const actions: Actions = {
 	updateProfile: async (event) => {
 		if (!event.locals.user) return fail(401, { section: 'profile', message: '登录已失效，请重新登录' });
-		const before = currentProfile(event.locals.user.id);
+		const before = await currentProfile(event.locals.user.id);
 		if (!before) return fail(404, { section: 'profile', message: '未找到当前账号' });
 
 		const data = await event.request.formData();
@@ -102,16 +102,16 @@ export const actions: Actions = {
 
 		const db = getDatabase();
 		try {
-			db.transaction(() => {
+			await db.batch([
 				db.prepare(`
 					UPDATE people SET name = ?, email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-				`).run(name, email || null, before.personId);
+				`).bind(name, email || null, before.personId),
 				db.prepare(`
 					UPDATE auth_users
 					SET username = ?, avatar_data_url = ?, updated_at = CURRENT_TIMESTAMP
 					WHERE id = ?
-				`).run(username, avatarDataUrl, before.id);
-				recordAudit({
+				`).bind(username, avatarDataUrl, before.id),
+				prepareAudit({
 					...auditRequestMeta(event),
 					db,
 					action: 'profile.update',
@@ -125,8 +125,8 @@ export const actions: Actions = {
 						hasAvatar: Boolean(before.avatarDataUrl)
 					},
 					after: { name, email: email || null, username, hasAvatar: Boolean(avatarDataUrl) }
-				});
-			})();
+				})
+			]);
 			return { section: 'profile', success: true, message: '个人资料已更新' };
 		} catch (error) {
 			return fail(409, { section: 'profile', message: constraintMessage(error) });
@@ -135,7 +135,7 @@ export const actions: Actions = {
 
 	updatePassword: async (event) => {
 		if (!event.locals.user) return fail(401, { section: 'password', message: '登录已失效，请重新登录' });
-		const profile = currentProfile(event.locals.user.id);
+		const profile = await currentProfile(event.locals.user.id);
 		if (!profile) return fail(404, { section: 'password', message: '未找到当前账号' });
 
 		const data = await event.request.formData();
@@ -157,23 +157,23 @@ export const actions: Actions = {
 
 		const passwordHash = await hashPassword(newPassword);
 		const db = getDatabase();
-		db.transaction(() => {
+		await db.batch([
 			db.prepare(`
 				UPDATE auth_users
 				SET password_hash = ?, failed_login_count = 0, locked_until = NULL,
 					updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
-			`).run(passwordHash, profile.id);
-			recordAudit({
+			`).bind(passwordHash, profile.id),
+			prepareAudit({
 				...auditRequestMeta(event),
 				db,
 				action: 'password.update',
 				entityType: 'auth',
 				entityId: profile.id,
 				summary: `${profile.username} 修改登录密码`
-			});
-		})();
-		deleteOtherSessions(profile.id, event.cookies.get(SESSION_COOKIE));
+			})
+		]);
+		await deleteOtherSessions(profile.id, event.cookies.get(SESSION_COOKIE));
 		return { section: 'password', success: true, message: '密码已更新，其他设备上的登录已退出' };
 	}
 };

@@ -6,7 +6,7 @@ import {
 	getActiveSopDebtTypeOptions,
 	getProjectGanttData
 } from '$lib/server/queries.js';
-import { auditRequestMeta, recordAudit } from '$lib/server/audit.js';
+import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 
 const timelineStart = Date.parse('2026-07-20T00:00:00Z');
 const timelineEnd = Date.parse('2026-08-31T00:00:00Z');
@@ -43,8 +43,8 @@ function dueText(date: string | null | undefined) {
 	return date.slice(5).replace('-', '月') + '日';
 }
 
-function mapProjects() {
-	const source = getProjectGanttData();
+async function mapProjects() {
+	const source = await getProjectGanttData();
 	return source.projects.map((project: any) => {
 		const tasks = project.tasks;
 		const completed = tasks.filter((task: any) => task.status === 'completed').length;
@@ -92,7 +92,7 @@ function mapProjects() {
 	});
 }
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = async ({ locals }) => {
 	const db = getDatabase();
 	const today = new Intl.DateTimeFormat('en-CA', {
 		timeZone: 'Asia/Shanghai',
@@ -100,10 +100,15 @@ export const load: PageServerLoad = ({ locals }) => {
 		month: '2-digit',
 		day: '2-digit'
 	}).format(new Date());
+	const [projects, people, activeSopDebtTypes] = await Promise.all([
+		mapProjects(),
+		db.prepare('SELECT id, name FROM people WHERE active = 1 ORDER BY name').all(),
+		getActiveSopDebtTypeOptions()
+	]);
 	return {
-		projects: mapProjects(),
-		people: db.prepare('SELECT id, name FROM people WHERE active = 1 ORDER BY name').all(),
-		activeSopDebtTypes: getActiveSopDebtTypeOptions(),
+		projects,
+		people,
+		activeSopDebtTypes,
 		today,
 		viewContext: {
 			role: locals.user?.role ?? 'reviewer',
@@ -126,9 +131,9 @@ export const actions: Actions = {
 		if (endDate < startDate) return fail(400, { message: '计划完成日不能早于开始日' });
 
 		const db = getDatabase();
-		const owner = db.prepare('SELECT id FROM people WHERE name = ?').get(ownerName)
-			?? db.prepare('SELECT id FROM people WHERE active = 1 ORDER BY name LIMIT 1').get();
-		const sop = db.prepare(`
+		const owner = (await db.prepare('SELECT id FROM people WHERE name = ?').get(ownerName))
+			?? await db.prepare('SELECT id FROM people WHERE active = 1 ORDER BY name LIMIT 1').get();
+		const sop = await db.prepare(`
 			SELECT id FROM sop_templates
 			WHERE is_active = 1 AND (
 				debt_type = @debtType OR
@@ -141,35 +146,39 @@ export const actions: Actions = {
 		}
 		const projectId = randomUUID();
 		const code = `FIN-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`;
-
-		db.transaction(() => {
+		const nodes = await db.prepare(`
+			SELECT id, name, sort_order AS sortOrder, default_offset_days AS offsetDays,
+				default_owner_role AS ownerRole
+			FROM sop_nodes WHERE template_id = ? ORDER BY sort_order
+		`).all(sop.id);
+		const assignees = await db.prepare(`
+			SELECT id, role FROM people WHERE active = 1
+			ORDER BY name
+		`).all();
+		const assigneeByRole = new Map<string, { id: string }>();
+		for (const assignee of assignees as Array<{ id: string; role: string }>) {
+			if (!assigneeByRole.has(assignee.role)) assigneeByRole.set(assignee.role, assignee);
+		}
+		const statements = [
 			db.prepare(`
 				INSERT INTO projects (
 					id, code, name, debt_type, status, planned_start_date,
 					planned_issue_date, sop_template_id, owner_id
 				) VALUES (?, ?, ?, ?, 'planning', ?, ?, ?, ?)
-			`).run(projectId, code, name, debtType, startDate, endDate, sop?.id ?? null, owner?.id ?? null);
-
-			if (sop) {
-				const nodes = db.prepare(`
-					SELECT id, name, sort_order AS sortOrder, default_offset_days AS offsetDays,
-						default_owner_role AS ownerRole
-					FROM sop_nodes WHERE template_id = ? ORDER BY sort_order
-				`).all(sop.id);
-				const findAssignee = db.prepare('SELECT id FROM people WHERE active = 1 AND role = ? ORDER BY name LIMIT 1');
-				const issueTime = Date.parse(`${endDate}T00:00:00Z`);
-				for (const node of nodes) {
-					const dueDate = new Date(issueTime + Number(node.offsetDays) * 86_400_000).toISOString().slice(0, 10);
-					const assignee = findAssignee.get(node.ownerRole) ?? owner;
-					db.prepare(`
+			`).bind(projectId, code, name, debtType, startDate, endDate, sop.id, owner?.id ?? null)
+		];
+		const issueTime = Date.parse(`${endDate}T00:00:00Z`);
+		for (const node of nodes) {
+			const dueDate = new Date(issueTime + Number(node.offsetDays) * 86_400_000).toISOString().slice(0, 10);
+			const assignee = assigneeByRole.get(node.ownerRole) ?? owner;
+			statements.push(db.prepare(`
 						INSERT INTO project_tasks (
 							id, project_id, sop_node_id, name, status, assignee_id,
 							planned_start_date, due_date, sort_order
 						) VALUES (?, ?, ?, ?, 'not_started', ?, ?, ?, ?)
-					`).run(randomUUID(), projectId, node.id, node.name, assignee?.id ?? null, startDate, dueDate, node.sortOrder);
-				}
-			}
-			recordAudit({
+					`).bind(randomUUID(), projectId, node.id, node.name, assignee?.id ?? null, startDate, dueDate, node.sortOrder));
+		}
+		statements.push(prepareAudit({
 				...auditRequestMeta(event),
 				db,
 				action: 'create',
@@ -183,11 +192,11 @@ export const actions: Actions = {
 					status: 'planning',
 					plannedStartDate: startDate,
 					plannedIssueDate: endDate,
-					sopTemplateId: sop?.id ?? null,
+					sopTemplateId: sop.id,
 					ownerId: owner?.id ?? null
 				}
-			});
-		})();
+			}));
+		await db.batch(statements);
 		return { success: true, projectId, message: '项目已创建，并已套用对应 SOP 节点。' };
 	}
 };

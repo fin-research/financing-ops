@@ -15,7 +15,7 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 export const handle: Handle = async ({ event, resolve }) => {
 	configureAuth(env);
 	await ensureAdminUser();
-	event.locals.user = getSessionUser(event.cookies.get(SESSION_COOKIE));
+	event.locals.user = await getSessionUser(event.cookies.get(SESSION_COOKIE));
 
 	const pathname = event.url.pathname;
 	const isPublic = PUBLIC_PATHS.has(pathname) || pathname.startsWith('/_app/');

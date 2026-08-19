@@ -34,7 +34,7 @@ export function auditRequestMeta(event) {
 	};
 }
 
-export function recordAudit(options) {
+function auditValues(options) {
 	const {
 		db = getDatabase(),
 		actor,
@@ -54,29 +54,46 @@ export function recordAudit(options) {
 		throw new Error('审计动作和摘要不能为空');
 	}
 
-	const id = randomUUID();
-	db.prepare(`
+	return {
+		db,
+		id: randomUUID(),
+		values: [
+			actor?.id ?? null,
+			actor?.username ?? null,
+			action.trim(),
+			entityType,
+			entityId,
+			summary.trim(),
+			serialize(before),
+			serialize(after),
+			requestIp,
+			userAgent
+		]
+	};
+}
+
+export function prepareAudit(options) {
+	const { db, id, values } = auditValues(options);
+	return db.prepare(`
 		INSERT INTO audit_logs (
 			id, actor_user_id, actor_username, action, entity_type, entity_id,
 			summary, before_json, after_json, request_ip, user_agent
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`).run(
-		id,
-		actor?.id ?? null,
-		actor?.username ?? null,
-		action.trim(),
-		entityType,
-		entityId,
-		summary.trim(),
-		serialize(before),
-		serialize(after),
-		requestIp,
-		userAgent
-	);
+	`).bind(id, ...values);
+}
+
+export async function recordAudit(options) {
+	const { db, id, values } = auditValues(options);
+	await db.prepare(`
+		INSERT INTO audit_logs (
+			id, actor_user_id, actor_username, action, entity_type, entity_id,
+			summary, before_json, after_json, request_ip, user_agent
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`).run(id, ...values);
 	return id;
 }
 
-export function getAuditLogs({ entityType, entityId, limit = 100 } = {}) {
+export async function getAuditLogs({ entityType, entityId, limit = 100 } = {}) {
 	const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
 	const clauses = [];
 	const params = {};

@@ -1,11 +1,11 @@
 import type { PageServerLoad } from './$types';
 import { getReminderHistory } from '$lib/server/queries.js';
 
-export const load: PageServerLoad = ({ url }) => {
+export const load: PageServerLoad = async ({ url }) => {
 	const status = url.searchParams.get('status') ?? '';
 	const query = url.searchParams.get('query')?.trim() ?? '';
 	return {
 		filters: { status, query },
-		history: getReminderHistory({ status, query, limit: 200 })
+		history: await getReminderHistory({ status, query, limit: 200 })
 	};
 };

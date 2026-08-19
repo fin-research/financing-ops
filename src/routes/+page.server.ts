@@ -8,7 +8,7 @@ const PRESET_EXCLUSIONS: Record<string, string[]> = {
 	core_financing: ['同业拆借', '互换便利', '浮动收益凭证']
 };
 
-export const load: PageServerLoad = ({ url }) => {
+export const load: PageServerLoad = async ({ url }) => {
 	const options = getDebtTypeOptions();
 	const preset = url.searchParams.get('preset') ?? 'all';
 	const customTypes = url.searchParams.getAll('type').filter((item) => options.includes(item));
@@ -18,7 +18,7 @@ export const load: PageServerLoad = ({ url }) => {
 			? []
 			: options.filter((item) => !(PRESET_EXCLUSIONS[preset] ?? []).includes(item));
 	return {
-		dashboard: getFinancingDashboardData({ selectedTypes }),
+		dashboard: await getFinancingDashboardData({ selectedTypes }),
 		preset,
 		selectedTypes
 	};

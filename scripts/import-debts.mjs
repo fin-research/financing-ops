@@ -1,8 +1,10 @@
 import path from 'node:path';
-import { importDebtWorkbook } from '../src/lib/server/excel-import.js';
+import fs from 'node:fs';
+import { importDebtWorkbook } from '../src/lib/excel-import.js';
 import { seedDatabase } from '../src/lib/server/seed.js';
-import { getDatabase } from '../src/lib/server/db.js';
+import { getLocalDatabase } from '../src/lib/server/local-db.js';
 
 const source = process.argv[2] ?? path.resolve('data', 'ledger.xlsx');
-seedDatabase(getDatabase());
-console.log(JSON.stringify(importDebtWorkbook(source, { replaceExisting: true }), null, 2));
+const db = getLocalDatabase();
+seedDatabase(db);
+console.log(JSON.stringify(importDebtWorkbook(fs.readFileSync(source), path.basename(source), { db }), null, 2));

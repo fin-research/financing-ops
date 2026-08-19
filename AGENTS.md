@@ -2,7 +2,7 @@
 
 本文件适用于仓库根目录及全部子目录，是人类开发者和 Codex 在本项目中的长期协作约定。
 
-最后更新：2026-08-07
+最后更新：2026-08-19
 
 ## 1. 项目目标
 
@@ -11,7 +11,7 @@
 - 存续负债余额、品种结构和到期安排；
 - 不同负债品种的 SOP 模板、项目、人员和任务节点；
 - 可配置的节点邮件提醒；
-- 现有借入资金 Excel 台账的 SQLite 导入和核对。
+- 现有借入资金 Excel 台账的结构化导入和核对。
 
 优先保证财务口径可追溯、操作路径清晰和桌面端信息密度。不要为了视觉效果牺牲数据可读性或引入未经核实的业务结论。
 
@@ -20,10 +20,10 @@
 - 包管理：pnpm
 - 全栈框架：SvelteKit / Svelte 5
 - UI：Tailwind CSS 4 + DaisyUI 5 + Lucide
-- 数据库：SQLite / better-sqlite3
+- 数据库：Cloudflare D1；本地核对使用 SQLite / better-sqlite3
 - Excel：SheetJS `xlsx`
 - 邮件：Resend
-- 部署适配：`@sveltejs/adapter-node`
+- 部署适配：`@sveltejs/adapter-cloudflare`
 
 常用命令：
 
@@ -35,6 +35,7 @@ pnpm reminders:send -- --dry-run
 pnpm check
 pnpm build
 pnpm dev
+pnpm deploy
 ```
 
 ## 3. 开始和结束每次会话
@@ -64,13 +65,16 @@ pnpm dev
 ## 4. 目录与职责
 
 - `src/routes/`：页面、页面服务端加载和表单动作；仪表盘聚合指标卡、存量结构、到期分布、推进项目、月度发行、负债额度、发行试算、融资日历与待办提醒。
-- `src/lib/server/db.js`：SQLite 连接。
+- `src/lib/server/db.js`：请求级 D1 连接与异步查询适配。
+- `src/lib/server/local-db.js`：本地 SQLite 初始化与迁移。
 - `src/lib/server/schema.js`：表结构和索引。
 - `src/lib/server/seed.js`：可重复执行的基础人员、SOP、项目和提醒种子。
-- `src/lib/server/excel-import.js`：Excel 解析、明细幂等写入和余额快照核对。
+- `src/lib/excel-import.js`：浏览器/本地共用的 Excel 解析、字段覆盖校验和余额核对。
+- `src/lib/debt-details.js`：负债品种扩展表、映射和本地迁移。
+- `src/lib/server/staged-import.js`：D1 类型化分片暂存与最终原子切换。
 - `src/lib/server/queries.js`：Dashboard、甘特图和设置页查询；`getDebtLimitSummary()` 供额度表与试算复用，`getCalendarMonthEvents()` 供融资日历复用。
 - `src/lib/server/reminders.js`：提醒计算、去重、Resend 发送和发送日志。
-- `src/routes/debts/[id]/`：单笔负债与来源单元格追溯。
+- `src/routes/debts/[id]/`：单笔负债主表、品种扩展字段和结构化现金流联查。
 - `scripts/`：数据库、导入和提醒 CLI。
 - `data/`：原始 Excel；不得静默改写源文件。
 - `database/`：本地 SQLite 数据库。
@@ -104,7 +108,7 @@ pnpm dev
 - 新表和新字段放入 `createSchema()`，迁移必须可重复运行。
 - 外键保持开启；删除行为必须显式定义。
 - 表单动作必须进行服务端必填、类型、范围和文件大小校验。
-- 上传文件只进入明确的临时路径，导入结束后清理。
+- Excel 在浏览器本地解析，不把原始文件上传给 Worker；服务端只接收有大小上限的类型化分片。
 - 密钥只从环境变量读取；不得写入仓库、SQLite 或日志。
 - Resend 未配置时只生成 `pending` 记录；不得假装发送成功。
 - 提醒以 `(rule_id, target_id, delivery_date)` 去重。
@@ -152,4 +156,3 @@ pnpm dev
 ### P2 — 样式维护
 
 - [ ] 统一消除组件中的重复颜色值，迁移到语义化 CSS token。
-

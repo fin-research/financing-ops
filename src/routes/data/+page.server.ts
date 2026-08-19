@@ -1,18 +1,11 @@
-import { randomUUID } from 'node:crypto';
-import { writeFile, unlink } from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { importDebtWorkbook } from '$lib/server/excel-import.js';
 import { getDataImportData } from '$lib/server/queries.js';
 import { getDatabase } from '$lib/server/db.js';
-import { auditRequestMeta, recordAudit } from '$lib/server/audit.js';
+import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 
-const defaultWorkbook = path.resolve('data', '东方财富证券借入资金汇总表20260727.xlsx');
-
-export const load: PageServerLoad = () => ({
-	importData: getDataImportData()
+export const load: PageServerLoad = async () => ({
+	importData: await getDataImportData()
 });
 
 export const actions: Actions = {
@@ -37,57 +30,21 @@ export const actions: Actions = {
 			values.push({ code, label, valueYi, periodEnd: valueYi == null ? null : periodEnd });
 		}
 		const db = getDatabase();
-		const before = db.prepare('SELECT code, value_yi AS valueYi, period_end AS periodEnd FROM finance_parameters').all();
-		const update = db.prepare(`
-			UPDATE finance_parameters SET value_yi = ?, period_end = ?, updated_at = CURRENT_TIMESTAMP WHERE code = ?
-		`);
+		const before = await db.prepare('SELECT code, value_yi AS valueYi, period_end AS periodEnd FROM finance_parameters').all();
 		try {
-			db.transaction(() => {
-				for (const item of values) update.run(item.valueYi, item.periodEnd, item.code);
-				recordAudit({
+			await db.batch([
+				...values.map((item) => db.prepare(`
+					UPDATE finance_parameters SET value_yi = ?, period_end = ?, updated_at = CURRENT_TIMESTAMP WHERE code = ?
+				`).bind(item.valueYi, item.periodEnd, item.code)),
+				prepareAudit({
 					...auditRequestMeta(event), db, action: 'update', entityType: 'finance_parameter',
 					entityId: 'regulatory-capital-base', summary: '更新监管指标计算参数', before, after: values
-				});
-			})();
+				})
+			]);
 			return { success: true, message: '净资产与净资本参数已更新' };
 		} catch (error) {
 			return fail(400, { message: error instanceof Error ? error.message : String(error) });
 		}
 	},
-	reimport: async () => {
-		try {
-			return { success: true, importResult: importDebtWorkbook(defaultWorkbook, { replaceExisting: true }) };
-		} catch (error) {
-			return fail(500, { message: error instanceof Error ? error.message : String(error) });
-		}
-	},
-	upload: async ({ request }) => {
-		const data = await request.formData();
-		const workbook = data.get('workbook');
-		if (!(workbook instanceof File) || workbook.size === 0) {
-			return fail(400, { message: '请选择 Excel 文件' });
-		}
-		if (!workbook.name.toLowerCase().endsWith('.xlsx')) {
-			return fail(400, { message: '仅支持 .xlsx 文件' });
-		}
-		if (workbook.size > 25 * 1024 * 1024) {
-			return fail(413, { message: '文件不能超过 25MB' });
-		}
-
-		const temporaryPath = path.join(os.tmpdir(), `financing-workbench-${randomUUID()}.xlsx`);
-		try {
-			await writeFile(temporaryPath, Buffer.from(await workbook.arrayBuffer()));
-			return {
-				success: true,
-				importResult: importDebtWorkbook(temporaryPath, {
-					sourceFileName: workbook.name,
-					replaceExisting: true
-				})
-			};
-		} catch (error) {
-			return fail(500, { message: error instanceof Error ? error.message : String(error) });
-		} finally {
-			await unlink(temporaryPath).catch(() => undefined);
-		}
-	}
+	reimport: async () => fail(400, { message: '请选择当前 Excel 工作簿重新导入。' })
 };

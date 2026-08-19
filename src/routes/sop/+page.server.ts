@@ -3,12 +3,12 @@ import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getDatabase } from '$lib/server/db.js';
 import { getWorkflowSettingsData } from '$lib/server/queries.js';
-import { auditRequestMeta, recordAudit } from '$lib/server/audit.js';
+import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const load: PageServerLoad = () => ({
-	settings: getWorkflowSettingsData()
+export const load: PageServerLoad = async () => ({
+	settings: await getWorkflowSettingsData()
 });
 
 export const actions: Actions = {
@@ -33,12 +33,12 @@ export const actions: Actions = {
 		}
 		const db = getDatabase();
 		const id = randomUUID();
-		db.prepare(`
+		await db.batch([db.prepare(`
 			INSERT INTO reminder_rules (
 				id, name, target_type, debt_type, trigger_field, offset_days,
 				frequency, channel, recipient_mode, recipients, is_active
 			) VALUES (?, ?, 'project_task', ?, ?, ?, ?, 'email', ?, ?, 1)
-		`).run(
+		`).bind(
 			id,
 			name,
 			String(data.get('debtType') ?? '').trim() || null,
@@ -47,15 +47,14 @@ export const actions: Actions = {
 			frequency,
 			recipientMode,
 			recipientMode === 'custom' ? recipients : null
-		);
-		recordAudit({
+		), prepareAudit({
 			...auditRequestMeta(event),
 			action: 'create',
 			entityType: 'reminder_rule',
 			entityId: id,
 			summary: `创建提醒规则：${name}`,
 			after: { name, triggerField, offsetDays, frequency, recipientMode }
-		});
+		})]);
 		return { success: true, message: '提醒规则已保存' };
 	},
 	createSop: async (event) => {
@@ -67,18 +66,17 @@ export const actions: Actions = {
 		const db = getDatabase();
 		const id = randomUUID();
 		try {
-			db.prepare(`
+			await db.batch([db.prepare(`
 				INSERT INTO sop_templates (id, name, debt_type, description)
 				VALUES (?, ?, ?, ?)
-			`).run(id, name, debtType, description || null);
-			recordAudit({
+			`).bind(id, name, debtType, description || null), prepareAudit({
 				...auditRequestMeta(event),
 				action: 'create',
 				entityType: 'sop',
 				entityId: id,
 				summary: `创建 SOP：${name}`,
 				after: { name, debtType, description }
-			});
+			})]);
 			return { success: true, message: 'SOP 模板已创建', sopId: id };
 		} catch (error) {
 			return fail(409, { message: error instanceof Error ? error.message : String(error) });

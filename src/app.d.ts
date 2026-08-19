@@ -17,7 +17,11 @@ declare global {
 			user?: App.Locals['user'];
 		}
 		// interface PageState {}
-		// interface Platform {}
+		interface Platform {
+			env: Env;
+			context: ExecutionContext;
+			caches: CacheStorage & { default: Cache };
+		}
 	}
 }
 

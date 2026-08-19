@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../management.css';
 	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import {
 		AlertCircle,
@@ -16,6 +17,7 @@
 
 	let { data } = $props();
 	let detailsExpanded = $state(true);
+	let workbookInput: HTMLInputElement;
 	let actionState = $state<{
 		key: string;
 		status: 'idle' | 'pending' | 'success' | 'error';
@@ -28,43 +30,106 @@
 		currentSnapshot: null,
 		importStats: {
 			debtCount: 0,
-			sourceRowCount: 0,
+			fieldValueCount: 0,
 			cashflowEventCount: 0,
-			historyBalanceRowCount: 0,
 			historyDateCount: 0,
 			historySpan: { startDate: null, endDate: null }
 		}
 	};
 	const importData = $derived(data?.importData ?? fallback);
 
-	const enhanceImport = (key: string): SubmitFunction => {
-		return () => {
-			actionState = { key, status: 'pending', message: '正在导入并核对，请稍候…' };
-			return async ({ result, update }) => {
-				if (result.type === 'success') {
-					const imported = result.data?.importResult;
-					await update({ reset: false, invalidateAll: true });
-					actionState = {
-						key,
-						status: 'success',
-						message: imported
-							? `${imported.sourceFile} 已更新至 ${imported.snapshot.asOfDate}，余额 ${imported.snapshot.totalYi.toFixed(4)} 亿元`
-							: 'Excel 已导入，余额与来源记录已完成核对'
-					};
-					return;
+	function rowChunks(rows: unknown[][], maximumBytes = 180_000) {
+		const encoder = new TextEncoder();
+		const chunks: unknown[][][] = [];
+		let current: unknown[][] = [];
+		let bytes = 2;
+		for (const row of rows) {
+			const rowBytes = encoder.encode(JSON.stringify(row)).byteLength + (current.length ? 1 : 0);
+			if (current.length && (bytes + rowBytes > maximumBytes || current.length >= 2500)) {
+				chunks.push(current);
+				current = [];
+				bytes = 2;
+			}
+			current.push(row);
+			bytes += rowBytes;
+		}
+		if (current.length) chunks.push(current);
+		return chunks;
+	}
+
+	async function importApi(body: Record<string, unknown>) {
+		const response = await fetch('/api/import', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+		const result = await response.json();
+		if (!response.ok) throw new Error(String(result.message ?? '导入失败'));
+		return result;
+	}
+
+	async function handleWorkbookUpload(event: SubmitEvent) {
+		event.preventDefault();
+		const workbook = workbookInput?.files?.[0];
+		if (!workbook) {
+			actionState = { key: 'upload', status: 'error', message: '请选择 Excel 工作簿' };
+			return;
+		}
+		if (!workbook.name.toLowerCase().endsWith('.xlsx') || workbook.size > 25 * 1024 * 1024) {
+			actionState = { key: 'upload', status: 'error', message: '仅支持不超过 25MB 的 .xlsx 工作簿' };
+			return;
+		}
+		actionState = { key: 'upload', status: 'pending', message: '正在本地解析并核对 Excel…' };
+		try {
+			const [{ parseDebtWorkbookData }, { buildTypedDebtData }, { sha256Hex }] = await Promise.all([
+				import('$lib/excel-import.js'),
+				import('$lib/debt-details.js'),
+				import('$lib/hash.js')
+			]);
+			const workbookData = new Uint8Array(await workbook.arrayBuffer());
+			const parsed = parseDebtWorkbookData(workbookData, workbook.name);
+			const typed = buildTypedDebtData(parsed);
+			const begin = await importApi({
+				operation: 'begin',
+				metadata: {
+					workbookName: workbook.name,
+					workbookHash: sha256Hex(workbookData),
+					asOfDate: parsed.snapshot.asOfDate,
+					debtCount: parsed.debts.length,
+					fieldValueCount: parsed.fieldValueCount,
+					cashflowCount: parsed.cashflows.length,
+					historyDateCount: parsed.historyDateCount,
+					excludedFutureCount: parsed.excludedFutureDates.length
 				}
-				await update({ reset: false, invalidateAll: false });
+			});
+			const datasets: Array<[string, unknown[][]]> = [
+				['debts', parsed.debts.map((debt: unknown[]) => debt.slice(1))],
+				...Object.entries(typed) as Array<[string, unknown[][]]>,
+				['cashflows', parsed.cashflows],
+				['balances', parsed.balances],
+				['workbookNotes', parsed.workbookNotes]
+			];
+			const chunks = datasets.flatMap(([key, rows]) => rowChunks(rows).map((chunk) => [key, chunk] as const));
+			for (let index = 0; index < chunks.length; index += 1) {
+				const [key, rows] = chunks[index];
 				actionState = {
-					key,
-					status: 'error',
-					message:
-						result.type === 'failure'
-							? String(result.data?.message ?? '导入失败，请检查文件后重试')
-							: '导入失败，请稍后重试'
+					key: 'upload', status: 'pending',
+					message: `正在上传结构化数据 ${index + 1}/${chunks.length}…`
 				};
+				await importApi({ operation: 'stage', token: begin.token, key, rows });
+			}
+			actionState = { key: 'upload', status: 'pending', message: '正在原子切换最新数据并复核余额…' };
+			const imported = await importApi({ operation: 'finalize', token: begin.token });
+			await invalidateAll();
+			workbookInput.value = '';
+			actionState = {
+				key: 'upload', status: 'success',
+				message: `${imported.sourceFile} 已更新至 ${imported.snapshot.asOfDate}，余额 ${Number(imported.snapshot.totalYi).toFixed(4)} 亿元；新增 ${imported.inserted}、更新 ${imported.updated}、删除 ${imported.deleted}`
 			};
-		};
-	};
+		} catch (error) {
+			actionState = { key: 'upload', status: 'error', message: error instanceof Error ? error.message : String(error) };
+		}
+	}
 
 	const enhanceParameters: SubmitFunction = () => {
 		actionState = { key: 'finance', status: 'pending', message: '正在保存计算参数…' };
@@ -118,7 +183,7 @@
 				<div class="header-icon green"><FileSpreadsheet size={19} /></div>
 				<div>
 					<h2>当前数据源</h2>
-					<p>源文件不会被静默改写</p>
+					<p>仅保留最新工作簿对应的结构化数据</p>
 				</div>
 				<span class="status-badge"><CheckCircle2 size={13} /> 已完成</span>
 			</div>
@@ -148,14 +213,11 @@
 			</div>
 			<form
 				class="upload-zone"
-				method="post"
-				action="?/upload"
-				enctype="multipart/form-data"
-				use:enhance={enhanceImport('upload')}
+				onsubmit={handleWorkbookUpload}
 			>
 				<label>
 					<span>选择 Excel 文件</span>
-					<input name="workbook" type="file" accept=".xlsx" required />
+					<input bind:this={workbookInput} name="workbook" type="file" accept=".xlsx" required />
 				</label>
 				<button class="secondary-action" type="submit" disabled={actionState.status === 'pending'}>
 					<Upload size={15} />
@@ -204,7 +266,7 @@
 				<div class="header-icon violet"><Database size={19} /></div>
 				<div>
 					<h2>导入完整性</h2>
-					<p>结构化数据和来源数据分层保存</p>
+					<p>全部 Excel 字段均已规范化入库</p>
 				</div>
 				<button class="link-button" type="button" onclick={() => (detailsExpanded = !detailsExpanded)}>
 					{detailsExpanded ? '收起' : '展开'}
@@ -213,9 +275,8 @@
 			{#if detailsExpanded}
 				<div class="stats-grid">
 					<div><span>结构化债务</span><strong>{importData.importStats.debtCount.toLocaleString('zh-CN')} 条</strong></div>
-					<div><span>完整来源行</span><strong>{importData.importStats.sourceRowCount.toLocaleString('zh-CN')} 条</strong></div>
+					<div><span>字段值</span><strong>{importData.importStats.fieldValueCount.toLocaleString('zh-CN')} 条</strong></div>
 					<div><span>付息/还本事件</span><strong>{importData.importStats.cashflowEventCount.toLocaleString('zh-CN')} 条</strong></div>
-					<div><span>历史余额单元格</span><strong>{importData.importStats.historyBalanceRowCount.toLocaleString('zh-CN')} 条</strong></div>
 					<div><span>唯一历史日期</span><strong>{importData.importStats.historyDateCount.toLocaleString('zh-CN')} 个</strong></div>
 					<div>
 						<span>历史范围</span>
@@ -224,7 +285,7 @@
 				</div>
 				<p class="quality-note">
 					<History size={16} />
-					所有现金流事件继续完整保存在数据库中；首页仅展示启用 SOP 所覆盖品种的事件。
+					新工作簿按业务键增量更新负债主表，并替换字段、现金流和余额为最新状态。
 				</p>
 			{/if}
 		</article>

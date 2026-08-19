@@ -1,8 +1,8 @@
 import type { LayoutServerLoad } from './$types';
 import { getDataImportData, getTopbarReminders } from '$lib/server/queries.js';
 
-export const load: LayoutServerLoad = ({ locals }) => {
-	const currentSnapshot = getDataImportData().currentSnapshot;
+export const load: LayoutServerLoad = async ({ locals }) => {
+	const currentSnapshot = (await getDataImportData()).currentSnapshot;
 	const todayIso = new Intl.DateTimeFormat('en-CA', {
 		timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
 	}).format(new Date());
@@ -10,7 +10,7 @@ export const load: LayoutServerLoad = ({ locals }) => {
 		.toISOString()
 		.slice(0, 10);
 	const reminders = locals.user
-		? getTopbarReminders({
+		? await getTopbarReminders({
 				today: todayIso,
 				toDate: reminderEnd,
 				personId: locals.user.personId,
