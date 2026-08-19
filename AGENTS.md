@@ -39,6 +39,8 @@ git push origin main
 
 远程仓库为 `fin-research/financing-ops`，`main` 已接入 Cloudflare Git 自动构建与部署。正常交付只提交并推送 `main`；除非用户明确要求排障或紧急回滚，不手动运行 `pnpm build`、`pnpm run deploy` 或 `wrangler deploy`。
 
+Cloudflare Git 当前使用 pnpm 10.11.1 安装依赖；`pnpm-workspace.yaml` 必须显式包含根包 `packages: ['.']`，构建脚本白名单使用该版本支持的 `onlyBuiltDependencies`，不得改用 pnpm 10.26.0 才提供的 `allowBuilds`。
+
 ## 3. 开始和结束每次会话
 
 ### 开始前
