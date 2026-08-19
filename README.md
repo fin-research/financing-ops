@@ -38,7 +38,9 @@ pnpm dev
 
 访问 `http://localhost:5173`。
 
-生产 Worker 已发布到 [eastmoney-financing.hasbai.workers.dev](https://eastmoney-financing.hasbai.workers.dev)，绑定 D1 数据库 `financing`。
+远程仓库为 [`fin-research/financing-ops`](https://github.com/fin-research/financing-ops)。生产 Worker 已发布到 [eastmoney-financing.hasbai.workers.dev](https://eastmoney-financing.hasbai.workers.dev)，绑定 D1 数据库 `financing`。
+
+`main` 分支已接入 Cloudflare Git 自动构建与部署。日常发布只需提交并执行 `git push origin main`；除非明确要求排障或紧急回滚，不在本地运行 `pnpm build`、`pnpm run deploy` 或 `wrangler deploy`。
 
 ## 数据与环境变量
 
@@ -63,10 +65,9 @@ pnpm reminders:send -- --dry-run
 pnpm reminders:send -- --dry-run
 pnpm test
 pnpm check
-pnpm build
 pnpm cf:typegen
 pnpm exec wrangler d1 migrations apply financing --remote
-pnpm run deploy
+git push origin main
 ```
 
 生产环境可用定时任务每天执行 `pnpm reminders:send`。同一规则、目标和日期具备唯一约束，不会重复发送。

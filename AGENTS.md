@@ -33,10 +33,11 @@ pnpm db:init
 pnpm db:import
 pnpm reminders:send -- --dry-run
 pnpm check
-pnpm build
 pnpm dev
-pnpm run deploy
+git push origin main
 ```
+
+远程仓库为 `fin-research/financing-ops`，`main` 已接入 Cloudflare Git 自动构建与部署。正常交付只提交并推送 `main`；除非用户明确要求排障或紧急回滚，不手动运行 `pnpm build`、`pnpm run deploy` 或 `wrangler deploy`。
 
 ## 3. 开始和结束每次会话
 
@@ -56,11 +57,12 @@ pnpm run deploy
 
 ### 交付前
 
-1. 至少运行 `pnpm check` 和 `pnpm build`。
+1. 至少运行 `pnpm check`；不在本地手动构建，推送 `main` 后由 Cloudflare Git 完成构建与部署。
 2. 数据导入变化还需运行 `pnpm db:import`，验证总额、品种余额和重复导入幂等性。
 3. 提醒变化至少运行一次 `pnpm reminders:send -- --dry-run`。
 4. 实时更新本文件的 TODO 和最后更新时间；会话记录写入 `.workbuddy/memory/` 记忆文件，禁止写入本文件。
 5. UI 变化同时更新 `DESIGN.md` 的规范或会话记录。
+6. 提交并推送 `main`，核对远程分支已包含目标提交；Cloudflare 自动构建状态用于发布验收。
 
 ## 4. 目录与职责
 
@@ -126,7 +128,7 @@ pnpm run deploy
 ## 9. 验收门槛
 
 - `pnpm check`：0 error、0 warning。
-- `pnpm build`：成功。
+- Cloudflare Git 在 `main` 推送后自动构建成功；本地不重复手动构建或部署。
 - 核心路由 `/`、`/debts/[id]`、`/projects`、`/sop`、`/settings`、`/data`、`/people` 可访问。
 - Excel 导入能够重复执行且汇总保持一致；相同工作簿重复上传不产生 D1 写入。
 - 新增表单具有失败反馈，不得静默失败。
