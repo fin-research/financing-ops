@@ -3,11 +3,6 @@ import * as XLSX from 'xlsx/xlsx.mjs';
 import { stableDebtKey } from './debt-key.js';
 import { DEBT_FIELD_COLUMNS } from './debt-fields.js';
 import { sha256Hex } from './hash.js';
-import {
-	buildTypedDebtData,
-	clearTypedDebtTables,
-	typedDebtStatements
-} from './debt-details.js';
 
 const SUMMARY_SHEET_NAMES = new Set(['借入资金汇总表']);
 const SUMMARY_SHEET_NAME = '借入资金汇总表';
@@ -162,25 +157,6 @@ function parseSummaryHistory(workbook, sourceFile) {
 	return { snapshots, latest, excludedFutureDates };
 }
 
-function replaceSummarySnapshots(db, snapshots) {
-	const upsert = db.prepare(`
-		INSERT INTO debt_balance_daily (as_of_date, debt_type, balance_yi)
-		VALUES (@asOfDate, @debtType, @balanceYi)
-		ON CONFLICT(as_of_date, debt_type) DO UPDATE SET
-			balance_yi = excluded.balance_yi,
-			updated_at = CURRENT_TIMESTAMP
-	`);
-	db.prepare('DELETE FROM debt_balance_daily').run();
-	for (const snapshot of snapshots) {
-		for (const balance of snapshot.balances) {
-			upsert.run({
-				asOfDate: snapshot.asOfDate,
-				...balance
-			});
-		}
-	}
-}
-
 export function assertDebtBalanceSnapshot(snapshot) {
 	if (!snapshot) throw new Error('未找到可核对的负债余额快照');
 	const expected20260727 = {
@@ -196,21 +172,6 @@ export function assertDebtBalanceSnapshot(snapshot) {
 		}
 	}
 	return { asOfDate: snapshot.asOfDate, totalYi: snapshot.totalYi, balances: snapshot.balances };
-}
-
-function assertPersistedDebtBalanceSnapshot(db, snapshot) {
-	const balances = db.prepare(`
-		SELECT debt_type AS debtType, balance_yi AS balanceYi
-		FROM debt_balance_daily WHERE as_of_date = ? ORDER BY debt_type
-	`).all(snapshot.asOfDate);
-	if (balances.length !== SNAPSHOT_DEBT_TYPES.length) {
-		throw new Error(`${snapshot.asOfDate} 快照持久化记录数错误：${balances.length}`);
-	}
-	return assertDebtBalanceSnapshot({
-		asOfDate: snapshot.asOfDate,
-		totalYi: balances.reduce((sum, item) => sum + Number(item.balanceYi), 0),
-		balances
-	});
 }
 
 function mapStatus(value, maturityDate) {
@@ -379,186 +340,6 @@ function rowToDebt(row, fields, sheetName, headers) {
 	};
 }
 
-/**
- * Treats each workbook as the complete current dataset. Debt master rows are
- * updated by stable business keys, while fields, cashflows and balance history
- * are replaced transactionally so only the latest workbook remains.
- */
-export function importDebtWorkbook(workbookData, sourceFile, options = {}) {
-	const db = options.db;
-	if (!db) throw new Error('importDebtWorkbook requires options.db');
-	const fileHash = stableId(workbookData);
-	const parsed = parseDebtWorkbookData(workbookData, sourceFile);
-	const typedData = buildTypedDebtData(parsed);
-	const startedAt = new Date().toISOString();
-	const existingRows = db.prepare('SELECT id, external_key AS externalKey FROM debts').all();
-	const existingIds = new Map(existingRows.map((row) => [row.externalKey, row.id]));
-	const incomingKeys = new Set(parsed.debts.map((debt) => debt[1]));
-	const inserted = parsed.debts.filter((debt) => !existingIds.has(debt[1])).length;
-	const updated = parsed.debts.length - inserted;
-	const deleted = existingRows.filter((row) => !incomingKeys.has(row.externalKey)).length;
-
-	db.prepare(`
-		INSERT INTO data_import_state (
-			id, workbook_name, workbook_hash, as_of_date, status, started_at,
-			inserted_count, updated_count, deleted_count, debt_count,
-			field_value_count, cashflow_count, history_date_count, excluded_future_count
-		) VALUES (1, ?, ?, ?, 'running', ?, 0, 0, 0, 0, 0, 0, 0, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			workbook_name = excluded.workbook_name,
-			workbook_hash = excluded.workbook_hash,
-			as_of_date = excluded.as_of_date,
-			status = 'running',
-			started_at = excluded.started_at,
-			finished_at = NULL,
-			inserted_count = 0,
-			updated_count = 0,
-			deleted_count = 0,
-			error_message = NULL,
-			excluded_future_count = excluded.excluded_future_count
-	`).run(sourceFile, fileHash, parsed.snapshot.asOfDate, startedAt, parsed.excludedFutureDates.length);
-
-	const upsertDebt = db.prepare(`
-		INSERT INTO debts (
-			id, external_key, debt_type, category_level_1, category_level_2,
-			instrument_name, instrument_code, borrower, counterparty,
-			principal_amount, outstanding_amount, currency, annual_rate,
-			issue_date, maturity_date, status
-		) VALUES (
-			@id, @externalKey, @debtType, @categoryLevel1, @categoryLevel2,
-			@instrumentName, @instrumentCode, @borrower, @counterparty,
-			@principalAmount, @outstandingAmount, @currency, @annualRate,
-			@issueDate, @maturityDate, @status
-		)
-		ON CONFLICT(external_key) DO UPDATE SET
-			debt_type = excluded.debt_type,
-			category_level_1 = excluded.category_level_1,
-			category_level_2 = excluded.category_level_2,
-			instrument_name = excluded.instrument_name,
-			instrument_code = excluded.instrument_code,
-			borrower = excluded.borrower,
-			counterparty = excluded.counterparty,
-			principal_amount = excluded.principal_amount,
-			outstanding_amount = excluded.outstanding_amount,
-			currency = excluded.currency,
-			annual_rate = excluded.annual_rate,
-			issue_date = excluded.issue_date,
-			maturity_date = excluded.maturity_date,
-			status = excluded.status,
-			imported_at = CURRENT_TIMESTAMP,
-			updated_at = CURRENT_TIMESTAMP
-	`);
-	const insertCashflow = db.prepare(`
-		INSERT INTO debt_cashflow_events (
-			event_key, debt_id, event_type, event_date, amount, sequence
-		) VALUES (?, ?, ?, ?, ?, ?)
-	`);
-	const upsertBalance = db.prepare(`
-		INSERT INTO debt_balance_daily (as_of_date, debt_type, balance_yi)
-		VALUES (?, ?, ?)
-		ON CONFLICT(as_of_date, debt_type) DO UPDATE SET
-			balance_yi = excluded.balance_yi,
-			updated_at = CURRENT_TIMESTAMP
-	`);
-	const insertWorkbookNote = db.prepare(
-		'INSERT INTO workbook_notes (sheet_name, content) VALUES (?, ?)'
-	);
-
-	try {
-		db.transaction(() => {
-			clearTypedDebtTables(db);
-			db.exec(`
-				DELETE FROM debt_cashflow_events;
-				DELETE FROM debt_balance_daily;
-				CREATE TEMP TABLE IF NOT EXISTS current_import_debt_keys (
-					external_key TEXT PRIMARY KEY
-				);
-				DELETE FROM current_import_debt_keys;
-			`);
-			const rememberDebtKey = db.prepare(
-				'INSERT OR IGNORE INTO current_import_debt_keys (external_key) VALUES (?)'
-			);
-			const idByKey = new Map();
-			for (const debt of parsed.debts) {
-				const [generatedId, externalKey, debtType, categoryLevel1, categoryLevel2,
-					instrumentName, instrumentCode, borrower, counterparty, principalAmount,
-					outstandingAmount, currency, annualRate, issueDate, maturityDate, status] = debt;
-				const id = existingIds.get(externalKey) ?? generatedId;
-				upsertDebt.run({
-					id, externalKey, debtType, categoryLevel1, categoryLevel2, instrumentName,
-					instrumentCode, borrower, counterparty, principalAmount, outstandingAmount,
-					currency, annualRate, issueDate, maturityDate, status
-				});
-				idByKey.set(externalKey, id);
-				rememberDebtKey.run(externalKey);
-			}
-			const typedStatements = typedDebtStatements(db);
-			for (const [name, rows] of Object.entries(typedData)) {
-				for (const [externalKey, ...values] of rows) {
-					const debtId = idByKey.get(externalKey);
-					if (!debtId) throw new Error(`扩展字段找不到负债主表：${externalKey}`);
-					typedStatements[name].run(debtId, ...values);
-				}
-			}
-			for (const [eventKey, externalKey, eventType, eventDate, amount, sequence] of parsed.cashflows) {
-				const debtId = idByKey.get(externalKey);
-				if (!debtId) throw new Error(`现金流找不到负债主表：${externalKey}`);
-				insertCashflow.run(eventKey, debtId, eventType, eventDate, amount, sequence);
-			}
-			for (const balance of parsed.balances) upsertBalance.run(...balance);
-			for (const note of parsed.workbookNotes) insertWorkbookNote.run(...note);
-			db.prepare(`
-				DELETE FROM debts
-				WHERE external_key NOT IN (SELECT external_key FROM current_import_debt_keys)
-			`).run();
-		})();
-
-		const snapshot = assertPersistedDebtBalanceSnapshot(db, parsed.snapshot);
-		const persistedDailyCount = Number(db.prepare('SELECT COUNT(*) AS count FROM debt_balance_daily').get().count);
-		const expectedDailyCount = parsed.historyDateCount * SNAPSHOT_DEBT_TYPES.length;
-		if (persistedDailyCount !== expectedDailyCount) {
-			throw new Error(`日余额持久化记录数错误：${persistedDailyCount}，预期 ${expectedDailyCount}`);
-		}
-		const debtCount = Number(db.prepare('SELECT COUNT(*) AS count FROM debts').get().count);
-		const historyDateCount = Number(db.prepare('SELECT COUNT(DISTINCT as_of_date) AS count FROM debt_balance_daily').get().count);
-		db.prepare(`
-			UPDATE data_import_state SET
-				status = 'completed',
-				finished_at = CURRENT_TIMESTAMP,
-				inserted_count = ?,
-				updated_count = ?,
-				deleted_count = ?,
-				debt_count = ?,
-				field_value_count = ?,
-				cashflow_count = ?,
-				history_date_count = ?,
-				error_message = NULL
-			WHERE id = 1
-		`).run(inserted, updated, deleted, debtCount, parsed.fieldValueCount, parsed.cashflows.length, historyDateCount);
-
-		return {
-			sourceFile,
-			inserted,
-			updated,
-			deleted,
-			skipped: parsed.skipped,
-			sheetCount: parsed.sheetCount,
-			fieldValueCount: parsed.fieldValueCount,
-			cashflowEventCount: parsed.cashflows.length,
-			historyDateCount,
-			historyStartDate: parsed.historyStartDate,
-			historyEndDate: parsed.historyEndDate,
-			excludedFutureDates: parsed.excludedFutureDates,
-			snapshot
-		};
-	} catch (error) {
-		db.prepare(`
-			UPDATE data_import_state SET status = 'failed', finished_at = CURRENT_TIMESTAMP, error_message = ? WHERE id = 1
-		`).run(error instanceof Error ? error.message : String(error));
-		throw error;
-	}
-}
-
 export function parseDebtWorkbookData(workbookData, sourceFile) {
 	const workbook = XLSX.read(workbookData, { type: 'array', cellDates: false });
 	const history = parseSummaryHistory(workbook, sourceFile);
@@ -709,32 +490,10 @@ export function parseDebtWorkbookData(workbookData, sourceFile) {
 	};
 }
 
-function jsonChunks(items, maximumBytes = 1_500_000) {
-	const encoder = new TextEncoder();
-	const chunks = [];
-	let current = [];
-	let currentBytes = 2;
-	for (const item of items) {
-		const itemJson = JSON.stringify(item);
-		const itemBytes = encoder.encode(itemJson).byteLength + (current.length ? 1 : 0);
-		if (current.length && currentBytes + itemBytes > maximumBytes) {
-			chunks.push(JSON.stringify(current));
-			current = [];
-			currentBytes = 2;
-		}
-		if (itemBytes + 2 > maximumBytes) throw new Error('单条结构化记录超过 D1 绑定参数大小限制');
-		current.push(item);
-		currentBytes += itemBytes;
-	}
-	if (current.length) chunks.push(JSON.stringify(current));
-	return chunks;
-}
-
 export const TYPED_IMPORT_TABLES = [
 	{
 		key: 'bond',
 		table: 'bond_debt_details',
-		stagingTable: 'bond_details_staging',
 		columns: ['debt_id', 'short_name', 'issuance_method', 'bookbuilding_date', 'issuance_start_date',
 			'term_days', 'interest_basis', 'issuance_target', 'market', 'receiving_account', 'trustee',
 			'bookrunner', 'stated_interest_amount', 'stated_redemption_amount', 'remaining_principal_amount']
@@ -742,14 +501,12 @@ export const TYPED_IMPORT_TABLES = [
 	{
 		key: 'bondSchedule',
 		table: 'bond_payment_schedules',
-		stagingTable: 'bond_schedules_staging',
 		columns: ['debt_id', 'sequence', 'payment_date', 'principal_amount', 'interest_amount',
 			'redemption_amount', 'remaining_principal_amount']
 	},
 	{
 		key: 'certificate',
 		table: 'income_certificate_details',
-		stagingTable: 'income_certificate_staging',
 		columns: ['debt_id', 'issuance_status', 'liquidation_submission_status',
 			'liquidation_registration_status', 'series_name', 'term_label', 'return_type', 'investor_type',
 			'term_days', 'interest_amount', 'liquidation_amount', 'subscription_date', 'redemption_date',
@@ -758,33 +515,28 @@ export const TYPED_IMPORT_TABLES = [
 	{
 		key: 'incomeRight',
 		table: 'income_right_details',
-		stagingTable: 'income_right_staging',
 		columns: ['debt_id', 'period_label', 'term_days', 'interest_basis_days', 'stated_interest_amount']
 	},
 	{
 		key: 'incomeRightSchedule',
 		table: 'income_right_payment_schedules',
-		stagingTable: 'income_right_schedules_staging',
 		columns: ['debt_id', 'sequence', 'payment_date', 'interest_amount']
 	},
 	{
 		key: 'interbank',
 		table: 'interbank_borrowing_details',
-		stagingTable: 'interbank_staging',
 		columns: ['debt_id', 'term_days', 'interest_amount', 'repayment_amount']
 	},
 	{
 		key: 'refinancing',
 		table: 'refinancing_details',
-		stagingTable: 'refinancing_staging',
 		columns: ['debt_id', 'term_days', 'interest_basis_days', 'interest_amount', 'repayment_amount',
 			'market', 'is_extended', 'receiving_account', 'repayment_account']
 	},
-	{ key: 'groupLoan', table: 'group_loan_details', stagingTable: 'group_loan_staging', columns: ['debt_id', 'lender_name'] },
+	{ key: 'groupLoan', table: 'group_loan_details', columns: ['debt_id', 'lender_name'] },
 	{
 		key: 'groupSchedule',
 		table: 'group_loan_schedules',
-		stagingTable: 'group_loan_schedules_staging',
 		columns: ['debt_id', 'sequence', 'accrual_end_date', 'accrued_interest_amount', 'payment_date',
 			'paid_interest_amount', 'principal_repayment_amount', 'remaining_principal_amount',
 			'supplemental_date', 'supplemental_note', 'supplemental_amount']
@@ -792,179 +544,7 @@ export const TYPED_IMPORT_TABLES = [
 	{
 		key: 'swap',
 		table: 'swap_facility_details',
-		stagingTable: 'swap_staging',
 		columns: ['debt_id', 'sequence_number', 'first_repo_date', 'average_repo_balance_description',
 			'repo_weighted_average_rate', 'comprehensive_financing_rate']
 	}
 ];
-
-function typedD1InsertSql(table, columns) {
-	return `
-		INSERT INTO ${table} (${columns.join(', ')})
-		SELECT d.id, ${columns.slice(1).map((_, index) => `json_extract(row.value, '$[${index + 1}]')`).join(', ')}
-		FROM json_each(?) AS row
-		JOIN debts d ON d.external_key = json_extract(row.value, '$[0]')
-	`;
-}
-
-export async function importDebtWorkbookToD1(db, workbookData, sourceFile) {
-	const parsed = parseDebtWorkbookData(workbookData, sourceFile);
-	const typedData = buildTypedDebtData(parsed);
-	const existingRows = await db.prepare('SELECT external_key AS externalKey FROM debts').all();
-	const existingKeys = new Set(existingRows.map((row) => row.externalKey));
-	const incomingKeys = new Set(parsed.debts.map((debt) => debt[1]));
-	const inserted = parsed.debts.filter((debt) => !existingKeys.has(debt[1])).length;
-	const updated = parsed.debts.length - inserted;
-	const deleted = existingRows.filter((row) => !incomingKeys.has(row.externalKey)).length;
-	const marker = globalThis.crypto.randomUUID();
-	const statements = [
-		db.prepare('DELETE FROM bond_payment_schedules').bind(),
-		db.prepare('DELETE FROM income_right_payment_schedules').bind(),
-		db.prepare('DELETE FROM group_loan_schedules').bind(),
-		db.prepare('DELETE FROM bond_debt_details').bind(),
-		db.prepare('DELETE FROM income_certificate_details').bind(),
-		db.prepare('DELETE FROM income_right_details').bind(),
-		db.prepare('DELETE FROM interbank_borrowing_details').bind(),
-		db.prepare('DELETE FROM refinancing_details').bind(),
-		db.prepare('DELETE FROM group_loan_details').bind(),
-		db.prepare('DELETE FROM swap_facility_details').bind(),
-		db.prepare('DELETE FROM workbook_notes').bind(),
-		db.prepare('DELETE FROM debt_cashflow_events').bind(),
-		db.prepare('DELETE FROM debt_balance_daily').bind()
-	];
-
-	const debtSql = `
-		INSERT INTO debts (
-			id, external_key, debt_type, category_level_1, category_level_2,
-			instrument_name, instrument_code, borrower, counterparty,
-			principal_amount, outstanding_amount, currency, annual_rate,
-			issue_date, maturity_date, status, import_marker
-		)
-		SELECT
-			json_extract(value, '$[0]'), json_extract(value, '$[1]'),
-			json_extract(value, '$[2]'), json_extract(value, '$[3]'),
-			json_extract(value, '$[4]'), json_extract(value, '$[5]'),
-			json_extract(value, '$[6]'), json_extract(value, '$[7]'),
-			json_extract(value, '$[8]'), json_extract(value, '$[9]'),
-			json_extract(value, '$[10]'), json_extract(value, '$[11]'),
-			json_extract(value, '$[12]'), json_extract(value, '$[13]'),
-			json_extract(value, '$[14]'), json_extract(value, '$[15]'), ?
-		FROM json_each(?)
-		ON CONFLICT(external_key) DO UPDATE SET
-			debt_type = excluded.debt_type,
-			category_level_1 = excluded.category_level_1,
-			category_level_2 = excluded.category_level_2,
-			instrument_name = excluded.instrument_name,
-			instrument_code = excluded.instrument_code,
-			borrower = excluded.borrower,
-			counterparty = excluded.counterparty,
-			principal_amount = excluded.principal_amount,
-			outstanding_amount = excluded.outstanding_amount,
-			currency = excluded.currency,
-			annual_rate = excluded.annual_rate,
-			issue_date = excluded.issue_date,
-			maturity_date = excluded.maturity_date,
-			status = excluded.status,
-			import_marker = excluded.import_marker,
-			imported_at = CURRENT_TIMESTAMP,
-			updated_at = CURRENT_TIMESTAMP
-	`;
-	for (const chunk of jsonChunks(parsed.debts)) statements.push(db.prepare(debtSql).bind(marker, chunk));
-
-	for (const config of TYPED_IMPORT_TABLES) {
-		const sql = typedD1InsertSql(config.table, config.columns);
-		for (const chunk of jsonChunks(typedData[config.key])) {
-			statements.push(db.prepare(sql).bind(chunk));
-		}
-	}
-	for (const chunk of jsonChunks(parsed.workbookNotes)) {
-		statements.push(db.prepare(`
-			INSERT INTO workbook_notes (sheet_name, content)
-			SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)
-		`).bind(chunk));
-	}
-
-	const cashflowSql = `
-		INSERT INTO debt_cashflow_events (event_key, debt_id, event_type, event_date, amount, sequence)
-		SELECT json_extract(flow.value, '$[0]'), d.id,
-			json_extract(flow.value, '$[2]'), json_extract(flow.value, '$[3]'),
-			json_extract(flow.value, '$[4]'), json_extract(flow.value, '$[5]')
-		FROM json_each(?) AS flow
-		JOIN debts d ON d.external_key = json_extract(flow.value, '$[1]')
-	`;
-	for (const chunk of jsonChunks(parsed.cashflows)) statements.push(db.prepare(cashflowSql).bind(chunk));
-
-	const balanceSql = `
-		INSERT INTO debt_balance_daily (as_of_date, debt_type, balance_yi)
-		SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]')
-		FROM json_each(?)
-		ON CONFLICT(as_of_date, debt_type) DO UPDATE SET
-			balance_yi = excluded.balance_yi,
-			updated_at = CURRENT_TIMESTAMP
-	`;
-	for (const chunk of jsonChunks(parsed.balances)) statements.push(db.prepare(balanceSql).bind(chunk));
-
-	statements.push(
-		db.prepare('DELETE FROM debts WHERE import_marker IS NULL OR import_marker != ?').bind(marker),
-		db.prepare('UPDATE debts SET import_marker = NULL WHERE import_marker = ?').bind(marker),
-		db.prepare(`
-			INSERT INTO data_import_state (
-				id, workbook_name, workbook_hash, as_of_date, status, started_at, finished_at,
-				inserted_count, updated_count, deleted_count, debt_count, field_value_count,
-				cashflow_count, history_date_count, excluded_future_count, error_message
-			) VALUES (
-				1, ?, ?, ?, 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
-				?, ?, ?, ?, ?, ?, ?, ?, NULL
-			)
-			ON CONFLICT(id) DO UPDATE SET
-				workbook_name = excluded.workbook_name,
-				workbook_hash = excluded.workbook_hash,
-				as_of_date = excluded.as_of_date,
-				status = 'completed',
-				started_at = excluded.started_at,
-				finished_at = excluded.finished_at,
-				inserted_count = excluded.inserted_count,
-				updated_count = excluded.updated_count,
-				deleted_count = excluded.deleted_count,
-				debt_count = excluded.debt_count,
-				field_value_count = excluded.field_value_count,
-				cashflow_count = excluded.cashflow_count,
-				history_date_count = excluded.history_date_count,
-				excluded_future_count = excluded.excluded_future_count,
-				error_message = NULL
-		`).bind(
-			sourceFile,
-			stableId(new Uint8Array(workbookData)),
-			parsed.snapshot.asOfDate,
-			inserted,
-			updated,
-			deleted,
-			parsed.debts.length,
-			parsed.fieldValueCount,
-			parsed.cashflows.length,
-			parsed.historyDateCount,
-			parsed.excludedFutureDates.length
-		)
-	);
-
-	if (statements.length > 44) {
-		throw new Error(`导入需要 ${statements.length} 条 D1 查询，超过单次安全上限 44`);
-	}
-	await db.batch(statements);
-	return {
-		sourceFile,
-		inserted,
-		updated,
-		deleted,
-		skipped: parsed.skipped,
-		sheetCount: parsed.sheetCount,
-		fieldValueCount: parsed.fieldValueCount,
-		cashflowEventCount: parsed.cashflows.length,
-		historyDateCount: parsed.historyDateCount,
-		historyStartDate: parsed.historyStartDate,
-		historyEndDate: parsed.historyEndDate,
-		excludedFutureDates: parsed.excludedFutureDates,
-		snapshot: parsed.snapshot,
-		queryCount: statements.length + 1
-	};
-}

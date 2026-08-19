@@ -35,7 +35,7 @@ pnpm reminders:send -- --dry-run
 pnpm check
 pnpm build
 pnpm dev
-pnpm deploy
+pnpm run deploy
 ```
 
 ## 3. 开始和结束每次会话
@@ -71,7 +71,8 @@ pnpm deploy
 - `src/lib/server/seed.js`：可重复执行的基础人员、SOP、项目和提醒种子。
 - `src/lib/excel-import.js`：浏览器/本地共用的 Excel 解析、字段覆盖校验和余额核对。
 - `src/lib/debt-details.js`：负债品种扩展表、映射和本地迁移。
-- `src/lib/server/staged-import.js`：D1 类型化分片暂存与最终原子切换。
+- `src/lib/incremental-import.js`：浏览器与服务端共用的类型化数据集、稳定业务键和去重规则。
+- `src/lib/server/incremental-import.js`：D1 哈希预检、只读增量筛选和最终原子追加。
 - `src/lib/server/queries.js`：Dashboard、甘特图和设置页查询；`getDebtLimitSummary()` 供额度表与试算复用，`getCalendarMonthEvents()` 供融资日历复用。
 - `src/lib/server/reminders.js`：提醒计算、去重、Resend 发送和发送日志。
 - `src/routes/debts/[id]/`：单笔负债主表、品种扩展字段和结构化现金流联查。
@@ -108,7 +109,7 @@ pnpm deploy
 - 新表和新字段放入 `createSchema()`，迁移必须可重复运行。
 - 外键保持开启；删除行为必须显式定义。
 - 表单动作必须进行服务端必填、类型、范围和文件大小校验。
-- Excel 在浏览器本地解析，不把原始文件上传给 Worker；服务端只接收有大小上限的类型化分片。
+- Excel 在浏览器本地解析，不把原始文件上传给 Worker；服务端只接收有大小上限的只读比对分片和最终增量类型化数据。
 - 密钥只从环境变量读取；不得写入仓库、SQLite 或日志。
 - Resend 未配置时只生成 `pending` 记录；不得假装发送成功。
 - 提醒以 `(rule_id, target_id, delivery_date)` 去重。
@@ -127,7 +128,7 @@ pnpm deploy
 - `pnpm check`：0 error、0 warning。
 - `pnpm build`：成功。
 - 核心路由 `/`、`/debts/[id]`、`/projects`、`/sop`、`/settings`、`/data`、`/people` 可访问。
-- Excel 导入能够重复执行且汇总保持一致。
+- Excel 导入能够重复执行且汇总保持一致；相同工作簿重复上传不产生 D1 写入。
 - 新增表单具有失败反馈，不得静默失败。
 - 新增可见文字满足 `1rem / 0.75rem` 字号规则。
 - 新增布局不得以大量固定 `px` 值实现。

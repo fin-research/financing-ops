@@ -1,0 +1,15 @@
+DROP TABLE IF EXISTS workbook_notes_staging;
+DROP TABLE IF EXISTS balance_staging;
+DROP TABLE IF EXISTS cashflow_staging;
+DROP TABLE IF EXISTS swap_staging;
+DROP TABLE IF EXISTS group_loan_schedules_staging;
+DROP TABLE IF EXISTS group_loan_staging;
+DROP TABLE IF EXISTS refinancing_staging;
+DROP TABLE IF EXISTS interbank_staging;
+DROP TABLE IF EXISTS income_right_schedules_staging;
+DROP TABLE IF EXISTS income_right_staging;
+DROP TABLE IF EXISTS income_certificate_staging;
+DROP TABLE IF EXISTS bond_schedules_staging;
+DROP TABLE IF EXISTS bond_details_staging;
+DROP TABLE IF EXISTS debt_import_staging;
+DROP TABLE IF EXISTS debt_import_upload;

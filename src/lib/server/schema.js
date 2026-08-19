@@ -1,9 +1,9 @@
 // @ts-nocheck
 import { stableDebtKey } from '../debt-key.js';
 import { DEBT_FIELD_COLUMNS } from '../debt-fields.js';
-import { migrateTypedDebtDetails } from '../debt-details.js';
+import { dropLegacyImportStagingTables, migrateTypedDebtDetails } from '../debt-details.js';
 
-const schemaVersion = 11;
+const schemaVersion = 12;
 
 function createDebtRecordsTable(db, tableName = 'debt_records', debtsTable = 'debts') {
 	db.exec(`
@@ -764,6 +764,7 @@ export function createSchema(db) {
 	migrateStableDebtKeys(db);
 	migrateWideDebtFields(db);
 	migrateTypedDebtDetails(db);
+	dropLegacyImportStagingTables(db);
 	ensureColumn(db, 'debts', 'category_level_1', 'TEXT');
 	ensureColumn(db, 'debts', 'category_level_2', 'TEXT');
 	ensureColumn(db, 'debts', 'import_marker', 'TEXT');

@@ -81,50 +81,79 @@
 		}
 		actionState = { key: 'upload', status: 'pending', message: '正在本地解析并核对 Excel…' };
 		try {
-			const [{ parseDebtWorkbookData }, { buildTypedDebtData }, { sha256Hex }] = await Promise.all([
+			const [
+				{ parseDebtWorkbookData },
+				{ buildTypedDebtData },
+				{ sha256Hex },
+				{ createImportDatasets, importDatasetCounts }
+			] = await Promise.all([
 				import('$lib/excel-import.js'),
 				import('$lib/debt-details.js'),
-				import('$lib/hash.js')
+				import('$lib/hash.js'),
+				import('$lib/incremental-import.js')
 			]);
 			const workbookData = new Uint8Array(await workbook.arrayBuffer());
 			const parsed = parseDebtWorkbookData(workbookData, workbook.name);
 			const typed = buildTypedDebtData(parsed);
-			const begin = await importApi({
-				operation: 'begin',
-				metadata: {
-					workbookName: workbook.name,
-					workbookHash: sha256Hex(workbookData),
-					asOfDate: parsed.snapshot.asOfDate,
-					debtCount: parsed.debts.length,
-					fieldValueCount: parsed.fieldValueCount,
-					cashflowCount: parsed.cashflows.length,
-					historyDateCount: parsed.historyDateCount,
-					excludedFutureCount: parsed.excludedFutureDates.length
-				}
-			});
-			const datasets: Array<[string, unknown[][]]> = [
-				['debts', parsed.debts.map((debt: unknown[]) => debt.slice(1))],
-				...Object.entries(typed) as Array<[string, unknown[][]]>,
-				['cashflows', parsed.cashflows],
-				['balances', parsed.balances],
-				['workbookNotes', parsed.workbookNotes]
-			];
-			const chunks = datasets.flatMap(([key, rows]) => rowChunks(rows).map((chunk) => [key, chunk] as const));
+			const datasets = createImportDatasets(parsed, typed) as Record<string, unknown[][]>;
+			const metadata = {
+				workbookName: workbook.name,
+				workbookHash: sha256Hex(workbookData),
+				asOfDate: parsed.snapshot.asOfDate,
+				debtCount: datasets.debts.length,
+				fieldValueCount: parsed.fieldValueCount,
+				cashflowCount: datasets.cashflows.length,
+				historyDateCount: parsed.historyDateCount,
+				excludedFutureCount: parsed.excludedFutureDates.length,
+				datasetCounts: importDatasetCounts(datasets)
+			};
+			actionState = { key: 'upload', status: 'pending', message: '正在核对线上基准日与工作簿版本…' };
+			const preflight = await importApi({ operation: 'preflight', metadata });
+			if (preflight.unchanged) {
+				workbookInput.value = '';
+				actionState = {
+					key: 'upload',
+					status: 'success',
+					message: `${workbook.name} 与线上版本一致，未产生 D1 写入`
+				};
+				return;
+			}
+
+			const incremental = Object.fromEntries(
+				Object.keys(datasets).map((key) => [key, [] as unknown[][]])
+			) as Record<string, unknown[][]>;
+			incremental.balances = datasets.balances.filter((row) =>
+				!preflight.maxBalanceDate || String(row[0]) > String(preflight.maxBalanceDate)
+			);
+			const chunks = Object.entries(datasets)
+				.filter(([key]) => key !== 'balances')
+				.flatMap(([key, rows]) => rowChunks(rows).map((chunk) => [key, chunk] as const));
 			for (let index = 0; index < chunks.length; index += 1) {
 				const [key, rows] = chunks[index];
 				actionState = {
 					key: 'upload', status: 'pending',
-					message: `正在上传结构化数据 ${index + 1}/${chunks.length}…`
+					message: `正在只读核对历史记录 ${index + 1}/${chunks.length}…`
 				};
-				await importApi({ operation: 'stage', token: begin.token, key, rows });
+				const filtered = await importApi({
+					operation: 'filter',
+					expectedWorkbookHash: preflight.expectedWorkbookHash,
+					key,
+					rows
+				});
+				incremental[key].push(...filtered.newIndexes.map((rowIndex: number) => rows[rowIndex]));
 			}
-			actionState = { key: 'upload', status: 'pending', message: '正在原子切换最新数据并复核余额…' };
-			const imported = await importApi({ operation: 'finalize', token: begin.token });
+			actionState = { key: 'upload', status: 'pending', message: '正在原子写入新增日期与新增记录…' };
+			const imported = await importApi({
+				operation: 'commit',
+				expectedWorkbookHash: preflight.expectedWorkbookHash,
+				metadata,
+				datasets: incremental
+			});
 			await invalidateAll();
 			workbookInput.value = '';
 			actionState = {
 				key: 'upload', status: 'success',
-				message: `${imported.sourceFile} 已更新至 ${imported.snapshot.asOfDate}，余额 ${Number(imported.snapshot.totalYi).toFixed(4)} 亿元；新增 ${imported.inserted}、更新 ${imported.updated}、删除 ${imported.deleted}`
+				message: `${imported.sourceFile} 已增量更新至 ${imported.snapshot.asOfDate}，余额 ${Number(imported.snapshot.totalYi).toFixed(4)} 亿元；新增负债 ${imported.inserted}、新增日期 ${imported.newHistoryDateCount}、写入数据行 ${imported.insertedRows}`
 			};
 		} catch (error) {
 			actionState = { key: 'upload', status: 'error', message: error instanceof Error ? error.message : String(error) };
@@ -283,10 +312,10 @@
 						<strong>{importData.importStats.historySpan.startDate} — {importData.importStats.historySpan.endDate}</strong>
 					</div>
 				</div>
-				<p class="quality-note">
-					<History size={16} />
-					新工作簿按业务键增量更新负债主表，并替换字段、现金流和余额为最新状态。
-				</p>
+					<p class="quality-note">
+						<History size={16} />
+						新工作簿仅追加新增业务键和晚于线上最大日期的余额，既有历史不更新、不删除。
+					</p>
 			{/if}
 		</article>
 	</section>

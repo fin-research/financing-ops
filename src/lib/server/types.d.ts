@@ -12,10 +12,12 @@ export interface ProjectFilters extends DashboardFilters {
 }
 
 export interface DebtImportResult {
-	runId: string;
 	sourceFile: string;
+	unchanged: boolean;
 	inserted: number;
 	updated: number;
-	skipped: number;
-	sheetCount: number;
+	deleted: number;
+	insertedRows: number;
+	newHistoryDateCount: number;
+	rowsWritten: number;
 }
