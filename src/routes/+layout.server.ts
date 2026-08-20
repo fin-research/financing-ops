@@ -1,8 +1,8 @@
 import type { LayoutServerLoad } from './$types';
-import { getDataImportData, getTopbarReminders } from '$lib/server/queries.js';
+import { getDataAsOfDate, getTopbarReminders } from '$lib/server/queries.js';
 
 export const load: LayoutServerLoad = async ({ locals }) => {
-	const currentSnapshot = (await getDataImportData()).currentSnapshot;
+	const dataAsOfDate = locals.user ? await getDataAsOfDate() : null;
 	const todayIso = new Intl.DateTimeFormat('en-CA', {
 		timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
 	}).format(new Date());
@@ -19,7 +19,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		: { items: [], total: 0 };
 	return {
 		user: locals.user,
-		dataAsOfDate: currentSnapshot?.asOfDate ?? null,
+		dataAsOfDate,
 		reminders
 	};
 };

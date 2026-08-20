@@ -3,7 +3,7 @@ import { stableDebtKey } from '../debt-key.js';
 import { DEBT_FIELD_COLUMNS } from '../debt-fields.js';
 import { dropLegacyImportStagingTables, migrateTypedDebtDetails } from '../debt-details.js';
 
-const schemaVersion = 12;
+const schemaVersion = 13;
 
 function createDebtRecordsTable(db, tableName = 'debt_records', debtsTable = 'debts') {
 	db.exec(`
@@ -175,6 +175,10 @@ function migrateCompactImportedData(db) {
 					cashflow_count INTEGER NOT NULL DEFAULT 0,
 					history_date_count INTEGER NOT NULL DEFAULT 0,
 					excluded_future_count INTEGER NOT NULL DEFAULT 0,
+					snapshot_total_yi REAL,
+					history_start_date TEXT,
+					history_end_date TEXT,
+					stats_refreshed_at TEXT,
 					error_message TEXT
 				);
 			`);
@@ -237,11 +241,19 @@ function migrateCompactImportedData(db) {
 			const fieldValueCount = db.prepare('SELECT COUNT(*) AS count FROM debt_field_values_compact').get().count;
 			const cashflowCount = db.prepare('SELECT COUNT(*) AS count FROM debt_cashflow_events_compact').get().count;
 			const historyDateCount = db.prepare('SELECT COUNT(DISTINCT as_of_date) AS count FROM debt_balance_daily_compact').get().count;
+			const history = db.prepare(`
+				SELECT MIN(as_of_date) AS startDate, MAX(as_of_date) AS endDate
+				FROM debt_balance_daily_compact
+			`).get();
+			const snapshotTotalYi = db.prepare(`
+				SELECT SUM(balance_yi) AS totalYi FROM debt_balance_daily_compact WHERE as_of_date = ?
+			`).get(asOfDate).totalYi;
 			db.prepare(`
 				INSERT INTO data_import_state_compact (
 					id, workbook_name, workbook_hash, as_of_date, status, started_at, finished_at,
-					debt_count, field_value_count, cashflow_count, history_date_count
-				) VALUES (1, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)
+					debt_count, field_value_count, cashflow_count, history_date_count,
+					snapshot_total_yi, history_start_date, history_end_date, stats_refreshed_at
+				) VALUES (1, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 			`).run(
 				workbookName,
 				selectedRun?.fileHash ?? '',
@@ -251,7 +263,10 @@ function migrateCompactImportedData(db) {
 				debtCount,
 				fieldValueCount,
 				cashflowCount,
-				historyDateCount
+				historyDateCount,
+				snapshotTotalYi,
+				history.startDate,
+				history.endDate
 			);
 
 			db.exec(`
@@ -713,6 +728,10 @@ export function createSchema(db) {
 			cashflow_count INTEGER NOT NULL DEFAULT 0,
 			history_date_count INTEGER NOT NULL DEFAULT 0,
 			excluded_future_count INTEGER NOT NULL DEFAULT 0,
+			snapshot_total_yi REAL,
+			history_start_date TEXT,
+			history_end_date TEXT,
+			stats_refreshed_at TEXT,
 			error_message TEXT
 		);
 
@@ -770,10 +789,15 @@ export function createSchema(db) {
 	ensureColumn(db, 'debts', 'import_marker', 'TEXT');
 	migrateIdentityModel(db);
 	ensureColumn(db, 'auth_users', 'avatar_data_url', 'TEXT');
+	ensureColumn(db, 'data_import_state', 'snapshot_total_yi', 'REAL');
+	ensureColumn(db, 'data_import_state', 'history_start_date', 'TEXT');
+	ensureColumn(db, 'data_import_state', 'history_end_date', 'TEXT');
+	ensureColumn(db, 'data_import_state', 'stats_refreshed_at', 'TEXT');
 	migrateAuditLogEntityTypes(db);
 	db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_debts_type_status ON debts(debt_type, status);
 		CREATE INDEX IF NOT EXISTS idx_debts_maturity ON debts(maturity_date);
+		CREATE INDEX IF NOT EXISTS idx_debts_issue_date_status ON debts(issue_date, status, debt_type, principal_amount);
 		CREATE INDEX IF NOT EXISTS idx_debt_balance_daily_date ON debt_balance_daily(as_of_date);
 		CREATE INDEX IF NOT EXISTS idx_debt_cashflow_events_date ON debt_cashflow_events(event_date, event_type);
 		CREATE INDEX IF NOT EXISTS idx_debt_cashflow_events_debt ON debt_cashflow_events(debt_id, event_date);

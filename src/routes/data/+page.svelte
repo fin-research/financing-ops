@@ -11,6 +11,7 @@
 		History,
 		Landmark,
 		LoaderCircle,
+		RefreshCw,
 		ShieldCheck,
 		Upload
 	} from '@lucide/svelte';
@@ -34,7 +35,9 @@
 			cashflowEventCount: 0,
 			historyDateCount: 0,
 			historySpan: { startDate: null, endDate: null }
-		}
+		},
+		statsReady: false,
+		statsRefreshedAt: null
 	};
 	const importData = $derived(data?.importData ?? fallback);
 
@@ -100,6 +103,9 @@
 				workbookName: workbook.name,
 				workbookHash: sha256Hex(workbookData),
 				asOfDate: parsed.snapshot.asOfDate,
+				snapshotTotalYi: parsed.snapshot.totalYi,
+				historyStartDate: parsed.historyStartDate,
+				historyEndDate: parsed.historyEndDate,
 				debtCount: datasets.debts.length,
 				fieldValueCount: parsed.fieldValueCount,
 				cashflowCount: datasets.cashflows.length,
@@ -182,6 +188,27 @@
 			};
 		};
 	};
+
+	const enhanceStatistics: SubmitFunction = () => {
+		actionState = { key: 'statistics', status: 'pending', message: '正在扫描完整业务表并重新统计…' };
+		return async ({ result, update }) => {
+			if (result.type === 'success') {
+				await update({ reset: false, invalidateAll: true });
+				actionState = {
+					key: 'statistics', status: 'success',
+					message: String(result.data?.message ?? '统计快照已更新')
+				};
+				return;
+			}
+			await update({ reset: false, invalidateAll: false });
+			actionState = {
+				key: 'statistics', status: 'error',
+				message: result.type === 'failure'
+					? String(result.data?.message ?? '重新统计失败')
+					: '重新统计失败，请稍后重试'
+			};
+		};
+	};
 </script>
 
 <svelte:head>
@@ -214,7 +241,9 @@
 					<h2>当前数据源</h2>
 					<p>仅保留最新工作簿对应的结构化数据</p>
 				</div>
-				<span class="status-badge"><CheckCircle2 size={13} /> 已完成</span>
+				<span class:pending={!importData.statsReady} class="status-badge">
+					{#if importData.statsReady}<CheckCircle2 size={13} /> 已完成{:else}<History size={13} /> 待统计{/if}
+				</span>
 			</div>
 			<div class="source-summary">
 				<div class="file-block">
@@ -226,7 +255,7 @@
 				</div>
 				<div class="reconcile-block">
 					<span>存续余额对账</span>
-					<strong>{importData.currentSnapshot ? `${importData.currentSnapshot.totalYi.toFixed(4)} 亿元` : '待导入'}</strong>
+					<strong>{importData.currentSnapshot?.totalYi != null ? `${importData.currentSnapshot.totalYi.toFixed(4)} 亿元` : '待重新统计'}</strong>
 					<small><ShieldCheck size={14} /> 与汇总表一致</small>
 				</div>
 			</div>
@@ -297,9 +326,19 @@
 					<h2>导入完整性</h2>
 					<p>全部 Excel 字段均已规范化入库</p>
 				</div>
-				<button class="link-button" type="button" onclick={() => (detailsExpanded = !detailsExpanded)}>
-					{detailsExpanded ? '收起' : '展开'}
-				</button>
+				<div class="card-actions">
+					{#if data.user?.role === 'admin'}
+						<form method="post" action="?/recalculateStatistics" use:enhance={enhanceStatistics}>
+							<button class="secondary-action" type="submit" disabled={actionState.status === 'pending'}>
+								<RefreshCw size={15} class={actionState.status === 'pending' && actionState.key === 'statistics' ? 'spin' : undefined} />
+								{actionState.status === 'pending' && actionState.key === 'statistics' ? '统计中…' : '重新统计'}
+							</button>
+						</form>
+					{/if}
+					<button class="link-button" type="button" onclick={() => (detailsExpanded = !detailsExpanded)}>
+						{detailsExpanded ? '收起' : '展开'}
+					</button>
+				</div>
 			</div>
 			{#if detailsExpanded}
 				<div class="stats-grid">
@@ -309,12 +348,12 @@
 					<div><span>唯一历史日期</span><strong>{importData.importStats.historyDateCount.toLocaleString('zh-CN')} 个</strong></div>
 					<div>
 						<span>历史范围</span>
-						<strong>{importData.importStats.historySpan.startDate} — {importData.importStats.historySpan.endDate}</strong>
+						<strong>{importData.importStats.historySpan.startDate ?? '待统计'} — {importData.importStats.historySpan.endDate ?? '待统计'}</strong>
 					</div>
 				</div>
 					<p class="quality-note">
 						<History size={16} />
-						新工作簿仅追加新增业务键和晚于线上最大日期的余额，既有历史不更新、不删除。
+						日常页面仅读取导入时保存的统计快照；只有管理员手动点击“重新统计”才会扫描完整业务表。
 					</p>
 			{/if}
 		</article>
@@ -331,6 +370,21 @@
 	.detail-card,
 	.parameter-card {
 		grid-column: 1 / -1;
+	}
+
+	.card-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.card-actions form {
+		margin: 0;
+	}
+
+	.status-badge.pending {
+		color: #b54708;
+		background: #fffaeb;
 	}
 
 	.source-summary {

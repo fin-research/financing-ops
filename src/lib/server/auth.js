@@ -2,6 +2,7 @@
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { getDatabase } from './db.js';
 import { hashPassword, verifyPassword } from './auth-crypto.js';
+import { shouldTouchSession } from './session-policy.js';
 
 export { hashPassword, verifyPassword } from './auth-crypto.js';
 
@@ -27,21 +28,26 @@ export async function ensureAdminUser(config = runtimeConfig) {
 
 	const db = getDatabase();
 	const existingAdmin = await db.prepare(`
-		SELECT id, person_id AS personId
-		FROM auth_users
-		WHERE role = 'admin'
-		ORDER BY active DESC, created_at
+		SELECT u.id, u.person_id AS personId, u.active AS userActive,
+			p.role AS personRole, p.active AS personActive
+		FROM auth_users u JOIN people p ON p.id = u.person_id
+		WHERE u.role = 'admin'
+		ORDER BY u.active DESC, u.created_at
 		LIMIT 1
 	`).get();
 	if (existingAdmin) {
-		await db.batch([
-			db.prepare(`
+		const statements = [];
+		if (!existingAdmin.userActive) {
+			statements.push(db.prepare(`
 				UPDATE auth_users SET active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-			`).bind(existingAdmin.id),
-			db.prepare(`
+			`).bind(existingAdmin.id));
+		}
+		if (existingAdmin.personRole !== 'admin' || !existingAdmin.personActive) {
+			statements.push(db.prepare(`
 				UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-			`).bind(existingAdmin.personId)
-		]);
+			`).bind(existingAdmin.personId));
+		}
+		if (statements.length) await db.batch(statements);
 		adminReady = true;
 		return;
 	}
@@ -136,29 +142,36 @@ export async function createSession(userId) {
 	const db = getDatabase();
 	const token = randomBytes(32).toString('base64url');
 	const expiresAt = new Date(Date.now() + sessionHours() * 60 * 60_000);
-	await db.prepare(`
-		INSERT INTO auth_sessions (id, token_hash, user_id, expires_at)
-		VALUES (?, ?, ?, ?)
-	`).run(randomUUID(), sha256(token), userId, expiresAt.toISOString());
+	await db.batch([
+		db.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').bind(new Date().toISOString()),
+		db.prepare(`
+			INSERT INTO auth_sessions (id, token_hash, user_id, expires_at)
+			VALUES (?, ?, ?, ?)
+		`).bind(randomUUID(), sha256(token), userId, expiresAt.toISOString())
+	]);
 	return { token, expiresAt };
 }
 
 export async function getSessionUser(token) {
 	if (!token) return null;
 	const db = getDatabase();
-	await db.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(new Date().toISOString());
-	const user = await db.prepare(`
+	const tokenHash = sha256(token);
+	const now = new Date();
+	const session = await db.prepare(`
 		SELECT u.id, u.username, u.role, u.person_id AS personId, p.name AS personName,
-			u.avatar_data_url AS avatarDataUrl
+			u.avatar_data_url AS avatarDataUrl, s.last_seen_at AS lastSeenAt
 		FROM auth_sessions s
 		JOIN auth_users u ON u.id = s.user_id
 		JOIN people p ON p.id = u.person_id
 		WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1 AND p.active = 1
-	`).get(sha256(token), new Date().toISOString());
-	if (!user) return null;
-	await db.prepare(`
-		UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = ?
-	`).run(sha256(token));
+	`).get(tokenHash, now.toISOString());
+	if (!session) return null;
+	if (shouldTouchSession(session.lastSeenAt, now.getTime())) {
+		await db.prepare(`
+			UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = ?
+		`).run(tokenHash);
+	}
+	const { lastSeenAt: _lastSeenAt, ...user } = session;
 	return user;
 }
 

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { getDatabase } from './db.js';
+import { getCachedImportAsOfDate, getCachedImportStatistics } from './import-statistics.js';
 
 const number = (value) => Number(value ?? 0);
 
@@ -373,7 +374,8 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 	const maturityDetails = (await db.prepare(`
 		WITH interest AS (
 			SELECT debt_id, event_date, SUM(amount) AS amount
-			FROM debt_cashflow_events WHERE event_type = 'interest'
+			FROM debt_cashflow_events
+			WHERE event_type = 'interest' AND event_date > ? AND event_date <= ?
 			GROUP BY debt_id, event_date
 		)
 		SELECT d.id, d.external_key AS externalKey,
@@ -388,7 +390,7 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 			AND (COALESCE(d.outstanding_amount, d.principal_amount, 0) > 0 OR COALESCE(i.amount, 0) > 0)
 			${filter.clause}
 		ORDER BY d.maturity_date, d.debt_type, d.instrument_name
-	`).all(today, in30Days, ...filter.params)).map((row) => ({
+	`).all(today, in30Days, today, in30Days, ...filter.params)).map((row) => ({
 		...row, principalYi: number(row.principalYi), interestYi: number(row.interestYi),
 		annualRate: row.annualRate == null ? null : number(row.annualRate)
 	}));
@@ -461,7 +463,7 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 		SELECT SUM(COALESCE(d.outstanding_amount, d.principal_amount, 0)) / 100000000.0 AS value
 		FROM debts d WHERE d.status != 'closed'
 			AND (d.issue_date IS NULL OR d.issue_date <= ?) AND d.maturity_date > ?
-			AND julianday(d.maturity_date) - julianday(?) <= 365
+			AND d.maturity_date <= date(?, '+365 day')
 			AND d.debt_type IN ('收益凭证', '短期融资券', '同业拆借', '小公募', '次级债', '私募债', '科创债')
 	`).get(asOfDate, asOfDate, asOfDate);
 	const securitiesNetAssets = parameters.securities_prior_year_net_assets?.valueYi;
@@ -599,7 +601,8 @@ export async function getCalendarMonthEvents() {
 	const debtEvents = (await db.prepare(`
 		WITH interest AS (
 			SELECT debt_id, event_date, SUM(amount) AS amount
-			FROM debt_cashflow_events WHERE event_type = 'interest'
+			FROM debt_cashflow_events
+			WHERE event_type = 'interest' AND event_date BETWEEN ? AND ?
 			GROUP BY debt_id, event_date
 		)
 		SELECT d.id, d.maturity_date AS date, d.debt_type AS debtType,
@@ -611,7 +614,7 @@ export async function getCalendarMonthEvents() {
 		WHERE d.status != 'closed' AND d.maturity_date BETWEEN ? AND ?
 			AND (COALESCE(d.outstanding_amount, d.principal_amount, 0) > 0 OR COALESCE(i.amount, 0) > 0)
 		ORDER BY d.maturity_date, d.debt_type, d.instrument_name
-	`).all(monthStart, monthEnd)).map((row) => {
+	`).all(monthStart, monthEnd, monthStart, monthEnd)).map((row) => {
 		const shortName = calendarShortName(row);
 		return {
 		id: `maturity:${row.id}`,
@@ -786,48 +789,37 @@ export async function getWorkflowSettingsData() {
 	};
 }
 
+export async function getDataAsOfDate() {
+	return getCachedImportAsOfDate(getDatabase());
+}
+
 export async function getDataImportData() {
 	const db = getDatabase();
-	const currentSnapshot = await db.prepare(`
-		SELECT as_of_date AS asOfDate, SUM(balance_yi) AS totalYi
-		FROM debt_balance_daily
-		WHERE as_of_date = (SELECT MAX(as_of_date) FROM debt_balance_daily)
-		GROUP BY as_of_date
-	`).get() ?? null;
-	const [financeParameters, lastImport, debtCount, cashflowEventCount, historyDateCount, historySpan] = await Promise.all([
+	const [financeParameters, lastImport] = await Promise.all([
 		db.prepare(`
 			SELECT code, label, value_yi AS valueYi, period_end AS periodEnd, notes
 			FROM finance_parameters ORDER BY
 				CASE code WHEN 'securities_prior_year_net_assets' THEN 1
 					WHEN 'group_prior_year_net_assets' THEN 2 ELSE 3 END
 		`).all(),
-		db.prepare(`
-			SELECT workbook_name AS sourceFile, as_of_date AS asOfDate, status,
-				started_at AS startedAt, finished_at AS finishedAt,
-				inserted_count AS insertedCount, updated_count AS updatedCount,
-				deleted_count AS deletedCount, field_value_count AS fieldValueCount,
-				error_message AS errorMessage
-			FROM data_import_state WHERE id = 1
-		`).get(),
-		db.prepare('SELECT COUNT(*) AS count FROM debts').get(),
-		db.prepare('SELECT COUNT(*) AS count FROM debt_cashflow_events').get(),
-		db.prepare('SELECT COUNT(DISTINCT as_of_date) AS count FROM debt_balance_daily').get(),
-		db.prepare(`
-			SELECT MIN(as_of_date) AS startDate, MAX(as_of_date) AS endDate
-			FROM debt_balance_daily
-		`).get()
+		getCachedImportStatistics(db)
 	]);
 	return {
 		financeParameters: financeParameters.map((item) => ({ ...item, valueYi: item.valueYi == null ? null : number(item.valueYi) })),
 		lastImport: lastImport ?? null,
-		currentSnapshot: currentSnapshot ? { ...currentSnapshot, totalYi: number(currentSnapshot.totalYi) } : null,
+		currentSnapshot: lastImport ? { asOfDate: lastImport.asOfDate, totalYi: lastImport.totalYi } : null,
 		importStats: {
-			debtCount: number(debtCount.count),
+			debtCount: number(lastImport?.debtCount),
 			fieldValueCount: number(lastImport?.fieldValueCount),
-			cashflowEventCount: number(cashflowEventCount.count),
-			historyDateCount: number(historyDateCount.count),
-			historySpan
-		}
+			cashflowEventCount: number(lastImport?.cashflowEventCount),
+			historyDateCount: number(lastImport?.historyDateCount),
+			historySpan: {
+				startDate: lastImport?.historyStartDate ?? null,
+				endDate: lastImport?.historyEndDate ?? null
+			}
+		},
+		statsReady: Boolean(lastImport?.statsReady),
+		statsRefreshedAt: lastImport?.statsRefreshedAt ?? null
 	};
 }
 

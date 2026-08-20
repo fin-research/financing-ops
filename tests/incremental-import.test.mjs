@@ -10,6 +10,11 @@ import {
 	filterIncrementalRows,
 	preflightIncrementalImport
 } from '../src/lib/server/incremental-import.js';
+import {
+	getCachedImportAsOfDate,
+	getCachedImportStatistics,
+	recalculateImportStatistics
+} from '../src/lib/server/import-statistics.js';
 import { createSchema } from '../src/lib/server/schema.js';
 import { createSqliteD1Adapter } from '../src/lib/server/sqlite-d1.js';
 
@@ -19,7 +24,7 @@ function emptyDatasets() {
 	return Object.fromEntries(IMPORT_DATASET_KEYS.map((key) => [key, []]));
 }
 
-function metadata({ hash, date, historyDateCount, debtCount = 0 }) {
+function metadata({ hash, date, historyDateCount, debtCount = 0, snapshotTotalYi = 45 }) {
 	const datasetCounts = Object.fromEntries(IMPORT_DATASET_KEYS.map((key) => [key, 0]));
 	datasetCounts.balances = historyDateCount * DEBT_TYPES.length;
 	datasetCounts.debts = debtCount;
@@ -27,6 +32,9 @@ function metadata({ hash, date, historyDateCount, debtCount = 0 }) {
 		workbookName: `借入资金${date.replaceAll('-', '')}.xlsx`,
 		workbookHash: hash,
 		asOfDate: date,
+		snapshotTotalYi,
+		historyStartDate: '2026-07-31',
+		historyEndDate: date,
 		debtCount,
 		fieldValueCount: 0,
 		cashflowCount: 0,
@@ -75,6 +83,12 @@ test('incremental import writes only later dates and identical workbook is a zer
 	});
 	assert.equal(first.insertedRows, 11);
 	assert.equal(first.rowsWritten, 12);
+	const firstStatistics = await getCachedImportStatistics(db);
+	assert.equal(firstStatistics.debtCount, 1);
+	assert.equal(firstStatistics.totalYi, 45);
+	assert.equal(firstStatistics.historyStartDate, '2026-07-31');
+	assert.equal(firstStatistics.historyEndDate, '2026-07-31');
+	assert.equal(firstStatistics.statsReady, true);
 
 	const repeated = await preflightIncrementalImport(db, firstMetadata);
 	assert.equal(repeated.unchanged, true);
@@ -98,7 +112,9 @@ test('incremental import writes only later dates and identical workbook is a zer
 		/必须晚于线上基准日/
 	);
 
-	const secondMetadata = metadata({ hash: '2'.repeat(64), date: '2026-08-01', historyDateCount: 2, debtCount: 1 });
+	const secondMetadata = metadata({
+		hash: '2'.repeat(64), date: '2026-08-01', historyDateCount: 2, debtCount: 1, snapshotTotalYi: 145
+	});
 	const preflight = await preflightIncrementalImport(db, secondMetadata);
 	const secondDatasets = emptyDatasets();
 	secondDatasets.balances = balances('2026-08-01', 10);
@@ -113,4 +129,21 @@ test('incremental import writes only later dates and identical workbook is a zer
 	assert.equal(second.deleted, 0);
 	assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM debt_balance_daily').get().count, 20);
 	assert.equal((await preflightIncrementalImport(db, secondMetadata)).unchanged, true);
+	assert.equal(await getCachedImportAsOfDate(db), '2026-08-01');
+
+	sqlite.prepare(`
+		UPDATE data_import_state SET debt_count = 0, cashflow_count = 99,
+			history_date_count = 0, snapshot_total_yi = NULL,
+			history_start_date = NULL, history_end_date = NULL
+	`).run();
+	const recalculated = await recalculateImportStatistics(db);
+	assert.deepEqual(recalculated, {
+		debtCount: 1,
+		cashflowEventCount: 0,
+		historyDateCount: 2,
+		historyStartDate: '2026-07-31',
+		historyEndDate: '2026-08-01',
+		totalYi: 145
+	});
+	assert.equal((await getCachedImportStatistics(db)).statsReady, true);
 });

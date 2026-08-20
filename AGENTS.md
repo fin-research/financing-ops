@@ -2,7 +2,7 @@
 
 本文件适用于仓库根目录及全部子目录，是人类开发者和 Codex 在本项目中的长期协作约定。
 
-最后更新：2026-08-19
+最后更新：2026-08-20
 
 ## 1. 项目目标
 
@@ -77,6 +77,7 @@ Cloudflare Git 当前使用 pnpm 10.11.1 安装依赖；`pnpm-workspace.yaml` �
 - `src/lib/debt-details.js`：负债品种扩展表、映射和本地迁移。
 - `src/lib/incremental-import.js`：浏览器与服务端共用的类型化数据集、稳定业务键和去重规则。
 - `src/lib/server/incremental-import.js`：D1 哈希预检、只读增量筛选和最终原子追加。
+- `src/lib/server/import-statistics.js`：导入统计快照读取与 `/data` 管理员手动重算；日常请求禁止扫描完整业务表。
 - `src/lib/server/queries.js`：Dashboard、甘特图和设置页查询；`getDebtLimitSummary()` 供额度表与试算复用，`getCalendarMonthEvents()` 供融资日历复用。
 - `src/lib/server/reminders.js`：提醒计算、去重、Resend 发送和发送日志。
 - `src/routes/debts/[id]/`：单笔负债主表、品种扩展字段和结构化现金流联查。

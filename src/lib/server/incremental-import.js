@@ -21,13 +21,6 @@ const DEBT_COLUMNS = [
 ];
 
 const TYPED_CONFIGS = new Map(TYPED_IMPORT_TABLES.map((config) => [config.key, config]));
-const COUNT_TABLES = new Map([
-	['debts', 'debts'],
-	...TYPED_IMPORT_TABLES.map((config) => [config.key, config.table]),
-	['cashflows', 'debt_cashflow_events'],
-	['balances', 'debt_balance_daily'],
-	['workbookNotes', 'workbook_notes']
-]);
 
 function jsonSize(value) {
 	return new TextEncoder().encode(JSON.stringify(value)).byteLength;
@@ -56,6 +49,9 @@ function validateMetadata(input) {
 		workbookName,
 		workbookHash,
 		asOfDate,
+		snapshotTotalYi: Number(input?.snapshotTotalYi),
+		historyStartDate: String(input?.historyStartDate ?? '').trim(),
+		historyEndDate: String(input?.historyEndDate ?? '').trim(),
 		debtCount: nonNegativeInteger(input?.debtCount, '负债数量'),
 		fieldValueCount: nonNegativeInteger(input?.fieldValueCount, '字段值数量'),
 		cashflowCount: nonNegativeInteger(input?.cashflowCount, '现金流数量'),
@@ -65,34 +61,42 @@ function validateMetadata(input) {
 	};
 	if (metadata.debtCount !== datasetCounts.debts) throw new Error('负债数量与类型化数据集不一致');
 	if (metadata.cashflowCount !== datasetCounts.cashflows) throw new Error('现金流数量与类型化数据集不一致');
+	if (!Number.isFinite(metadata.snapshotTotalYi) || metadata.snapshotTotalYi < 0) throw new Error('基准日余额合计无效');
+	if (!ISO_DATE.test(metadata.historyStartDate) || !ISO_DATE.test(metadata.historyEndDate)) {
+		throw new Error('日余额历史范围无效');
+	}
+	if (metadata.historyStartDate > metadata.historyEndDate || metadata.historyEndDate !== metadata.asOfDate) {
+		throw new Error('日余额历史范围与工作簿基准日不一致');
+	}
 	if (datasetCounts.balances !== metadata.historyDateCount * 10) {
 		throw new Error('日余额数量与历史日期数量不一致');
 	}
 	return metadata;
 }
 
-function currentStateSql() {
-	const counts = IMPORT_DATASET_KEYS.map((key) =>
-		`(SELECT COUNT(*) FROM ${COUNT_TABLES.get(key)}) AS count_${key}`
-	).join(',\n\t\t\t');
-	return `
-		SELECT s.workbook_hash AS workbookHash, s.workbook_name AS workbookName,
-			s.as_of_date AS asOfDate,
-			(SELECT MAX(as_of_date) FROM debt_balance_daily) AS maxBalanceDate,
-			${counts}
-		FROM (SELECT 1) singleton LEFT JOIN data_import_state s ON s.id = 1
-	`;
-}
-
 async function readCurrentState(db) {
-	const row = await db.prepare(currentStateSql()).get();
+	const row = await db.prepare(`
+		SELECT workbook_hash AS workbookHash, workbook_name AS workbookName,
+			as_of_date AS asOfDate, debt_count AS debtCount,
+			cashflow_count AS cashflowCount, history_date_count AS historyDateCount,
+			history_start_date AS historyStartDate, history_end_date AS historyEndDate,
+			snapshot_total_yi AS snapshotTotalYi
+		FROM data_import_state WHERE id = 1
+	`).get();
 	return {
 		exists: row?.workbookHash != null,
 		workbookHash: row?.workbookHash ?? null,
 		workbookName: row?.workbookName ?? null,
 		asOfDate: row?.asOfDate ?? null,
-		maxBalanceDate: row?.maxBalanceDate ?? null,
-		counts: Object.fromEntries(IMPORT_DATASET_KEYS.map((key) => [key, Number(row?.[`count_${key}`] ?? 0)]))
+		maxBalanceDate: row?.asOfDate ?? null,
+		historyStartDate: row?.historyStartDate ?? null,
+		historyEndDate: row?.historyEndDate ?? null,
+		snapshotTotalYi: row?.snapshotTotalYi == null ? null : Number(row.snapshotTotalYi),
+		counts: {
+			debts: Number(row?.debtCount ?? 0),
+			cashflows: Number(row?.cashflowCount ?? 0),
+			balances: Number(row?.historyDateCount ?? 0) * 10
+		}
 	};
 }
 
@@ -303,17 +307,31 @@ function validateIncrementalPayload(metadata, state, datasets) {
 		}
 		if (asOfDate > metadata.asOfDate) throw new Error(`日余额 ${asOfDate} 晚于工作簿基准日 ${metadata.asOfDate}`);
 	}
+	if (state.counts.debts + datasets.debts.length !== metadata.debtCount) {
+		throw new Error(`负债增量不完整：线上 ${state.counts.debts} + 新增 ${datasets.debts.length} != 工作簿 ${metadata.debtCount}`);
+	}
+	if (state.counts.cashflows + datasets.cashflows.length !== metadata.cashflowCount) {
+		throw new Error(`现金流增量不完整：线上 ${state.counts.cashflows} + 新增 ${datasets.cashflows.length} != 工作簿 ${metadata.cashflowCount}`);
+	}
+	const latestBalances = datasets.balances.filter((row) => row[0] === metadata.asOfDate);
+	const latestTotalYi = latestBalances.reduce((sum, row) => sum + Number(row[2] ?? 0), 0);
+	if (latestBalances.length !== 10 || Math.abs(latestTotalYi - metadata.snapshotTotalYi) > 1e-8) {
+		throw new Error(`基准日 ${metadata.asOfDate} 余额快照与工作簿合计不一致`);
+	}
 }
 
 function stateStatement(db, metadata, state, incrementalCounts) {
 	const values = [
 		metadata.workbookName, metadata.workbookHash, metadata.asOfDate,
 		incrementalCounts.debts,
-		state.counts.debts + incrementalCounts.debts,
+		metadata.debtCount,
 		metadata.fieldValueCount,
-		state.counts.cashflows + incrementalCounts.cashflows,
+		metadata.cashflowCount,
 		metadata.historyDateCount,
-		metadata.excludedFutureCount
+		metadata.excludedFutureCount,
+		metadata.snapshotTotalYi,
+		metadata.historyStartDate,
+		metadata.historyEndDate
 	];
 	if (state.exists) {
 		return db.prepare(`
@@ -322,7 +340,9 @@ function stateStatement(db, metadata, state, incrementalCounts) {
 				started_at = CURRENT_TIMESTAMP, finished_at = CURRENT_TIMESTAMP,
 				inserted_count = ?, updated_count = 0, deleted_count = 0,
 				debt_count = ?, field_value_count = ?, cashflow_count = ?,
-				history_date_count = ?, excluded_future_count = ?, error_message = NULL
+				history_date_count = ?, excluded_future_count = ?, snapshot_total_yi = ?,
+				history_start_date = ?, history_end_date = ?, stats_refreshed_at = CURRENT_TIMESTAMP,
+				error_message = NULL
 			WHERE id = 1 AND workbook_hash = ?
 		`).bind(...values, state.workbookHash);
 	}
@@ -330,10 +350,11 @@ function stateStatement(db, metadata, state, incrementalCounts) {
 		INSERT INTO data_import_state (
 			id, workbook_name, workbook_hash, as_of_date, status, started_at, finished_at,
 			inserted_count, updated_count, deleted_count, debt_count, field_value_count,
-			cashflow_count, history_date_count, excluded_future_count, error_message
+			cashflow_count, history_date_count, excluded_future_count, snapshot_total_yi,
+			history_start_date, history_end_date, stats_refreshed_at, error_message
 		)
 		SELECT 1, ?, ?, ?, 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
-			?, 0, 0, ?, ?, ?, ?, ?, NULL
+			?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, NULL
 		WHERE NOT EXISTS (SELECT 1 FROM data_import_state WHERE id = 1)
 	`).bind(...values);
 }
@@ -400,7 +421,7 @@ export async function commitIncrementalImport(db, input) {
 		incrementalCounts: counts,
 		newHistoryDateCount,
 		fieldValueCount: metadata.fieldValueCount,
-		cashflowEventCount: state.counts.cashflows + counts.cashflows,
+		cashflowEventCount: metadata.cashflowCount,
 		historyDateCount: metadata.historyDateCount,
 		snapshot,
 		queryCount: statements.length + 3,
