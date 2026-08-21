@@ -25,7 +25,8 @@
 - Worker 只读取 `HYPERDRIVE.connectionString`，不接收 `DATABASE_URL`。
 - Dashboard 主数据、额度和日历共 3 次集合查询；根布局把数据日期与顶栏提醒合并为 1 次查询。
 - 甘特图、额度和提醒均使用 CTE、窗口函数、JSON 聚合或批量 upsert，禁止按项目、规则或负债执行 N+1 查询。
-- 登录和会话查询包含 PostgreSQL volatile expression，避免 Hyperdrive 读缓存返回已经失效的认证状态。
+- 账号、密码和会话由 Neon Managed Better Auth 托管；Worker 只保存作用域为 `/financing` 的不透明会话 Cookie。
+- 每个受保护请求调用一次 Neon Auth 会话接口，并用一次 Hyperdrive 查询完成 `people.neon_auth_user_id` 与业务角色映射；静态资源不触发认证或数据库查询。
 - `wrangler.jsonc` 启用 Smart Placement，并绑定 Hyperdrive ID `26b76413a03a4328836d95f3ca320a1e`。
 
 ## 初始化与迁移
@@ -43,13 +44,7 @@ pnpm db:migrate:sqlite
 
 迁移脚本在一个 PostgreSQL 事务内迁移人员、权限、SOP、项目、提醒、审计、监管参数和负债数据；目标 `financing.debt` 非空时会拒绝执行，避免重复覆盖。
 
-全新空库初始化管理员：
-
-```bash
-pnpm db:init
-```
-
-需要 `ADMIN_EMAIL`、`ADMIN_PASSWORD`，可选 `ADMIN_NAME`。登录邮箱忽略大小写唯一，连续失败 5 次锁定 15 分钟。
+`pnpm db:init` 只应用 DDL 和初始化财务参数。登录账号应在 Neon Auth 中创建，再由“人员与权限”页关联到人员主档；数据库不保存密码哈希或自建会话。
 
 ## Excel 本地维护
 
@@ -72,22 +67,19 @@ pnpm db:import -- data/ledger.xlsx
 
 ## 环境变量
 
-复制 `.env.example` 保存登录与邮件配置；另复制 `.env.database.example` 为 `.env.database`，只供本地数据库维护脚本使用。这样 Wrangler 不会把 Neon 直连地址识别为 Worker variable。
+复制 `.env.example` 保存 Neon Auth URL 与邮件配置；另复制 `.env.database.example` 为 `.env.database`，只供本地数据库维护脚本使用。这样 Wrangler 不会把 Neon 直连地址识别为 Worker variable。
 
 ```dotenv
 # .env
 RESEND_API_KEY=
 FROM_EMAIL=融资工作台 <financing@example.com>
-ADMIN_NAME=管理员
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=请替换为至少16位的随机强密码
-AUTH_SESSION_HOURS=12
+NEON_AUTH_URL=https://example.neonauth.region.aws.neon.tech/neondb/auth
 
 # .env.database
 DATABASE_URL=postgresql://user:password@host/database?sslmode=verify-full
 ```
 
-不要提交 `.env`。生产 Worker 的 Neon 地址只来自 Hyperdrive binding。
+不要提交 `.env`。生产数据库地址只来自 Hyperdrive binding；`NEON_AUTH_URL` 是非密钥配置，并固定写入 Wrangler variables。
 
 ## 常用命令
 

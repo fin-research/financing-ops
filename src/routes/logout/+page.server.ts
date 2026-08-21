@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { Actions } from './$types';
-import { appCookiePath, withBase } from '$lib/app-paths';
+import { withBase } from '$lib/app-paths';
 import { deleteSession, SESSION_COOKIE } from '$lib/server/auth.js';
 import { auditRequestMeta, recordAudit } from '$lib/server/audit.js';
 
@@ -17,8 +17,7 @@ export const actions: Actions = {
 				summary: `${user.email ?? user.personName} 退出系统`
 			});
 		}
-		await deleteSession(token);
-		event.cookies.delete(SESSION_COOKIE, { path: appCookiePath });
+		await deleteSession(event, token);
 		throw redirect(303, withBase('/login'));
 	}
 };

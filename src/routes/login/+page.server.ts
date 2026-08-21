@@ -1,12 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { appCookiePath, appRoot, isAppPath } from '$lib/app-paths';
-import {
-	authenticate,
-	createSession,
-	sessionCookieOptions,
-	SESSION_COOKIE
-} from '$lib/server/auth.js';
+import { appRoot, isAppPath } from '$lib/app-paths';
+import { authenticate, NeonAuthApiError } from '$lib/server/auth.js';
 import { auditRequestMeta, recordAudit } from '$lib/server/audit.js';
 import { normalizeEmail } from '$lib/email.js';
 
@@ -29,17 +24,22 @@ export const actions: Actions = {
 			return fail(400, { message: '请输入邮箱和密码', email });
 		}
 
-		const user = await authenticate(email, password);
-		if (!user) {
-			return fail(400, { message: '邮箱或密码错误', email });
+		let user;
+		try {
+			user = await authenticate(event, email, password);
+		} catch (error) {
+			if (error instanceof NeonAuthApiError) {
+				const message = error.status === 429
+					? '登录尝试过于频繁，请稍后重试'
+					: error.code === 'PERSON_ACCESS_DENIED'
+						? error.message
+						: error.status === 503
+							? '认证服务暂时不可用，请稍后重试'
+							: '邮箱或密码错误';
+				return fail(error.status === 503 ? 503 : 400, { message, email });
+			}
+			throw error;
 		}
-
-		const { token, expiresAt } = await createSession(user.id);
-		event.cookies.set(
-			SESSION_COOKIE,
-			token,
-			sessionCookieOptions(expiresAt, event.url.protocol === 'https:', appCookiePath)
-		);
 		await recordAudit({
 			...auditRequestMeta({ ...event, locals: { ...event.locals, user } }),
 			action: 'login',

@@ -65,23 +65,15 @@ async function bulkUpsert(table, columns, sourceRows, conflictColumns, updateCol
 
 async function migrateWorkflowTables() {
 	const migrated = {};
-	const people = rows('people').map((row) => ({ ...row, active: Boolean(row.active) }));
+	const authUsers = rows('auth_users');
+	const avatarByPerson = new Map(authUsers.map((user) => [user.person_id, user.avatar_data_url ?? null]));
+	const people = rows('people').map((row) => ({ ...row, active: Boolean(row.active), avatar_data_url: avatarByPerson.get(row.id) ?? null }));
 	migrated.people = await bulkUpsert('people', [
 		['id', 'text'], ['name', 'text'], ['email', 'text'], ['role', 'text'], ['active', 'boolean'],
+		['avatar_data_url', 'text'],
 		['created_at', 'timestamptz'], ['updated_at', 'timestamptz']
 	], people, ['id']);
-
-	const authUsers = rows('auth_users').map(({ username: _username, ...row }) => ({ ...row, active: Boolean(row.active) }));
-	migrated.authUsers = await bulkUpsert('auth_users', [
-		['id', 'text'], ['person_id', 'text'], ['password_hash', 'text'], ['role', 'text'], ['active', 'boolean'],
-		['failed_login_count', 'integer'], ['locked_until', 'timestamptz'], ['last_login_at', 'timestamptz'],
-		['avatar_data_url', 'text'], ['created_at', 'timestamptz'], ['updated_at', 'timestamptz']
-	], authUsers, ['id']);
-
-	migrated.authSessions = await bulkUpsert('auth_sessions', [
-		['id', 'text'], ['token_hash', 'text'], ['user_id', 'text'], ['expires_at', 'timestamptz'],
-		['created_at', 'timestamptz'], ['last_seen_at', 'timestamptz']
-	], rows('auth_sessions'), ['id']);
+	migrated.skippedLegacyAuthAccounts = authUsers.length;
 
 	migrated.sopTemplates = await bulkUpsert('sop_templates', [
 		['id', 'text'], ['name', 'text'], ['debt_type', 'text'], ['description', 'text'], ['is_active', 'boolean'],
@@ -125,13 +117,14 @@ async function migrateWorkflowTables() {
 		['created_at', 'timestamptz'], ['updated_at', 'timestamptz']
 	], rows('debt_limit_configs'), ['debt_type']);
 
+	const personByUser = new Map(authUsers.map((user) => [user.id, user.person_id]));
 	const emailByUser = new Map(authUsers.map((user) => [user.id, people.find((person) => person.id === user.person_id)?.email ?? null]));
 	migrated.auditLogs = await bulkUpsert('audit_logs', [
-		['id', 'text'], ['actor_user_id', 'text'], ['actor_email', 'text'], ['action', 'text'], ['entity_type', 'text'],
+		['id', 'text'], ['actor_person_id', 'text'], ['actor_email', 'text'], ['action', 'text'], ['entity_type', 'text'],
 		['entity_id', 'text'], ['summary', 'text'], ['before_json', 'jsonb'], ['after_json', 'jsonb'],
 		['request_ip', 'inet'], ['user_agent', 'text'], ['created_at', 'timestamptz']
 	], rows('audit_logs').map((row) => ({
-		id: row.id, actor_user_id: row.actor_user_id, actor_email: emailByUser.get(row.actor_user_id) ?? null,
+		id: row.id, actor_person_id: personByUser.get(row.actor_user_id) ?? null, actor_email: emailByUser.get(row.actor_user_id) ?? null,
 		action: row.action, entity_type: row.entity_type, entity_id: row.entity_id, summary: row.summary,
 		before_json: parseJson(row.before_json), after_json: parseJson(row.after_json),
 		request_ip: row.request_ip || null, user_agent: row.user_agent, created_at: row.created_at
@@ -300,7 +293,7 @@ if (dryRun) {
 		mode: 'dry-run', source: sourcePath, debts: debtRows.length,
 		cashflows: rows('debt_cashflow_events').length, balances: rows('debt_balance_daily').length,
 		workflow: {
-			people: rows('people').length, authUsers: rows('auth_users').length,
+			people: rows('people').length, skippedLegacyAuthAccounts: rows('auth_users').length,
 			projects: rows('projects').length, projectTasks: rows('project_tasks').length,
 			reminderRules: rows('reminder_rules').length, auditLogs: rows('audit_logs').length
 		},

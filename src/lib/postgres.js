@@ -6,7 +6,7 @@ types.setTypeParser(1114, (value) => value);
 types.setTypeParser(1184, (value) => value);
 
 const FINANCING_TABLES = [
-	'people', 'auth_users', 'auth_sessions', 'sop_templates', 'sop_nodes', 'projects',
+	'people', 'sop_templates', 'sop_nodes', 'projects',
 	'project_tasks', 'debt', 'bond', 'income_certificate', 'income_right', 'refinancing',
 	'swap_facility', 'cashflow', 'balance_snapshot', 'reminder_rules', 'reminder_deliveries',
 	'finance_parameters', 'debt_limit_configs', 'audit_logs', 'debt_overview',

@@ -1,12 +1,11 @@
-import { redirect } from '@sveltejs/kit';
+import { error as httpError, redirect } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
-import { appRoot, withBase } from '$lib/app-paths';
+import { appCookiePath, appRoot, withBase } from '$lib/app-paths';
 import { closeDatabase } from '$lib/server/db.js';
 import {
 	canWrite,
-	configureAuth,
 	getSessionUser,
+	NeonAuthApiError,
 	SESSION_COOKIE
 } from '$lib/server/auth.js';
 
@@ -14,11 +13,21 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const handle: Handle = async ({ event, resolve }) => {
 	try {
-		configureAuth(env);
-		event.locals.user = await getSessionUser(event.cookies.get(SESSION_COOKIE));
-
 		const routeId = event.route.id;
-		const isPublic = routeId === '/login' || event.url.pathname.startsWith(withBase('/_app/'));
+		const isStaticAsset = event.url.pathname.startsWith(withBase('/_app/'));
+		const isPublic = routeId === '/login' || isStaticAsset;
+		const sessionToken = isStaticAsset ? null : event.cookies.get(SESSION_COOKIE);
+		try {
+			event.locals.user = isStaticAsset ? null : await getSessionUser(event, sessionToken);
+		} catch (authError) {
+			if (authError instanceof NeonAuthApiError && authError.status === 503) {
+				throw httpError(503, '认证服务暂时不可用，请稍后重试');
+			}
+			throw authError;
+		}
+		if (sessionToken && !event.locals.user) {
+			event.cookies.delete(SESSION_COOKIE, { path: appCookiePath });
+		}
 		if (!isPublic && !event.locals.user) {
 			const redirectTo = `${event.url.pathname}${event.url.search}`;
 			throw redirect(303, `${withBase('/login')}?redirectTo=${encodeURIComponent(redirectTo)}`);

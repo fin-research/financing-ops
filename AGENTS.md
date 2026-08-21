@@ -16,6 +16,7 @@
 - 全栈框架：SvelteKit / Svelte 5
 - UI：Tailwind CSS 4 + DaisyUI 5 + Lucide
 - 生产数据库：Neon PostgreSQL，业务对象全部位于 `financing` schema
+- 认证：Neon Managed Better Auth；`neon_auth` schema 由 Neon 管理，业务人员与角色仍以 `financing.people` 为准
 - Worker 数据连接：Cloudflare Hyperdrive binding `HYPERDRIVE`，对应已配置的 `eastmoney`
 - 本地维护：`pg` 直连 Neon；旧 SQLite 只作为一次性迁移来源，Excel 只允许在 `scripts/` 本地解析
 - 邮件：Resend
@@ -74,7 +75,7 @@ Cloudflare Git 当前使用 pnpm 10.11.1；`pnpm-workspace.yaml` 必须显式包
 - `src/lib/server/reminders.js`：提醒候选集合查询、Resend 发送和批量发送日志。
 - `src/routes/debts/[id]/`：负债通用字段、品种专属字段和统一现金流联查。
 - `src/routes/data/`：生产数据概览与财务参数维护；禁止出现 Excel 上传、解析、预检或导入 API。
-- `scripts/init-database.mjs`：本地直连 Neon 应用 DDL、初始化财务参数和可选管理员。
+- `scripts/init-database.mjs`：本地直连 Neon 应用 DDL并初始化财务参数；不得创建本地密码账号。
 - `scripts/migrate-sqlite-to-postgres.mjs`：一次性将旧 SQLite 结构转换并迁入 Neon。
 - `scripts/import-debts.mjs`、`scripts/lib/`：本地 Excel 解析、映射、核对与不定期维护；不得被 `src/` 引用。
 - `scripts/send-reminders.mjs`：本地直连 Neon 运行提醒任务。
@@ -119,8 +120,9 @@ Cloudflare Git 当前使用 pnpm 10.11.1；`pnpm-workspace.yaml` 必须显式包
 - 所有 SQL 参数化；列表、聚合和批量写入优先使用 CTE、窗口函数、`FILTER`、JSON 聚合、`jsonb_to_recordset` 和 `ON CONFLICT`。
 - 禁止 N+1 查询。Dashboard、甘特图、额度、提醒和详情查询增加功能时，必须说明请求级 SQL 次数是否变化。
 - Dashboard 当前业务数据为 3 次 SQL；根布局的数据日期与提醒为 1 次 SQL。
-- Hyperdrive 读缓存不会因写入自动失效。认证/会话等必须即时一致的查询使用 PostgreSQL volatile expression 绕过缓存；业务聚合允许短时缓存时不得声称实时。
-- 认证查询不得重新引入 username；登录标识统一使用忽略大小写唯一的 `people.email`。
+- 账号、密码和会话只由 Neon Auth 管理；`financing` schema 禁止自建用户、密码哈希或会话表。
+- Worker 的应用 Cookie 只保存不透明 Neon 会话 token，并限制到 `/financing`；静态资源不得调用 Auth 或 Hyperdrive。
+- 登录邮箱由管理员在人员与权限页维护，业务授权由 `people.neon_auth_user_id` 映射及 `people.role` 决定；不得重新引入 username。
 - 密钥只从环境变量/绑定读取；不得写入仓库、数据库或日志。
 - Resend 未配置时只生成 `pending` 记录；不得假装发送成功。提醒以 `(rule_id, target_id, delivery_date)` 去重。
 

@@ -58,7 +58,7 @@ function auditValues(options) {
 		db,
 		id: randomUUID(),
 		values: [
-			actor?.id ?? null,
+			actor?.personId ?? null,
 			actor?.email ?? null,
 			action.trim(),
 			entityType,
@@ -76,7 +76,7 @@ export function prepareAudit(options) {
 	const { db, id, values } = auditValues(options);
 	return db.prepare(`
 		INSERT INTO audit_logs (
-			id, actor_user_id, actor_email, action, entity_type, entity_id,
+			id, actor_person_id, actor_email, action, entity_type, entity_id,
 			summary, before_json, after_json, request_ip, user_agent
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).bind(id, ...values);
@@ -86,7 +86,7 @@ export async function recordAudit(options) {
 	const { db, id, values } = auditValues(options);
 	await db.prepare(`
 		INSERT INTO audit_logs (
-			id, actor_user_id, actor_email, action, entity_type, entity_id,
+			id, actor_person_id, actor_email, action, entity_type, entity_id,
 			summary, before_json, after_json, request_ip, user_agent
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).run(id, ...values);
@@ -107,7 +107,7 @@ export async function getAuditLogs({ entityType, entityId, limit = 100 } = {}) {
 	}
 	const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 	return getDatabase().prepare(`
-		SELECT id, actor_user_id AS actorUserId,
+		SELECT id, actor_person_id AS actorPersonId,
 			actor_email AS actorIdentifier,
 			action, entity_type AS entityType, entity_id AS entityId, summary,
 			before_json AS beforeJson, after_json AS afterJson,

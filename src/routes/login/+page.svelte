@@ -64,7 +64,7 @@
 				{submitting ? '正在登录…' : '登录'}
 			</button>
 		</form>
-		<p class="security-note">连续 5 次失败将暂时锁定账号 15 分钟。</p>
+		<p class="security-note">账号、密码与会话由 Neon Auth 安全托管。</p>
 	</section>
 </main>
 

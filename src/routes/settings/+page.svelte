@@ -96,12 +96,8 @@
 					</label>
 					<label>
 						<span>登录邮箱</span>
-						<input name="email" type="email" required value={data.profile.email ?? ''} autocomplete="email" />
-					</label>
-					<label>
-						<span>当前密码</span>
-						<input name="currentPassword" type="password" autocomplete="current-password" aria-describedby="email-password-help" />
-						<small id="email-password-help">仅修改登录邮箱时需要填写</small>
+						<input type="email" readonly value={data.profile.email ?? ''} autocomplete="email" />
+						<small>登录邮箱由管理员在“人员与权限”中维护</small>
 					</label>
 				</div>
 

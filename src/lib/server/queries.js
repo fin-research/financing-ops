@@ -545,8 +545,14 @@ export async function getDataManagementData() {
 export async function getPeopleAccessData() {
 	const people = (await getDatabase().prepare(`
 		SELECT p.id, p.name, p.email, p.role, p.active,
-			u.id AS accountId, u.active AS accountActive, u.last_login_at AS lastLoginAt
-		FROM people p LEFT JOIN auth_users u ON u.person_id = p.id
+			u.id::text AS accountId, NOT COALESCE(u.banned, FALSE) AS accountActive,
+			login.last_login_at AS lastLoginAt
+		FROM people p
+		LEFT JOIN neon_auth."user" u ON u.id = p.neon_auth_user_id
+		LEFT JOIN LATERAL (
+			SELECT MAX(s."createdAt") AS last_login_at
+			FROM neon_auth.session s WHERE s."userId" = u.id
+		) login ON TRUE
 		ORDER BY p.active DESC, CASE p.role WHEN 'admin' THEN 1 WHEN 'handler' THEN 2 ELSE 3 END, p.name
 	`).all()).map((person) => ({
 		...person, active: Boolean(person.active),
