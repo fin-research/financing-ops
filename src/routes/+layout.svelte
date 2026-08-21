@@ -1,6 +1,7 @@
 <script lang="ts">
 	import './layout.css';
 	import { page } from '$app/state';
+	import { withBase, withoutBase } from '$lib/app-paths';
 	import {
 		BarChart3,
 		BriefcaseBusiness,
@@ -29,12 +30,13 @@
 	const mobileItems = [...workspaceItems, managementItems[0], managementItems[1]];
 
 	const isActive = (href: string) => {
-		if (href === '/') return page.url.pathname === '/' || page.url.pathname.startsWith('/debts/');
-		return page.url.pathname === href || page.url.pathname.startsWith(`${href}/`);
+		const pathname = withoutBase(page.url.pathname);
+		if (href === '/') return pathname === '/' || pathname.startsWith('/debts/');
+		return pathname === href || pathname.startsWith(`${href}/`);
 	};
 
 	const currentPageTitle = () => {
-		const pathname = page.url.pathname;
+		const pathname = withoutBase(page.url.pathname);
 		if (/^\/projects\/[^/]+$/.test(pathname)) {
 			return String((page.data as any)?.project?.name ?? '项目详情');
 		}
@@ -60,7 +62,7 @@
 <div class="app-shell">
 	<a class="skip-link" href="#main-content">跳到主要内容</a>
 	<aside class="sidebar">
-		<a class="brand" href="/" aria-label="融资工作台首页">
+		<a class="brand" href={withBase('/')} aria-label="融资工作台首页">
 			<span class="brand-mark"><BarChart3 size={19} strokeWidth={2.2} /></span>
 			<span>
 				<strong>融资工作台</strong>
@@ -71,14 +73,14 @@
 		<nav class="main-nav" aria-label="主导航">
 			<p class="nav-caption">工作空间</p>
 			{#each workspaceItems as item}
-				<a class:active={isActive(item.href)} href={item.href}>
+				<a class:active={isActive(item.href)} href={withBase(item.href)}>
 					<item.icon size={18} strokeWidth={1.8} />
 					<span>{item.label}</span>
 				</a>
 			{/each}
 			<p class="nav-caption nav-caption-spaced">数据管理</p>
 			{#each managementItems as item}
-				<a class:active={isActive(item.href)} href={item.href}>
+				<a class:active={isActive(item.href)} href={withBase(item.href)}>
 					<item.icon size={18} strokeWidth={1.8} />
 					<span>{item.label}</span>
 				</a>
@@ -110,7 +112,7 @@
 				</span>
 			</div>
 			<div class="top-actions">
-				<a class="profile-button" href="/settings" aria-label="打开个人设置">
+				<a class="profile-button" href={withBase('/settings')} aria-label="打开个人设置">
 					{#if data.user.avatarDataUrl}
 						<img class="avatar" src={data.user.avatarDataUrl} alt="" />
 					{:else}
@@ -118,7 +120,7 @@
 					{/if}
 					<strong class="profile-name">{data.user.personName}</strong>
 				</a>
-				<form method="POST" action="/logout">
+				<form method="POST" action={withBase('/logout')}>
 					<button class="icon-button" type="submit" aria-label="退出登录" title="退出登录">
 						<LogOut size={18} />
 					</button>
@@ -128,7 +130,7 @@
 
 		<div class="mobile-nav" aria-label="移动端导航">
 			{#each mobileItems as item}
-				<a class:active={isActive(item.href)} href={item.href}>
+				<a class:active={isActive(item.href)} href={withBase(item.href)}>
 					<item.icon size={18} />
 					<span>{item.mobileLabel}</span>
 				</a>
@@ -146,7 +148,7 @@
 						{#each [0, 1] as copy}
 							<div class="ticker-run" aria-hidden={copy === 1}>
 								{#each data.reminders.items as reminder}
-									<a class={`ticker-item ${reminder.level}`} href={reminder.href}>
+					<a class={`ticker-item ${reminder.level}`} href={withBase(reminder.href)}>
 										<strong>{reminder.projectName}</strong>
 										<span>{reminder.taskName}</span>
 										<b>{reminder.dueLabel}</b>

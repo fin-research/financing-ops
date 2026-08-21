@@ -3,6 +3,7 @@ import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { getDatabase } from './db.js';
 import { hashPassword, verifyPassword } from './auth-crypto.js';
 import { shouldTouchSession } from './session-policy.js';
+import { isValidEmail, normalizeEmail } from '../email.js';
 
 export { hashPassword, verifyPassword } from './auth-crypto.js';
 
@@ -23,13 +24,14 @@ export function configureAuth(config = {}) {
 
 export async function ensureAdminUser(config = runtimeConfig) {
 	if (adminReady) return;
-	const username = (config.ADMIN_USERNAME ?? process.env.ADMIN_USERNAME ?? 'admin').trim();
+	const email = normalizeEmail(config.ADMIN_EMAIL ?? process.env.ADMIN_EMAIL);
+	const adminName = String(config.ADMIN_NAME ?? process.env.ADMIN_NAME ?? '管理员').trim() || '管理员';
 	const password = config.ADMIN_PASSWORD ?? process.env.ADMIN_PASSWORD;
 
 	const db = getDatabase();
 	const existingAdmin = await db.prepare(`
 		SELECT u.id, u.person_id AS personId, u.active AS userActive,
-			p.role AS personRole, p.active AS personActive
+			p.email, p.role AS personRole, p.active AS personActive
 		FROM auth_users u JOIN people p ON p.id = u.person_id
 		WHERE u.role = 'admin'
 		ORDER BY u.active DESC, u.created_at
@@ -47,6 +49,11 @@ export async function ensureAdminUser(config = runtimeConfig) {
 				UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 			`).bind(existingAdmin.personId));
 		}
+		if (!existingAdmin.email && isValidEmail(email)) {
+			statements.push(db.prepare(`
+				UPDATE people SET email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+			`).bind(email, existingAdmin.personId));
+		}
 		if (statements.length) await db.batch(statements);
 		adminReady = true;
 		return;
@@ -54,32 +61,37 @@ export async function ensureAdminUser(config = runtimeConfig) {
 	if (!password) {
 		throw new Error('数据库中没有管理员，且缺少 ADMIN_PASSWORD，无法初始化管理员账号');
 	}
+	if (!isValidEmail(email)) {
+		throw new Error('数据库中没有管理员，且缺少有效的 ADMIN_EMAIL，无法初始化管理员账号');
+	}
 	const existing = await db.prepare(`
-		SELECT id, person_id AS personId
-		FROM auth_users WHERE username = ? COLLATE NOCASE
-	`).get(username);
-	if (!existing) {
+		SELECT p.id AS personId, u.id AS userId
+		FROM people p LEFT JOIN auth_users u ON u.person_id = p.id
+		WHERE lower(p.email) = lower(?)
+		LIMIT 1
+	`).get(email);
+	if (!existing?.userId) {
 		const passwordHash = await hashPassword(password);
-		const matchedPerson = await db.prepare('SELECT id FROM people WHERE lower(name) = lower(?) LIMIT 1').get(username);
-		const personId = matchedPerson?.id ?? randomUUID();
-		const statements = [matchedPerson
+		const personId = existing?.personId ?? randomUUID();
+		const userId = randomUUID();
+		const statements = [existing?.personId
 			? db.prepare(`
 				UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 			`).bind(personId)
 			: db.prepare(`
-				INSERT INTO people (id, name, role, active) VALUES (?, ?, 'admin', 1)
-			`).bind(personId, username),
+				INSERT INTO people (id, name, email, role, active) VALUES (?, ?, ?, 'admin', 1)
+			`).bind(personId, adminName, email),
 			db.prepare(`
 				INSERT INTO auth_users (id, person_id, username, password_hash, role, active)
 				VALUES (?, ?, ?, ?, 'admin', 1)
-			`).bind(randomUUID(), personId, username, passwordHash)
+			`).bind(userId, personId, userId, passwordHash)
 		];
 		await db.batch(statements);
 	} else {
 		await db.batch([
 			db.prepare(`
 				UPDATE auth_users SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-			`).bind(existing.id),
+			`).bind(existing.userId),
 			db.prepare(`
 				UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 			`).bind(existing.personId)
@@ -99,14 +111,26 @@ function sessionHours() {
 		: DEFAULT_SESSION_HOURS;
 }
 
-export async function authenticate(username, password) {
+export async function authenticate(email, password) {
 	await ensureAdminUser();
 	const db = getDatabase();
-	const user = await db.prepare(`
-		SELECT id, username, password_hash AS passwordHash, role, active,
+	const normalizedEmail = normalizeEmail(email);
+	let user = await db.prepare(`
+		SELECT u.id, u.password_hash AS passwordHash, u.role, u.active,
+			u.failed_login_count AS failedLoginCount, u.locked_until AS lockedUntil
+		FROM auth_users u
+		JOIN people p ON p.id = u.person_id
+		WHERE lower(p.email) = lower(?)
+	`).get(normalizedEmail);
+	if (!user && normalizedEmail && !isValidEmail(normalizedEmail)) {
+		user = await db.prepare(`
+		SELECT u.id, u.password_hash AS passwordHash, u.role, u.active,
 			failed_login_count AS failedLoginCount, locked_until AS lockedUntil
-		FROM auth_users WHERE username = ? COLLATE NOCASE
-	`).get(username);
+		FROM auth_users u
+		JOIN people p ON p.id = u.person_id
+		WHERE u.username = ? COLLATE NOCASE AND (p.email IS NULL OR trim(p.email) = '')
+		`).get(normalizedEmail);
+	}
 
 	const now = Date.now();
 	if (!user || !user.active) return null;
@@ -131,7 +155,7 @@ export async function authenticate(username, password) {
 		WHERE id = ?
 	`).run(user.id);
 	const identity = await db.prepare(`
-		SELECT u.id, u.username, u.role, u.person_id AS personId, p.name AS personName,
+		SELECT u.id, u.role, u.person_id AS personId, p.name AS personName, p.email,
 			u.avatar_data_url AS avatarDataUrl
 		FROM auth_users u JOIN people p ON p.id = u.person_id WHERE u.id = ?
 	`).get(user.id);
@@ -158,7 +182,7 @@ export async function getSessionUser(token) {
 	const tokenHash = sha256(token);
 	const now = new Date();
 	const session = await db.prepare(`
-		SELECT u.id, u.username, u.role, u.person_id AS personId, p.name AS personName,
+		SELECT u.id, u.role, u.person_id AS personId, p.name AS personName, p.email,
 			u.avatar_data_url AS avatarDataUrl, s.last_seen_at AS lastSeenAt
 		FROM auth_sessions s
 		JOIN auth_users u ON u.id = s.user_id
@@ -188,9 +212,9 @@ export async function deleteOtherSessions(userId, currentToken) {
 	`).run(userId, sha256(currentToken));
 }
 
-export function sessionCookieOptions(expires, secure = false) {
+export function sessionCookieOptions(expires, secure = false, path = '/') {
 	return {
-		path: '/',
+		path,
 		httpOnly: true,
 		sameSite: /** @type {const} */ ('lax'),
 		secure,

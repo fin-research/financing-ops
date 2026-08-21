@@ -58,7 +58,7 @@
 		{/if}
 		<div>
 			<strong>{data.profile.name}</strong>
-			<span>@{data.profile.username}</span>
+			<span>{data.profile.email ?? '待设置登录邮箱'}</span>
 		</div>
 		<span class="security-state"><ShieldCheck size={16} /> 账号已启用</span>
 	</section>
@@ -95,17 +95,13 @@
 						<input name="name" required maxlength="50" value={data.profile.name} autocomplete="name" />
 					</label>
 					<label>
-						<span>联系邮箱</span>
-						<input name="email" type="email" value={data.profile.email ?? ''} autocomplete="email" />
-					</label>
-					<label>
-						<span>登录用户名</span>
-						<input name="username" required minlength="3" maxlength="64" pattern="[A-Za-z0-9._-]+" value={data.profile.username} autocomplete="username" />
+						<span>登录邮箱</span>
+						<input name="email" type="email" required value={data.profile.email ?? ''} autocomplete="email" />
 					</label>
 					<label>
 						<span>当前密码</span>
-						<input name="currentPassword" type="password" autocomplete="current-password" aria-describedby="username-password-help" />
-						<small id="username-password-help">仅修改登录用户名时需要填写</small>
+						<input name="currentPassword" type="password" autocomplete="current-password" aria-describedby="email-password-help" />
+						<small id="email-password-help">仅修改登录邮箱时需要填写</small>
 					</label>
 				</div>
 

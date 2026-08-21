@@ -14,6 +14,7 @@
 		Users,
 		Workflow
 	} from '@lucide/svelte';
+	import { withBase } from '$lib/app-paths';
 
 	let { data } = $props();
 	let reminderDialog: HTMLDialogElement;
@@ -106,7 +107,7 @@
 			</div>
 			<div class="sop-list">
 				{#each settings.sopTemplates as sop}
-					<a class="sop-item" href={`/sop/${sop.id}`}>
+					<a class="sop-item" href={withBase(`/sop/${sop.id}`)}>
 						<span class="sop-type">{sop.debtType.slice(0, 2)}</span>
 						<div class="sop-copy">
 							<div>
@@ -137,7 +138,7 @@
 					<p>为 SOP 项目节点配置邮件提醒</p>
 				</div>
 				<div class="header-actions">
-					<a class="link-button" href="/sop/reminders">发送历史</a>
+					<a class="link-button" href={withBase('/sop/reminders')}>发送历史</a>
 					<button class="link-button" type="button" onclick={() => reminderDialog.showModal()}>
 						<Plus size={14} /> 新建
 					</button>

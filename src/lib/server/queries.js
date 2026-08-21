@@ -827,7 +827,7 @@ export async function getPeopleAccessData() {
 	const db = getDatabase();
 	const people = (await db.prepare(`
 		SELECT p.id, p.name, p.email, p.role, p.active,
-			u.id AS accountId, u.username, u.active AS accountActive,
+			u.id AS accountId, u.active AS accountActive,
 			u.last_login_at AS lastLoginAt
 		FROM people p
 		LEFT JOIN auth_users u ON u.person_id = p.id

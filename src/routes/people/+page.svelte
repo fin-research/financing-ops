@@ -105,15 +105,15 @@
 	<section class="section-card identity-card">
 		<div class="card-header">
 			<div class="header-icon violet"><Users size={19} /></div>
-			<h2>人员与登录账号</h2>
+			<h2>人员与登录权限</h2>
 			<span class="count-badge">{peopleAccess.people.length} 人</span>
 		</div>
 
-		<div class="identity-table" role="table" aria-label="人员、角色与登录账号关联">
+		<div class="identity-table" role="table" aria-label="人员、角色与登录权限关联">
 			<div class="identity-head" role="row">
 				<span role="columnheader">人员</span>
 				<span role="columnheader">角色</span>
-				<span role="columnheader">登录账号</span>
+				<span role="columnheader">登录邮箱</span>
 				<span role="columnheader">状态</span>
 				<span role="columnheader">操作</span>
 			</div>
@@ -133,7 +133,7 @@
 						{#if person.accountId}
 							<KeyRound size={16} />
 							<div>
-								<strong>{person.username}</strong>
+								<strong>{person.email ?? '待设置登录邮箱'}</strong>
 								<p>{person.lastLoginAt ? `最近登录 ${person.lastLoginAt}` : '尚未登录'}</p>
 							</div>
 						{:else}
@@ -166,7 +166,7 @@
 								action="?/deletePerson"
 								use:enhance={enhanceAction(`delete-${person.id}`)}
 								onsubmit={(event) => {
-									if (!confirm(`确定删除 ${person.name} 及其登录账号吗？项目中的负责人关联将被清空。`)) event.preventDefault();
+									if (!confirm(`确定删除 ${person.name} 及其登录权限吗？项目中的负责人关联将被清空。`)) event.preventDefault();
 								}}
 							>
 								<input type="hidden" name="id" value={person.id} />
@@ -186,7 +186,7 @@
 					</div>
 				</div>
 			{:else}
-				<p class="empty-state">暂无人员，请先添加人员并配置角色与登录账号。</p>
+				<p class="empty-state">暂无人员，请先添加人员并配置角色与登录权限。</p>
 			{/each}
 		</div>
 	</section>
@@ -213,7 +213,7 @@
 				<div>
 					<p class="eyebrow">UNIFIED IDENTITY</p>
 					<h2>{editingPerson ? '编辑人员与账号' : '添加人员与账号'}</h2>
-					<p>人员、角色和登录账号在同一处维护，项目责任关系直接使用该人员主档。</p>
+					<p>工作邮箱同时作为登录标识，项目责任关系直接使用该人员主档。</p>
 				</div>
 				<button type="button" aria-label="关闭" onclick={() => personDialog.close()}>×</button>
 			</div>
@@ -238,22 +238,10 @@
 				<label class="account-switch wide">
 					<input type="checkbox" bind:checked={accountEnabled} />
 					<input type="hidden" name="accountEnabled" value={accountEnabled ? '1' : '0'} />
-					<span>开通登录账号</span>
+					<span>允许使用邮箱登录</span>
 				</label>
 				{#if accountEnabled}
-					<label>
-						<span>登录账号</span>
-						<input
-							name="username"
-							required
-							minlength="3"
-							maxlength="64"
-							pattern="[A-Za-z0-9._-]+"
-							value={editingPerson?.username ?? ''}
-							autocomplete="username"
-						/>
-					</label>
-					<label>
+					<label class="wide">
 						<span>{editingPerson?.accountId ? '重置密码（留空不变）' : '初始密码'}</span>
 						<input
 							name="password"

@@ -8,15 +8,14 @@ import {
 	verifyPassword
 } from '$lib/server/auth.js';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
+import { isValidEmail, normalizeEmail } from '$lib/email.js';
 
-const usernamePattern = /^[A-Za-z0-9._-]{3,64}$/;
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const avatarTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const maxAvatarBytes = 512 * 1024;
 
 async function currentProfile(userId: string) {
 	return await getDatabase().prepare(`
-		SELECT u.id, u.username, u.password_hash AS passwordHash,
+		SELECT u.id, u.password_hash AS passwordHash,
 			u.avatar_data_url AS avatarDataUrl,
 			p.id AS personId, p.name, p.email, p.role
 		FROM auth_users u
@@ -25,7 +24,6 @@ async function currentProfile(userId: string) {
 	`).get(userId) as
 		| {
 				id: string;
-				username: string;
 				passwordHash: string;
 				avatarDataUrl: string | null;
 				personId: string;
@@ -38,7 +36,6 @@ async function currentProfile(userId: string) {
 
 function publicProfile(profile: NonNullable<Awaited<ReturnType<typeof currentProfile>>>) {
 	return {
-		username: profile.username,
 		avatarDataUrl: profile.avatarDataUrl,
 		name: profile.name,
 		email: profile.email,
@@ -48,7 +45,9 @@ function publicProfile(profile: NonNullable<Awaited<ReturnType<typeof currentPro
 
 function constraintMessage(error: unknown) {
 	const message = error instanceof Error ? error.message : String(error);
-	if (message.includes('auth_users.username')) return '该登录用户名已被使用，请更换后重试';
+	if (message.includes('idx_people_email_unique') || message.includes('people.email')) {
+		return '该邮箱已被其他用户使用，请更换后重试';
+	}
 	if (message.includes('people.name')) return '该显示姓名已被使用，请更换后重试';
 	return '保存失败，请稍后重试';
 }
@@ -68,8 +67,7 @@ export const actions: Actions = {
 
 		const data = await event.request.formData();
 		const name = String(data.get('name') ?? '').trim();
-		const email = String(data.get('email') ?? '').trim().toLowerCase();
-		const username = String(data.get('username') ?? '').trim();
+		const email = normalizeEmail(data.get('email'));
 		const currentPassword = String(data.get('currentPassword') ?? '');
 		const removeAvatar = data.get('removeAvatar') === '1';
 		const avatar = data.get('avatar');
@@ -77,15 +75,12 @@ export const actions: Actions = {
 		if (!name || name.length > 50) {
 			return fail(400, { section: 'profile', message: '显示姓名不能为空且不得超过 50 个字符' });
 		}
-		if (email && !emailPattern.test(email)) {
+		if (!isValidEmail(email)) {
 			return fail(400, { section: 'profile', message: '请输入有效的邮箱地址' });
 		}
-		if (!usernamePattern.test(username)) {
-			return fail(400, { section: 'profile', message: '登录用户名需为 3–64 位字母、数字、点、下划线或连字符' });
-		}
-		if (username.toLowerCase() !== before.username.toLowerCase()) {
+		if (email !== normalizeEmail(before.email)) {
 			if (!currentPassword || !(await verifyPassword(currentPassword, before.passwordHash))) {
-				return fail(400, { section: 'profile', message: '修改登录用户名需要验证当前密码' });
+				return fail(400, { section: 'profile', message: '修改登录邮箱需要验证当前密码' });
 			}
 		}
 
@@ -107,24 +102,21 @@ export const actions: Actions = {
 					UPDATE people SET name = ?, email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 				`).bind(name, email || null, before.personId),
 				db.prepare(`
-					UPDATE auth_users
-					SET username = ?, avatar_data_url = ?, updated_at = CURRENT_TIMESTAMP
-					WHERE id = ?
-				`).bind(username, avatarDataUrl, before.id),
+					UPDATE auth_users SET avatar_data_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+				`).bind(avatarDataUrl, before.id),
 				prepareAudit({
 					...auditRequestMeta(event),
 					db,
 					action: 'profile.update',
 					entityType: 'auth',
 					entityId: before.id,
-					summary: `${before.username} 更新个人资料`,
+					summary: `${before.email ?? before.name} 更新个人资料`,
 					before: {
 						name: before.name,
 						email: before.email,
-						username: before.username,
 						hasAvatar: Boolean(before.avatarDataUrl)
 					},
-					after: { name, email: email || null, username, hasAvatar: Boolean(avatarDataUrl) }
+					after: { name, email, hasAvatar: Boolean(avatarDataUrl) }
 				})
 			]);
 			return { section: 'profile', success: true, message: '个人资料已更新' };
@@ -170,7 +162,7 @@ export const actions: Actions = {
 				action: 'password.update',
 				entityType: 'auth',
 				entityId: profile.id,
-				summary: `${profile.username} 修改登录密码`
+				summary: `${profile.email ?? profile.name} 修改登录密码`
 			})
 		]);
 		await deleteOtherSessions(profile.id, event.cookies.get(SESSION_COOKIE));

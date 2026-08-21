@@ -19,12 +19,12 @@
 - 项目详情：编辑项目状态、成员和任务节点，并查看操作日志。
 - SOP 管理：独立页面编辑模板节点、顺序、相对日期、默认角色、启停和提醒规则。
 - 数据后台：在浏览器本地解析新版 Excel，先只读比对线上业务键，再将晚于最大日期的余额及其他新增记录一次性原子追加到 D1；相同文件哈希直接返回，不产生写入。导入同时保存数量、日期范围和基准日余额快照，日常页面仅读一行状态；完整扫描只由 `/data` 的管理员“重新统计”按钮触发。
-- 人员与权限：人员主档统一关联项目责任、系统角色和登录账号，支持人员与账号的新增、编辑、启停、删除、密码重置及角色调整。
-- 个人设置：点击顶栏账号进入 `/settings`，可更新头像、显示姓名、邮箱、登录用户名和密码；修改密码后保留当前会话并退出其他设备。
+- 人员与权限：人员主档统一关联项目责任、系统角色和邮箱登录权限，支持人员与登录权限的新增、编辑、启停、删除、密码重置及角色调整；不再维护独立登录账户名。
+- 个人设置：点击顶栏账号进入 `/settings`，可更新头像、显示姓名、登录邮箱和密码；修改登录邮箱需验证当前密码，修改密码后保留当前会话并退出其他设备。
 - 邮件提醒：配置提前天数、发送频率和收件人，通过 Resend API 发送；无密钥时进入待发记录。
 - 提醒历史：按状态和关键词查询发送记录、Resend 消息编号及失败原因。
 - Excel 导入：将 `data/ledger.xlsx` 的 10 张明细表、结构化现金流和日余额按稳定业务键及日期幂等追加到负债主表及品种扩展表，不保存原始 JSON，不更新或删除既有历史。
-- 登录与权限：本地账号使用 scrypt 哈希校验和 HttpOnly 会话；系统角色为 `admin`（管理员）、`handler`（经办）和 `reviewer`（复核），细粒度权限暂不扩展。
+- 登录与权限：用户使用人员主档中的唯一邮箱登录，密码采用 scrypt 哈希校验，会话使用限定在 `/financing` 下的 HttpOnly Cookie；系统角色为 `admin`（管理员）、`handler`（经办）和 `reviewer`（复核），细粒度权限暂不扩展。
 - 操作审计：项目、SOP、人员、提醒规则和监管指标计算参数的写操作记录操作者、动作与变更前后。
 
 ## 启动
@@ -36,9 +36,9 @@ pnpm db:import
 pnpm dev
 ```
 
-访问 `http://localhost:5173`。
+访问 `http://localhost:5173/financing/`。应用固定使用 `/financing` path prefix，内部导航、表单、API 请求和登录重定向均不得回退到站点根路径。
 
-远程仓库为 [`fin-research/financing-ops`](https://github.com/fin-research/financing-ops)。生产 Worker 已发布到 [eastmoney-financing.hasbai.workers.dev](https://eastmoney-financing.hasbai.workers.dev)，绑定 D1 数据库 `financing`。
+远程仓库为 [`fin-research/financing-ops`](https://github.com/fin-research/financing-ops)。生产 Worker 已发布到 [eastmoney-financing.hasbai.workers.dev/financing/](https://eastmoney-financing.hasbai.workers.dev/financing/)，绑定 D1 数据库 `financing`；统一域名入口为 `https://eastmoney.hasbai.xyz/financing/`。
 
 `main` 分支已接入 Cloudflare Git 自动构建与部署。日常发布只需提交并执行 `git push origin main`；除非明确要求排障或紧急回滚，不在本地运行 `pnpm build`、`pnpm run deploy` 或 `wrangler deploy`。
 
@@ -50,12 +50,13 @@ pnpm dev
 FINANCING_WORKBENCH_DB_PATH=database/financing-workbench.sqlite
 RESEND_API_KEY=
 FROM_EMAIL=融资工作台 <financing@example.com>
-ADMIN_USERNAME=admin
+ADMIN_NAME=管理员
+ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=请替换为至少16位的随机强密码
 AUTH_SESSION_HOURS=12
 ```
 
-首次运行 `pnpm db:init` 会把环境变量中的管理员密码安全哈希后写入 SQLite；账号创建后，密码以个人设置页中的修改结果为准，服务重启不会再由环境变量覆盖。生产环境必须使用强密码并通过 HTTPS 访问；不要提交 `.env`。登录连续失败 5 次后，账号会锁定 15 分钟。
+首次运行 `pnpm db:init` 会使用 `ADMIN_EMAIL` 创建管理员并把密码安全哈希后写入 SQLite；账号创建后，邮箱和密码以个人设置页中的修改结果为准，服务重启不会由环境变量覆盖。升级前已存在但尚未设置邮箱的管理员可临时使用原标识登录一次，并应立即在个人设置中补齐登录邮箱；补齐后原标识失效。生产环境必须使用强密码并通过 HTTPS 访问；不要提交 `.env`。登录连续失败 5 次后，账号会锁定 15 分钟。
 
 ## 常用命令
 

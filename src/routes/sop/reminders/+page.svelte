@@ -7,6 +7,7 @@
 		Search,
 		TriangleAlert
 	} from '@lucide/svelte';
+	import { withBase } from '$lib/app-paths';
 
 	let { data } = $props();
 
@@ -22,7 +23,7 @@
 </svelte:head>
 
 <nav class="back-nav" aria-label="返回 SOP 管理">
-	<a class="back-link" href="/sop"><ArrowLeft size={16} /> 返回 SOP 管理</a>
+	<a class="back-link" href={withBase('/sop')}><ArrowLeft size={16} /> 返回 SOP 管理</a>
 </nav>
 
 <section class="summary-grid" aria-label="提醒发送汇总">
@@ -66,7 +67,7 @@
 		</div>
 	</label>
 	<button type="submit">查询</button>
-	<a href="/sop/reminders">清除</a>
+	<a href={withBase('/sop/reminders')}>清除</a>
 </form>
 
 <section class="history-panel">

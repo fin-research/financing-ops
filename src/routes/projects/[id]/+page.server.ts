@@ -68,7 +68,7 @@ async function loadProject(projectId: string) {
 	const auditLogs = (await getAuditLogs({ entityType: 'project', entityId: projectId, limit: 30 } as any)).map((item: any) => ({
 		action: item.action,
 		detail: item.summary,
-		actor: item.actorUsername ?? '系统',
+		actor: item.actorIdentifier ?? '系统',
 		createdAt: item.createdAt
 	}));
 	const fallbackLogs = [

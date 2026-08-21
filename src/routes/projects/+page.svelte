@@ -17,6 +17,7 @@
 		Users
 	} from '@lucide/svelte';
 	import MultiSelectFilter from '$lib/MultiSelectFilter.svelte';
+	import { withBase } from '$lib/app-paths';
 
 	let { data } = $props();
 	let selectedTypes = $state<string[]>([]);
@@ -287,7 +288,7 @@
 						{/if}
 					</button>
 					<div>
-						<a href={`/projects/${project.id}`}>{project.name}</a>
+						<a href={withBase(`/projects/${project.id}`)}>{project.name}</a>
 						<p>
 							<span>{project.code}</span>
 							<i></i>
@@ -349,7 +350,7 @@
 							</div>
 						</div>
 					{/each}
-					<a class="project-detail-link" href={`/projects/${project.id}`}>
+					<a class="project-detail-link" href={withBase(`/projects/${project.id}`)}>
 						查看项目详情与全部任务 <ArrowRight size={13} />
 					</a>
 				</div>

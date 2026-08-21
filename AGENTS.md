@@ -2,7 +2,7 @@
 
 本文件适用于仓库根目录及全部子目录，是人类开发者和 Codex 在本项目中的长期协作约定。
 
-最后更新：2026-08-20
+最后更新：2026-08-21
 
 ## 1. 项目目标
 
@@ -24,6 +24,7 @@
 - Excel：SheetJS `xlsx`
 - 邮件：Resend
 - 部署适配：`@sveltejs/adapter-cloudflare`
+- 统一访问前缀：`/financing`
 
 常用命令：
 
@@ -111,6 +112,8 @@ Cloudflare Git 当前使用 pnpm 10.11.1 安装依赖；`pnpm-workspace.yaml` �
 ## 7. 数据库与服务端约定
 
 - 所有写操作使用参数化 SQL。
+- 登录标识统一使用 `people.email`，邮箱按忽略大小写唯一；不得重新引入可维护的独立登录账户名。
+- 当前用户修改自己的登录邮箱必须验证当前密码；修改密码后保留当前会话并删除其他会话。
 - 新表和新字段放入 `createSchema()`，迁移必须可重复运行。
 - 外键保持开启；删除行为必须显式定义。
 - 表单动作必须进行服务端必填、类型、范围和文件大小校验。
@@ -132,7 +135,7 @@ Cloudflare Git 当前使用 pnpm 10.11.1 安装依赖；`pnpm-workspace.yaml` �
 
 - `pnpm check`：0 error、0 warning。
 - Cloudflare Git 在 `main` 推送后自动构建成功；本地不重复手动构建或部署。
-- 核心路由 `/`、`/debts/[id]`、`/projects`、`/sop`、`/settings`、`/data`、`/people` 可访问。
+- 对外核心路由 `/financing/`、`/financing/debts/[id]`、`/financing/projects`、`/financing/sop`、`/financing/settings`、`/financing/data`、`/financing/people` 可访问；SvelteKit 内部 route id 仍不带前缀。
 - Excel 导入能够重复执行且汇总保持一致；相同工作簿重复上传不产生 D1 写入。
 - 新增表单具有失败反馈，不得静默失败。
 - 新增可见文字满足 `1rem / 0.75rem` 字号规则。
@@ -145,7 +148,7 @@ Cloudflare Git 当前使用 pnpm 10.11.1 安装依赖；`pnpm-workspace.yaml` �
 ### P1 — 质量保障
 
 - [ ] 增加 Excel 解析、余额断言、提醒频率和项目建档的单元测试。
-- [ ] 增加 `/`、`/projects`、`/sop`、`/settings`、`/data`、`/people` 核心路由与关键表单的端到端测试。
+- [ ] 增加 `/financing/`、`/financing/projects`、`/financing/sop`、`/financing/settings`、`/financing/data`、`/financing/people` 核心路由与关键表单的端到端测试。
 - [ ] 补充大字号/200% 缩放模式的视觉回归；375px、768px、1024px 和 1440px 已于 2026-08-04 检查。
 - [ ] 复核字号放大后的 Dashboard、甘特图和设置页信息密度，必要时通过折叠、分组或横向局部滚动优化，而不是缩小文字。
 

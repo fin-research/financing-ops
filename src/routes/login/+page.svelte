@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { BarChart3, LoaderCircle, LockKeyhole, UserRound } from '@lucide/svelte';
+	import { AtSign, BarChart3, LoaderCircle, LockKeyhole } from '@lucide/svelte';
 
 	let { data, form } = $props();
 	let submitting = $state(false);
@@ -33,14 +33,15 @@
 			}}
 		>
 			<input type="hidden" name="redirectTo" value={data.redirectTo} />
-			<label for="username">用户名</label>
+			<label for="email">邮箱</label>
 			<div class="field">
-				<span class="field-icon"><UserRound size={18} aria-hidden="true" /></span>
+				<span class="field-icon"><AtSign size={18} aria-hidden="true" /></span>
 				<input
-					id="username"
-					name="username"
+					id="email"
+					name="email"
 					type="text"
-					value={form?.username ?? 'admin'}
+					inputmode="email"
+					value={form?.email ?? ''}
 					autocomplete="username"
 					required
 				/>

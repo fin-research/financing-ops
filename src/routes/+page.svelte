@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { withBase } from '$lib/app-paths';
 	import {
 		CalendarClock, ChevronLeft, ChevronRight, CircleAlert, CircleDollarSign, Clock3,
 		Info, Landmark, Percent
@@ -272,7 +273,7 @@
 	<article class="dashboard-panel project-panel">
 		<header><h2>推进中的融资项目</h2></header>
 		<table><thead><tr><th>融资方式</th><th>融资金额</th><th>期限</th><th>融资成本</th><th>落地时间</th></tr></thead><tbody>
-			{#each dashboard.projects as project}<tr><td><a href={`/projects/${project.id}`}>{project.debtType}</a><small>{project.name}</small></td><td>{project.amountYi.toFixed(2)}</td><td>{project.tenor}</td><td>{project.cost}</td><td>{project.landingDate ? `${project.landingDate.replaceAll('-', '/')}簿记` : '待定'}</td></tr>{/each}
+			{#each dashboard.projects as project}<tr><td><a href={withBase(`/projects/${project.id}`)}>{project.debtType}</a><small>{project.name}</small></td><td>{project.amountYi.toFixed(2)}</td><td>{project.tenor}</td><td>{project.cost}</td><td>{project.landingDate ? `${project.landingDate.replaceAll('-', '/')}簿记` : '待定'}</td></tr>{/each}
 		</tbody><tfoot><tr><th>合计</th><th>{dashboard.metrics.projectAmountYi.toFixed(2)}</th><th colspan="3"></th></tr></tfoot></table>
 	</article>
 
@@ -289,7 +290,7 @@
 			{#each dashboard.limits as item}<tr><td><strong>{item.debtType}</strong></td><td>{item.limitYi.toFixed(2)}</td><td>{item.issuedYi.toFixed(2)}</td><td class:negative={item.remainingYi < 0}><strong>{item.remainingYi.toFixed(2)}</strong><span class="quota-track" aria-label={`已使用 ${item.limitYi > 0 ? Math.min(100, item.issuedYi / item.limitYi * 100).toFixed(0) : 0}%`}><i class:over-limit={item.remainingYi < 0} style:width={`${item.limitYi > 0 ? Math.min(100, item.issuedYi / item.limitYi * 100) : 0}%`}></i></span></td><td>{dateLabel(item.approvedDate)}</td><td>{dateLabel(item.expiryDate)}</td></tr>{/each}
 		</tbody><tfoot><tr><th>合计</th><th>{dashboard.limitTotals.limitYi.toFixed(2)}</th><th>{dashboard.limitTotals.issuedYi.toFixed(2)}</th><th>{dashboard.limitTotals.remainingYi.toFixed(2)}</th><th></th><th></th></tr></tfoot></table>
 		{#if dashboard.financeParameterReminder}
-			<div class="parameter-reminder" role="status"><CircleAlert size={18} /><span>请在本月初更新“上月末净资本”，收益凭证可发行额度按其 60% 计算。</span><a href="/data">去配置</a></div>
+			<div class="parameter-reminder" role="status"><CircleAlert size={18} /><span>请在本月初更新“上月末净资本”，收益凭证可发行额度按其 60% 计算。</span><a href={withBase('/data')}>去配置</a></div>
 		{/if}
 	</article>
 
@@ -320,7 +321,7 @@
 					<div class:other={cell.other} class:today={cell.today} class="calendar-cell">
 						<span class="day-number">{cell.day}</span>
 						<div class="calendar-events">
-							{#each cell.events as event}<a class={event.tone} href={event.href} title={event.title}>{event.title}</a>{/each}
+							{#each cell.events as event}<a class={event.tone} href={withBase(event.href)} title={event.title}>{event.title}</a>{/each}
 						</div>
 					</div>
 				{/each}
@@ -342,7 +343,7 @@
 		<header><h2>待办与提醒</h2><span>{reminders.total} 条</span></header>
 		<div class="reminder-list">
 			{#each reminders.items as reminder}
-				<a href={reminder.href} class="reminder-item">
+				<a href={withBase(reminder.href)} class="reminder-item">
 					<span class={`reminder-dot ${reminder.level}`} aria-hidden="true"></span>
 					<div class="reminder-copy">
 						<strong>{reminder.projectName}</strong>

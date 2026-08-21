@@ -3,7 +3,7 @@ import { stableDebtKey } from '../debt-key.js';
 import { DEBT_FIELD_COLUMNS } from '../debt-fields.js';
 import { dropLegacyImportStagingTables, migrateTypedDebtDetails } from '../debt-details.js';
 
-const schemaVersion = 13;
+const schemaVersion = 14;
 
 function createDebtRecordsTable(db, tableName = 'debt_records', debtsTable = 'debts') {
 	db.exec(`
@@ -556,6 +556,7 @@ export function createSchema(db) {
 			id TEXT PRIMARY KEY,
 			actor_user_id TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
 			actor_username TEXT,
+			actor_email TEXT,
 			action TEXT NOT NULL,
 			entity_type TEXT NOT NULL CHECK (entity_type IN ('project', 'sop', 'person', 'reminder_rule', 'auth', 'finance_parameter', 'debt_limit')),
 			entity_id TEXT,
@@ -794,6 +795,7 @@ export function createSchema(db) {
 	ensureColumn(db, 'data_import_state', 'history_end_date', 'TEXT');
 	ensureColumn(db, 'data_import_state', 'stats_refreshed_at', 'TEXT');
 	migrateAuditLogEntityTypes(db);
+	ensureColumn(db, 'audit_logs', 'actor_email', 'TEXT');
 	db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_debts_type_status ON debts(debt_type, status);
 		CREATE INDEX IF NOT EXISTS idx_debts_maturity ON debts(maturity_date);
@@ -805,6 +807,8 @@ export function createSchema(db) {
 		CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at);
 		CREATE INDEX IF NOT EXISTS idx_debts_categories ON debts(category_level_1, category_level_2, status);
 		CREATE INDEX IF NOT EXISTS idx_auth_users_person ON auth_users(person_id);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_people_email_unique
+			ON people(lower(email)) WHERE email IS NOT NULL AND trim(email) != '';
 	`);
 
 	db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)').run(schemaVersion);

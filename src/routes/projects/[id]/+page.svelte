@@ -13,6 +13,7 @@
 		UsersRound
 	} from '@lucide/svelte';
 	import { roleLabel } from '$lib/roles';
+	import { withBase } from '$lib/app-paths';
 
 	let { data, form } = $props();
 	let pendingAction = $state('');
@@ -63,7 +64,7 @@
 </svelte:head>
 
 <div class="back-nav detail-toolbar">
-	<a href="/projects"><ArrowLeft size={18} /> 返回项目进度</a>
+	<a href={withBase('/projects')}><ArrowLeft size={18} /> 返回项目进度</a>
 	<span class={`project-state ${data.project.status}`}>{statusLabels[data.project.status] ?? data.project.status}</span>
 </div>
 

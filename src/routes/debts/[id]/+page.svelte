@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { ArrowLeft, CalendarDays, Database, Landmark } from '@lucide/svelte';
+	import { withBase } from '$lib/app-paths';
 	let { data } = $props();
 	const debt = $derived(data.debt);
 	const amountYi = (value: number | null) => value == null ? '未登记' : `${(value / 100000000).toFixed(4)} 亿元`;
@@ -7,7 +8,7 @@
 
 <svelte:head><title>{debt.instrumentName ?? debt.debtType} · 负债详情</title></svelte:head>
 
-<a class="back-link" href="/"><ArrowLeft size={16} />返回仪表盘</a>
+<a class="back-link" href={withBase('/')}><ArrowLeft size={16} />返回仪表盘</a>
 <section class="debt-heading">
 	<div><p class="eyebrow">DEBT DETAIL</p><h1>{debt.instrumentName ?? debt.instrumentCode ?? debt.debtType}</h1></div>
 	<span>{debt.categoryLevel1 ?? debt.debtType} / {debt.categoryLevel2 ?? debt.debtType}</span>

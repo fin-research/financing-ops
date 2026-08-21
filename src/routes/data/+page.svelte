@@ -2,6 +2,7 @@
 	import '../management.css';
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
+	import { withBase } from '$lib/app-paths';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import {
 		AlertCircle,
@@ -61,7 +62,7 @@
 	}
 
 	async function importApi(body: Record<string, unknown>) {
-		const response = await fetch('/api/import', {
+		const response = await fetch(withBase('/api/import'), {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(body)
