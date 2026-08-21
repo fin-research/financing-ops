@@ -108,7 +108,7 @@ export async function getAuditLogs({ entityType, entityId, limit = 100 } = {}) {
 	const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 	return getDatabase().prepare(`
 		SELECT id, actor_user_id AS actorUserId,
-			COALESCE(actor_email, actor_username) AS actorIdentifier,
+			actor_email AS actorIdentifier,
 			action, entity_type AS entityType, entity_id AS entityId, summary,
 			before_json AS beforeJson, after_json AS afterJson,
 			request_ip AS requestIp, user_agent AS userAgent, created_at AS createdAt

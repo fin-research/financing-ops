@@ -102,7 +102,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	}).format(new Date());
 	const [projects, people, activeSopDebtTypes] = await Promise.all([
 		mapProjects(),
-		db.prepare('SELECT id, name FROM people WHERE active = 1 ORDER BY name').all(),
+		db.prepare('SELECT id, name FROM people WHERE active = TRUE ORDER BY name').all(),
 		getActiveSopDebtTypeOptions()
 	]);
 	return {
@@ -132,10 +132,10 @@ export const actions: Actions = {
 
 		const db = getDatabase();
 		const owner = (await db.prepare('SELECT id FROM people WHERE name = ?').get(ownerName))
-			?? await db.prepare('SELECT id FROM people WHERE active = 1 ORDER BY name LIMIT 1').get();
+			?? await db.prepare('SELECT id FROM people WHERE active = TRUE ORDER BY name LIMIT 1').get();
 		const sop = await db.prepare(`
 			SELECT id FROM sop_templates
-			WHERE is_active = 1 AND (
+			WHERE is_active = TRUE AND (
 				debt_type = @debtType OR
 				(@debtType IN ('小公募', '私募债', '次级债') AND debt_type = '公司债')
 			)
@@ -152,7 +152,7 @@ export const actions: Actions = {
 			FROM sop_nodes WHERE template_id = ? ORDER BY sort_order
 		`).all(sop.id);
 		const assignees = await db.prepare(`
-			SELECT id, role FROM people WHERE active = 1
+			SELECT id, role FROM people WHERE active = TRUE
 			ORDER BY name
 		`).all();
 		const assigneeByRole = new Map<string, { id: string }>();

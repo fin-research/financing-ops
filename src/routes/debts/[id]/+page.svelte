@@ -6,25 +6,25 @@
 	const amountYi = (value: number | null) => value == null ? '未登记' : `${(value / 100000000).toFixed(4)} 亿元`;
 </script>
 
-<svelte:head><title>{debt.instrumentName ?? debt.debtType} · 负债详情</title></svelte:head>
+<svelte:head><title>{debt.name} · 负债详情</title></svelte:head>
 
 <a class="back-link" href={withBase('/')}><ArrowLeft size={16} />返回仪表盘</a>
 <section class="debt-heading">
-	<div><p class="eyebrow">DEBT DETAIL</p><h1>{debt.instrumentName ?? debt.instrumentCode ?? debt.debtType}</h1></div>
-	<span>{debt.categoryLevel1 ?? debt.debtType} / {debt.categoryLevel2 ?? debt.debtType}</span>
+	<div><p class="eyebrow">DEBT DETAIL</p><h1>{debt.name}</h1></div>
+	<span>{debt.debtType}{debt.subtype ? ` / ${debt.subtype}` : ''}</span>
 </section>
 
 <section class="detail-grid">
 	<article class="detail-card"><header><Landmark size={18} /><h2>核心信息</h2></header><dl>
-		<div><dt>负债品种</dt><dd>{debt.debtType}</dd></div><div><dt>二级分类</dt><dd>{debt.categoryLevel2 ?? '无'}</dd></div>
-		<div><dt>交易对手</dt><dd>{debt.counterparty ?? '未登记'}</dd></div><div><dt>借款主体</dt><dd>{debt.borrower ?? '未登记'}</dd></div>
-		<div><dt>本金</dt><dd>{amountYi(debt.principalAmount)}</dd></div><div><dt>待偿余额</dt><dd>{amountYi(debt.outstandingAmount)}</dd></div>
-		<div><dt>年化利率</dt><dd>{debt.annualRate == null ? '未登记' : `${(debt.annualRate * 100).toFixed(4)}%`}</dd></div><div><dt>币种</dt><dd>{debt.currency}</dd></div>
+		<div><dt>负债大类</dt><dd>{debt.debtType}</dd></div><div><dt>负债小类</dt><dd>{debt.subtype ?? '无'}</dd></div>
+		<div><dt>交易对手</dt><dd>{debt.counterparty ?? '未登记'}</dd></div><div><dt>状态</dt><dd>{debt.status}</dd></div>
+		<div><dt>本金</dt><dd>{amountYi(debt.amount)}</dd></div><div><dt>应付利息</dt><dd>{amountYi(debt.interestPayable)}</dd></div>
+		<div><dt>本息总计</dt><dd>{amountYi(debt.totalAmount)}</dd></div><div><dt>年化利率</dt><dd>{debt.annualRate == null ? '未登记' : `${(debt.annualRate * 100).toFixed(4)}%`}</dd></div>
 		<div><dt>起息日</dt><dd>{debt.issueDate ?? '未登记'}</dd></div><div><dt>到期日</dt><dd>{debt.maturityDate ?? '未登记'}</dd></div>
 	</dl></article>
 
 	<article class="detail-card"><header><CalendarDays size={18} /><h2>结构化现金流</h2></header><div class="cashflows">
-		{#each debt.cashflows as flow}<div><time>{flow.eventDate}</time><strong>{flow.eventType === 'interest' ? '付息' : '还本'}</strong><span>{amountYi(flow.amount)}</span></div>{:else}<p>该负债暂无独立结构化现金流记录。</p>{/each}
+		{#each debt.cashflows as flow}<div><time>{flow.eventDate}</time><strong>{flow.eventType === 'interest' ? '付息' : flow.eventType === 'principal' ? '还本' : flow.eventType === 'fee' ? '费用' : '补充'}</strong><span>{amountYi(flow.amount)}</span></div>{:else}<p>该负债暂无独立结构化现金流记录。</p>{/each}
 	</div></article>
 </section>
 

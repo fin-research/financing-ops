@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { sha256Hex } from './hash.js';
+import { sha256Hex } from './hash.mjs';
 
 export function stableDebtKey(debt, occurrence = 0) {
 	return sha256Hex([

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { auditRequestMeta, getAuditLogs, prepareAudit } from '$lib/server/audit.js';
+import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 import { getDatabase } from '$lib/server/db.js';
 
 const PROJECT_STATUSES = new Set(['planning', 'in_progress', 'at_risk', 'completed', 'cancelled']);
@@ -25,34 +25,47 @@ async function resolveProjectId(rawId: string) {
 
 async function loadProject(projectId: string) {
 	const db = getDatabase();
-	const project = await db.prepare(`
+	const row = await db.prepare(`
 		SELECT p.id, p.code, p.name, p.debt_type AS debtType, p.borrower, p.amount, p.currency,
 			p.status, p.planned_start_date AS plannedStartDate, p.planned_issue_date AS plannedIssueDate,
 			p.planned_maturity_date AS plannedMaturityDate, p.notes, p.created_at AS createdAt,
 			p.updated_at AS updatedAt, p.owner_id AS ownerId, owner.name AS ownerName,
-			st.name AS sopName
+			st.name AS sopName,
+			COALESCE((
+				SELECT jsonb_agg(jsonb_build_object(
+					'id', pt.id, 'name', pt.name, 'status', pt.status,
+					'assigneeId', pt.assignee_id, 'assigneeName', assignee.name,
+					'plannedStartDate', pt.planned_start_date, 'dueDate', pt.due_date,
+					'completedAt', pt.completed_at, 'sortOrder', pt.sort_order,
+					'notes', pt.notes, 'updatedAt', pt.updated_at
+				) ORDER BY pt.sort_order, pt.due_date, pt.name)
+				FROM project_tasks pt LEFT JOIN people assignee ON assignee.id = pt.assignee_id
+				WHERE pt.project_id = p.id
+			), '[]'::jsonb) AS tasks,
+			COALESCE((
+				SELECT jsonb_agg(jsonb_build_object(
+					'id', person.id, 'name', person.name, 'email', person.email, 'role', person.role
+				) ORDER BY person.name)
+				FROM people person WHERE person.active = TRUE
+			), '[]'::jsonb) AS people,
+			COALESCE((
+				SELECT jsonb_agg(jsonb_build_object(
+					'action', logs.action, 'detail', logs.summary,
+					'actor', COALESCE(logs.actor_email, '系统'), 'createdAt', logs.created_at
+				) ORDER BY logs.created_at DESC, logs.id DESC)
+				FROM (
+					SELECT id, action, summary, actor_email, created_at
+					FROM audit_logs WHERE entity_type = 'project' AND entity_id = p.id
+					ORDER BY created_at DESC, id DESC LIMIT 30
+				) logs
+			), '[]'::jsonb) AS auditLogs
 		FROM projects p
 		LEFT JOIN people owner ON owner.id = p.owner_id
 		LEFT JOIN sop_templates st ON st.id = p.sop_template_id
 		WHERE p.id = ?
 	`).get(projectId);
-	if (!project) throw error(404, '项目不存在');
-
-	const tasks = await db.prepare(`
-		SELECT pt.id, pt.name, pt.status, pt.assignee_id AS assigneeId,
-			assignee.name AS assigneeName, pt.planned_start_date AS plannedStartDate,
-			pt.due_date AS dueDate, pt.completed_at AS completedAt,
-			pt.sort_order AS sortOrder, pt.notes, pt.updated_at AS updatedAt
-		FROM project_tasks pt
-		LEFT JOIN people assignee ON assignee.id = pt.assignee_id
-		WHERE pt.project_id = ?
-		ORDER BY pt.sort_order, pt.due_date, pt.name
-	`).all(projectId);
-
-	const people = await db.prepare(`
-		SELECT id, name, email, role
-		FROM people WHERE active = 1 ORDER BY name
-	`).all();
+	if (!row) throw error(404, '项目不存在');
+	const { tasks = [], people = [], auditLogs = [], ...project } = row as any;
 
 	const membersById = new Map<string, { id: string; name: string; email: string | null; role: string | null; responsibility: string }>();
 	if ((project as { ownerId?: string }).ownerId) {
@@ -65,12 +78,6 @@ async function loadProject(projectId: string) {
 		if (person) membersById.set(person.id, { ...person, responsibility: '任务执行人' });
 	}
 
-	const auditLogs = (await getAuditLogs({ entityType: 'project', entityId: projectId, limit: 30 } as any)).map((item: any) => ({
-		action: item.action,
-		detail: item.summary,
-		actor: item.actorIdentifier ?? '系统',
-		createdAt: item.createdAt
-	}));
 	const fallbackLogs = [
 		...(tasks as any[])
 			.filter((task) => task.completedAt)
@@ -114,7 +121,7 @@ export const actions: Actions = {
 		const notes = String(data.get('notes') ?? '').trim();
 		if (!PROJECT_STATUSES.has(status)) return fail(400, { message: '项目状态无效' });
 		const db = getDatabase();
-		if (ownerId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = 1').get(ownerId)) {
+		if (ownerId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = TRUE').get(ownerId)) {
 			return fail(400, { message: '负责人不存在或已停用' });
 		}
 		const selectState = db.prepare('SELECT status, owner_id AS ownerId, notes FROM projects WHERE id = ?');
@@ -152,7 +159,7 @@ export const actions: Actions = {
 		if (!await db.prepare('SELECT 1 FROM project_tasks WHERE id = ? AND project_id = ?').get(taskId, projectId)) {
 			return fail(404, { message: '任务节点不存在' });
 		}
-		if (assigneeId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = 1').get(assigneeId)) {
+		if (assigneeId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = TRUE').get(assigneeId)) {
 			return fail(400, { message: '任务负责人不存在或已停用' });
 		}
 		const selectState = db.prepare(`
@@ -195,7 +202,7 @@ export const actions: Actions = {
 		if (!name || name.length > 120) return fail(400, { message: '请输入 1–120 个字符的任务名称' });
 		if (dueDate && !ISO_DATE.test(dueDate)) return fail(400, { message: '截止日期格式无效' });
 		const db = getDatabase();
-		if (assigneeId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = 1').get(assigneeId)) {
+		if (assigneeId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = TRUE').get(assigneeId)) {
 			return fail(400, { message: '任务负责人不存在或已停用' });
 		}
 		const nextOrder = (await db.prepare(`

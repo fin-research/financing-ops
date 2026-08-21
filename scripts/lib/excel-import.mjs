@@ -1,8 +1,8 @@
 // @ts-nocheck
 import * as XLSX from 'xlsx/xlsx.mjs';
-import { stableDebtKey } from './debt-key.js';
-import { DEBT_FIELD_COLUMNS } from './debt-fields.js';
-import { sha256Hex } from './hash.js';
+import { stableDebtKey } from './debt-key.mjs';
+import { DEBT_FIELD_COLUMNS } from './debt-fields.mjs';
+import { sha256Hex } from './hash.mjs';
 
 const SUMMARY_SHEET_NAMES = new Set(['借入资金汇总表']);
 const SUMMARY_SHEET_NAME = '借入资金汇总表';
@@ -159,22 +159,32 @@ function parseSummaryHistory(workbook, sourceFile) {
 
 export function assertDebtBalanceSnapshot(snapshot) {
 	if (!snapshot) throw new Error('未找到可核对的负债余额快照');
-	const expected20260727 = {
-		'收益凭证': 244.2206, '收益权转让': 0, '同业拆借': 32, '次级债': 54, '集团借款': 12,
-		'转融资': 58.5, '短期融资券': 313, '私募债': 0, '小公募': 447, '互换便利': 20
-	};
-	if (snapshot.asOfDate === '2026-07-27') {
-		if (Math.abs(snapshot.totalYi - 1180.7206) > 1e-8) throw new Error(`2026-07-27 总余额核对失败：${snapshot.totalYi}`);
-		for (const balance of snapshot.balances) {
-			if (Math.abs(balance.balanceYi - expected20260727[balance.debtType]) > 1e-8) {
-				throw new Error(`2026-07-27 ${balance.debtType} 核对失败：${balance.balanceYi}`);
-			}
+	if (typeof snapshot.asOfDate !== 'string' || snapshot.asOfDate.length !== 10) {
+		throw new Error('负债余额快照缺少有效基准日');
+	}
+	if (!Number.isFinite(snapshot.totalYi) || snapshot.totalYi < 0) {
+		throw new Error('负债余额快照缺少有效汇总余额');
+	}
+	if (!Array.isArray(snapshot.balances) || snapshot.balances.length !== SNAPSHOT_DEBT_TYPES.length) {
+		throw new Error('负债余额快照的品种余额数量不完整');
+	}
+	const seenDebtTypes = new Set();
+	for (const balance of snapshot.balances) {
+		if (!SNAPSHOT_DEBT_TYPES.includes(balance?.debtType) || seenDebtTypes.has(balance.debtType)) {
+			throw new Error('负债余额快照包含未知或重复的负债品种');
 		}
+		if (!Number.isFinite(balance.balanceYi) || balance.balanceYi < 0) {
+			throw new Error('负债余额快照包含无效品种余额');
+		}
+		seenDebtTypes.add(balance.debtType);
+	}
+	const calculatedTotalYi = snapshot.balances.reduce((sum, item) => sum + item.balanceYi, 0);
+	if (Math.abs(calculatedTotalYi - snapshot.totalYi) > 1e-8) {
+		throw new Error('负债余额快照的明细合计与汇总余额不一致');
 	}
 	return { asOfDate: snapshot.asOfDate, totalYi: snapshot.totalYi, balances: snapshot.balances };
 }
-
-function mapStatus(value, maturityDate) {
+(value, maturityDate) {
 	const candidate = text(value)?.toLowerCase() ?? '';
 	if (/未到期|存续/.test(candidate)) return 'active';
 	if (/发行失败|作废|取消/.test(candidate)) return 'closed';
@@ -489,62 +499,3 @@ export function parseDebtWorkbookData(workbookData, sourceFile) {
 		snapshot: assertDebtBalanceSnapshot(history.latest)
 	};
 }
-
-export const TYPED_IMPORT_TABLES = [
-	{
-		key: 'bond',
-		table: 'bond_debt_details',
-		columns: ['debt_id', 'short_name', 'issuance_method', 'bookbuilding_date', 'issuance_start_date',
-			'term_days', 'interest_basis', 'issuance_target', 'market', 'receiving_account', 'trustee',
-			'bookrunner', 'stated_interest_amount', 'stated_redemption_amount', 'remaining_principal_amount']
-	},
-	{
-		key: 'bondSchedule',
-		table: 'bond_payment_schedules',
-		columns: ['debt_id', 'sequence', 'payment_date', 'principal_amount', 'interest_amount',
-			'redemption_amount', 'remaining_principal_amount']
-	},
-	{
-		key: 'certificate',
-		table: 'income_certificate_details',
-		columns: ['debt_id', 'issuance_status', 'liquidation_submission_status',
-			'liquidation_registration_status', 'series_name', 'term_label', 'return_type', 'investor_type',
-			'term_days', 'interest_amount', 'liquidation_amount', 'subscription_date', 'redemption_date',
-			'receiving_account', 'is_early_maturity']
-	},
-	{
-		key: 'incomeRight',
-		table: 'income_right_details',
-		columns: ['debt_id', 'period_label', 'term_days', 'interest_basis_days', 'stated_interest_amount']
-	},
-	{
-		key: 'incomeRightSchedule',
-		table: 'income_right_payment_schedules',
-		columns: ['debt_id', 'sequence', 'payment_date', 'interest_amount']
-	},
-	{
-		key: 'interbank',
-		table: 'interbank_borrowing_details',
-		columns: ['debt_id', 'term_days', 'interest_amount', 'repayment_amount']
-	},
-	{
-		key: 'refinancing',
-		table: 'refinancing_details',
-		columns: ['debt_id', 'term_days', 'interest_basis_days', 'interest_amount', 'repayment_amount',
-			'market', 'is_extended', 'receiving_account', 'repayment_account']
-	},
-	{ key: 'groupLoan', table: 'group_loan_details', columns: ['debt_id', 'lender_name'] },
-	{
-		key: 'groupSchedule',
-		table: 'group_loan_schedules',
-		columns: ['debt_id', 'sequence', 'accrual_end_date', 'accrued_interest_amount', 'payment_date',
-			'paid_interest_amount', 'principal_repayment_amount', 'remaining_principal_amount',
-			'supplemental_date', 'supplemental_note', 'supplemental_amount']
-	},
-	{
-		key: 'swap',
-		table: 'swap_facility_details',
-		columns: ['debt_id', 'sequence_number', 'first_repo_date', 'average_repo_balance_description',
-			'repo_weighted_average_rate', 'comprehensive_financing_rate']
-	}
-];

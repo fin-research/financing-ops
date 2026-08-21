@@ -97,7 +97,7 @@ export const actions: Actions = {
 		await db.batch([
 			db.prepare(`
 				UPDATE sop_templates
-				SET is_active = CASE is_active WHEN 1 THEN 0 ELSE 1 END, updated_at = CURRENT_TIMESTAMP
+				SET is_active = NOT is_active, updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
 			`).bind(params.id),
 			prepareAudit({

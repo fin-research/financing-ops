@@ -3,18 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { Resend } from 'resend';
 
 const DAY_MS = 86_400_000;
-const TRIGGER_COLUMNS = {
-	due_date: 'pt.due_date',
-	planned_issue_date: 'p.planned_issue_date',
-	planned_maturity_date: 'p.planned_maturity_date'
-};
-
 function parseDate(value) {
 	return new Date(`${value}T00:00:00Z`);
 }
 
 function isoDate(value = new Date()) {
-	return value.toISOString().slice(0, 10);
+	return new Intl.DateTimeFormat('en-CA', {
+		timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+	}).format(value);
 }
 
 function shouldDeliver(rule, triggerDate, deliveryDate) {
@@ -31,6 +27,7 @@ function shouldDeliver(rule, triggerDate, deliveryDate) {
 function recipientsFor(row) {
 	if (row.recipientMode === 'owner') return row.ownerEmail ? [row.ownerEmail] : [];
 	if (row.recipientMode === 'custom') {
+		if (Array.isArray(row.recipients)) return row.recipients.map(String).filter(Boolean);
 		return String(row.recipients ?? '')
 			.split(/[;,，；\s]+/)
 			.map((email) => email.trim())
@@ -55,47 +52,49 @@ async function resolveDatabase(db) {
 
 export async function collectDueReminders({ asOfDate = isoDate(), db } = {}) {
 	db = await resolveDatabase(db);
-	const rules = await db.prepare(`
-		SELECT id, name, target_type AS targetType, debt_type AS debtType,
-			trigger_field AS triggerField, offset_days AS offsetDays, frequency,
-			recipient_mode AS recipientMode, recipients
-		FROM reminder_rules WHERE is_active = 1
+	const rows = await db.prepare(`
+		SELECT r.id AS ruleId, r.name AS ruleName, r.target_type AS targetType,
+			r.debt_type AS ruleDebtType, r.trigger_field AS triggerField,
+			r.offset_days AS offsetDays, r.frequency, r.recipient_mode AS recipientMode,
+			r.recipients, pt.id AS targetId, pt.name AS taskName, p.name AS projectName,
+			p.debt_type AS debtType,
+			CASE r.trigger_field
+				WHEN 'due_date' THEN pt.due_date
+				WHEN 'planned_issue_date' THEN p.planned_issue_date
+				WHEN 'planned_maturity_date' THEN p.planned_maturity_date
+			END AS triggerDate,
+			assignee.email AS assigneeEmail, owner.email AS ownerEmail
+		FROM reminder_rules r
+		JOIN project_tasks pt ON r.target_type = 'project_task' AND pt.status <> 'completed'
+		JOIN projects p ON p.id = pt.project_id
+		LEFT JOIN people assignee ON assignee.id = pt.assignee_id
+		LEFT JOIN people owner ON owner.id = p.owner_id
+		WHERE r.is_active = TRUE
+			AND (r.debt_type IS NULL OR r.debt_type = p.debt_type)
+			AND CASE r.trigger_field
+				WHEN 'due_date' THEN pt.due_date
+				WHEN 'planned_issue_date' THEN p.planned_issue_date
+				WHEN 'planned_maturity_date' THEN p.planned_maturity_date
+			END IS NOT NULL
 	`).all();
 	const reminders = [];
 
-	for (const rule of rules) {
-		if (rule.targetType !== 'project_task') continue;
-		const triggerColumn = TRIGGER_COLUMNS[rule.triggerField];
-		if (!triggerColumn) continue;
-		const rows = await db.prepare(`
-			SELECT pt.id AS targetId, pt.name AS taskName, p.name AS projectName,
-				p.debt_type AS debtType, ${triggerColumn} AS triggerDate,
-				assignee.email AS assigneeEmail, owner.email AS ownerEmail
-			FROM project_tasks pt
-			JOIN projects p ON p.id = pt.project_id
-			LEFT JOIN people assignee ON assignee.id = pt.assignee_id
-			LEFT JOIN people owner ON owner.id = p.owner_id
-			WHERE pt.status != 'completed' AND ${triggerColumn} IS NOT NULL
-				${rule.debtType ? 'AND p.debt_type = @debtType' : ''}
-		`).all(rule.debtType ? { debtType: rule.debtType } : {});
-
-		for (const row of rows) {
-			if (!shouldDeliver(rule, row.triggerDate, asOfDate)) continue;
-			const recipients = recipientsFor({ ...row, ...rule });
-			if (!recipients.length) continue;
-			reminders.push({
-				ruleId: rule.id,
-				ruleName: rule.name,
-				targetType: rule.targetType,
-				targetId: row.targetId,
-				projectName: row.projectName,
-				taskName: row.taskName,
-				debtType: row.debtType,
-				triggerDate: row.triggerDate,
-				deliveryDate: asOfDate,
-				recipients
-			});
-		}
+	for (const row of rows) {
+		if (!shouldDeliver(row, row.triggerDate, asOfDate)) continue;
+		const recipients = recipientsFor(row);
+		if (!recipients.length) continue;
+		reminders.push({
+			ruleId: row.ruleId,
+			ruleName: row.ruleName,
+			targetType: row.targetType,
+			targetId: row.targetId,
+			projectName: row.projectName,
+			taskName: row.taskName,
+			debtType: row.debtType,
+			triggerDate: row.triggerDate,
+			deliveryDate: asOfDate,
+			recipients
+		});
 	}
 	return reminders;
 }
@@ -109,12 +108,16 @@ export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false, d
 		?? '融资工作台 <onboarding@resend.dev>';
 	const resend = apiKey ? new Resend(apiKey) : null;
 	const results = [];
+	const existingRows = reminders.length ? await db.prepare(`
+		SELECT id, rule_id AS ruleId, target_id AS targetId, status
+		FROM reminder_deliveries
+		WHERE delivery_date = ?
+	`).all(asOfDate) : [];
+	const existingByTarget = new Map(existingRows.map((row) => [`${row.ruleId}:${row.targetId}`, row]));
+	const deliveries = [];
 
 	for (const reminder of reminders) {
-		const existing = await db.prepare(`
-			SELECT id, status FROM reminder_deliveries
-			WHERE rule_id = ? AND target_id = ? AND delivery_date = ?
-		`).get(reminder.ruleId, reminder.targetId, reminder.deliveryDate);
+		const existing = existingByTarget.get(`${reminder.ruleId}:${reminder.targetId}`);
 		if (existing?.status === 'sent') {
 			results.push({ ...reminder, status: 'skipped' });
 			continue;
@@ -122,20 +125,7 @@ export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false, d
 
 		const deliveryId = existing?.id ?? randomUUID();
 		if (dryRun || !resend) {
-			await db.prepare(`
-				INSERT INTO reminder_deliveries
-					(id, rule_id, target_type, target_id, delivery_date, recipients, status)
-				VALUES (?, ?, ?, ?, ?, ?, 'pending')
-				ON CONFLICT(rule_id, target_id, delivery_date) DO UPDATE SET
-					recipients = excluded.recipients, status = 'pending', error_message = NULL
-			`).run(
-				deliveryId,
-				reminder.ruleId,
-				reminder.targetType,
-				reminder.targetId,
-				reminder.deliveryDate,
-				JSON.stringify(reminder.recipients)
-			);
+			deliveries.push({ ...reminder, id: deliveryId, status: 'pending', providerMessageId: null, errorMessage: null, sentAt: null });
 			results.push({ ...reminder, status: 'pending' });
 			continue;
 		}
@@ -152,42 +142,48 @@ export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false, d
 					<p>负债品种：${escapeHtml(reminder.debtType)}</p>`
 			});
 			if (response.error) throw new Error(response.error.message);
-			await db.prepare(`
-				INSERT INTO reminder_deliveries
-					(id, rule_id, target_type, target_id, delivery_date, recipients, status, provider_message_id, sent_at)
-				VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, CURRENT_TIMESTAMP)
-				ON CONFLICT(rule_id, target_id, delivery_date) DO UPDATE SET
-					recipients = excluded.recipients, status = 'sent',
-					provider_message_id = excluded.provider_message_id,
-					error_message = NULL, sent_at = CURRENT_TIMESTAMP
-			`).run(
-				deliveryId,
-				reminder.ruleId,
-				reminder.targetType,
-				reminder.targetId,
-				reminder.deliveryDate,
-				JSON.stringify(reminder.recipients),
-				response.data?.id ?? null
-			);
+			deliveries.push({
+				...reminder, id: deliveryId, status: 'sent', providerMessageId: response.data?.id ?? null,
+				errorMessage: null, sentAt: new Date().toISOString()
+			});
 			results.push({ ...reminder, status: 'sent', messageId: response.data?.id ?? null });
 		} catch (error) {
-			await db.prepare(`
-				INSERT INTO reminder_deliveries
-					(id, rule_id, target_type, target_id, delivery_date, recipients, status, error_message)
-				VALUES (?, ?, ?, ?, ?, ?, 'failed', ?)
-				ON CONFLICT(rule_id, target_id, delivery_date) DO UPDATE SET
-					recipients = excluded.recipients, status = 'failed', error_message = excluded.error_message
-			`).run(
-				deliveryId,
-				reminder.ruleId,
-				reminder.targetType,
-				reminder.targetId,
-				reminder.deliveryDate,
-				JSON.stringify(reminder.recipients),
-				error instanceof Error ? error.message : String(error)
-			);
-			results.push({ ...reminder, status: 'failed', error: error instanceof Error ? error.message : String(error) });
+			const message = error instanceof Error ? error.message : String(error);
+			deliveries.push({
+				...reminder, id: deliveryId, status: 'failed', providerMessageId: null,
+				errorMessage: message, sentAt: null
+			});
+			results.push({ ...reminder, status: 'failed', error: message });
 		}
+	}
+	if (deliveries.length) {
+		await db.prepare(`
+			INSERT INTO reminder_deliveries (
+				id, rule_id, target_type, target_id, delivery_date, recipients, status,
+				provider_message_id, error_message, sent_at
+			)
+			SELECT id, rule_id, target_type, target_id, delivery_date, recipients, status,
+				provider_message_id, error_message, sent_at
+			FROM jsonb_to_recordset(?::jsonb) AS source(
+				id text, rule_id text, target_type text, target_id text, delivery_date date,
+				recipients jsonb, status text, provider_message_id text, error_message text, sent_at timestamptz
+			)
+			ON CONFLICT(rule_id, target_id, delivery_date) DO UPDATE SET
+				recipients = EXCLUDED.recipients, status = EXCLUDED.status,
+				provider_message_id = EXCLUDED.provider_message_id,
+				error_message = EXCLUDED.error_message, sent_at = EXCLUDED.sent_at
+		`).run(JSON.stringify(deliveries.map((delivery) => ({
+			id: delivery.id,
+			rule_id: delivery.ruleId,
+			target_type: delivery.targetType,
+			target_id: delivery.targetId,
+			delivery_date: delivery.deliveryDate,
+			recipients: delivery.recipients,
+			status: delivery.status,
+			provider_message_id: delivery.providerMessageId,
+			error_message: delivery.errorMessage,
+			sent_at: delivery.sentAt
+		}))));
 	}
 	return { asOfDate, dryRun: dryRun || !apiKey, count: reminders.length, results };
 }

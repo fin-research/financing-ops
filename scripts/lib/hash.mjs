@@ -1,4 +1,4 @@
-// @ts-nocheck
+// Local workbook-maintenance helper; never imported by the Worker bundle.
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 

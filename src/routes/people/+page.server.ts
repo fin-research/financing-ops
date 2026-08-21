@@ -42,21 +42,21 @@ async function identityState(db: ReturnType<typeof getDatabase>, id: string) {
 				name: string;
 				email: string | null;
 				role: string;
-				active: number;
+				active: boolean;
 				accountId: string | null;
 				accountRole: string | null;
-				accountActive: number | null;
+				accountActive: boolean | null;
 		  }
 		| undefined;
 }
 
 async function activeAdminCount(db: ReturnType<typeof getDatabase>) {
-	return Number((await db.prepare("SELECT COUNT(*) AS count FROM auth_users WHERE role = 'admin' AND active = 1").get()).count);
+	return Number((await db.prepare("SELECT COUNT(*) AS count FROM auth_users WHERE role = 'admin' AND active = TRUE").get()).count);
 }
 
 function constraintMessage(error: unknown) {
 	const message = error instanceof Error ? error.message : String(error);
-	if (message.includes('idx_people_email_unique') || message.includes('people.email')) {
+	if (message.includes('idx_people_email_unique') || message.includes('people_email_key') || message.includes('people.email')) {
 		return '该邮箱已被其他人员使用，请直接编辑现有人员或更换邮箱';
 	}
 	if (message.includes('people.name')) return '人员姓名已存在，请直接编辑现有人员';
@@ -79,13 +79,13 @@ export const actions: Actions = {
 		try {
 			const statements = [db.prepare(`
 					INSERT INTO people (id, name, email, role, active)
-					VALUES (?, ?, ?, ?, 1)
+					VALUES (?, ?, ?, ?, TRUE)
 				`).bind(personId, fields.name, fields.email, fields.role)];
 				if (fields.accountEnabled) {
 					statements.push(db.prepare(`
-						INSERT INTO auth_users (id, person_id, username, password_hash, role, active)
-						VALUES (?, ?, ?, ?, ?, 1)
-					`).bind(accountId, personId, accountId, passwordHash, fields.role));
+						INSERT INTO auth_users (id, person_id, password_hash, role, active)
+						VALUES (?, ?, ?, ?, TRUE)
+					`).bind(accountId, personId, passwordHash, fields.role));
 				}
 				statements.push(prepareAudit({
 					...auditRequestMeta(event),
@@ -146,9 +146,9 @@ export const actions: Actions = {
 					`).bind(fields.role, passwordHash, before.accountId));
 				} else if (fields.accountEnabled) {
 					statements.push(db.prepare(`
-						INSERT INTO auth_users (id, person_id, username, password_hash, role, active)
-						VALUES (?, ?, ?, ?, ?, ?)
-					`).bind(newAccountId, id, newAccountId, passwordHash, fields.role, before.active));
+						INSERT INTO auth_users (id, person_id, password_hash, role, active)
+						VALUES (?, ?, ?, ?, ?)
+					`).bind(newAccountId, id, passwordHash, fields.role, before.active));
 				}
 				statements.push(prepareAudit({
 					...auditRequestMeta(event),
@@ -170,7 +170,7 @@ export const actions: Actions = {
 	togglePerson: async (event) => {
 		const data = await event.request.formData();
 		const id = String(data.get('id') ?? '').trim();
-		const active = String(data.get('active') ?? '') === '1' ? 1 : 0;
+		const active = String(data.get('active') ?? '') === '1';
 		const db = getDatabase();
 		const before = await identityState(db, id);
 		if (!before) return fail(404, { message: '未找到该人员' });

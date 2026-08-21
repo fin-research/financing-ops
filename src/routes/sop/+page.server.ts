@@ -20,14 +20,14 @@ export const actions: Actions = {
 		const frequency = String(data.get('frequency') ?? 'once');
 		const recipientMode = String(data.get('recipientMode') ?? 'assignee');
 		const recipients = String(data.get('recipients') ?? '').trim();
+		const customRecipients = recipients.split(/[;,，；\s]+/).filter(Boolean);
 		if (!name || !Number.isInteger(offsetDays) || offsetDays < 0 || offsetDays > 365) {
 			return fail(400, { message: '提醒规则参数无效' });
 		}
 		if (!['once', 'daily', 'weekly'].includes(frequency)) return fail(400, { message: '提醒频率无效' });
 		if (!['assignee', 'owner', 'custom'].includes(recipientMode)) return fail(400, { message: '收件人类型无效' });
 		if (recipientMode === 'custom') {
-			const emails = recipients.split(/[;,，；\s]+/).filter(Boolean);
-			if (!emails.length || emails.some((email) => !emailPattern.test(email))) {
+			if (!customRecipients.length || customRecipients.some((email) => !emailPattern.test(email))) {
 				return fail(400, { message: '请填写有效的指定收件邮箱' });
 			}
 		}
@@ -37,7 +37,7 @@ export const actions: Actions = {
 			INSERT INTO reminder_rules (
 				id, name, target_type, debt_type, trigger_field, offset_days,
 				frequency, channel, recipient_mode, recipients, is_active
-			) VALUES (?, ?, 'project_task', ?, ?, ?, ?, 'email', ?, ?, 1)
+			) VALUES (?, ?, 'project_task', ?, ?, ?, ?, 'email', ?, ?, TRUE)
 		`).bind(
 			id,
 			name,
@@ -46,7 +46,7 @@ export const actions: Actions = {
 			offsetDays,
 			frequency,
 			recipientMode,
-			recipientMode === 'custom' ? recipients : null
+			recipientMode === 'custom' ? JSON.stringify(customRecipients) : null
 		), prepareAudit({
 			...auditRequestMeta(event),
 			action: 'create',

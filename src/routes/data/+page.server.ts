@@ -1,29 +1,14 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getDataImportData } from '$lib/server/queries.js';
+import { getDataManagementData } from '$lib/server/queries.js';
 import { getDatabase } from '$lib/server/db.js';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
-import { recalculateImportStatistics } from '$lib/server/import-statistics.js';
 
 export const load: PageServerLoad = async () => ({
-	importData: await getDataImportData()
+	dataManagement: await getDataManagementData()
 });
 
 export const actions: Actions = {
-	recalculateStatistics: async (event) => {
-		if (event.locals.user?.role !== 'admin') {
-			return fail(403, { message: '仅管理员可以重新统计数据' });
-		}
-		try {
-			const statistics = await recalculateImportStatistics(getDatabase());
-			return {
-				success: true,
-				message: `已重新统计并保存快照：${statistics.debtCount.toLocaleString('zh-CN')} 笔负债、${statistics.cashflowEventCount.toLocaleString('zh-CN')} 条现金流、${statistics.historyDateCount.toLocaleString('zh-CN')} 个历史日期`
-			};
-		} catch (error) {
-			return fail(400, { message: error instanceof Error ? error.message : String(error) });
-		}
-	},
 	updateFinanceParameters: async (event) => {
 		const data = await event.request.formData();
 		const fields = [
@@ -60,6 +45,5 @@ export const actions: Actions = {
 		} catch (error) {
 			return fail(400, { message: error instanceof Error ? error.message : String(error) });
 		}
-	},
-	reimport: async () => fail(400, { message: '请选择当前 Excel 工作簿重新导入。' })
+	}
 };

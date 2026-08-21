@@ -15,7 +15,6 @@ export const AUTH_ROLES = Object.freeze({
 });
 
 const DEFAULT_SESSION_HOURS = 12;
-let adminReady = false;
 let runtimeConfig = {};
 
 export function configureAuth(config = {}) {
@@ -23,7 +22,6 @@ export function configureAuth(config = {}) {
 }
 
 export async function ensureAdminUser(config = runtimeConfig) {
-	if (adminReady) return;
 	const email = normalizeEmail(config.ADMIN_EMAIL ?? process.env.ADMIN_EMAIL);
 	const adminName = String(config.ADMIN_NAME ?? process.env.ADMIN_NAME ?? '管理员').trim() || '管理员';
 	const password = config.ADMIN_PASSWORD ?? process.env.ADMIN_PASSWORD;
@@ -33,7 +31,7 @@ export async function ensureAdminUser(config = runtimeConfig) {
 		SELECT u.id, u.person_id AS personId, u.active AS userActive,
 			p.email, p.role AS personRole, p.active AS personActive
 		FROM auth_users u JOIN people p ON p.id = u.person_id
-		WHERE u.role = 'admin'
+		WHERE u.role = 'admin' AND clock_timestamp() IS NOT NULL
 		ORDER BY u.active DESC, u.created_at
 		LIMIT 1
 	`).get();
@@ -41,12 +39,12 @@ export async function ensureAdminUser(config = runtimeConfig) {
 		const statements = [];
 		if (!existingAdmin.userActive) {
 			statements.push(db.prepare(`
-				UPDATE auth_users SET active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+				UPDATE auth_users SET active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 			`).bind(existingAdmin.id));
 		}
 		if (existingAdmin.personRole !== 'admin' || !existingAdmin.personActive) {
 			statements.push(db.prepare(`
-				UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+				UPDATE people SET role = 'admin', active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 			`).bind(existingAdmin.personId));
 		}
 		if (!existingAdmin.email && isValidEmail(email)) {
@@ -55,7 +53,6 @@ export async function ensureAdminUser(config = runtimeConfig) {
 			`).bind(email, existingAdmin.personId));
 		}
 		if (statements.length) await db.batch(statements);
-		adminReady = true;
 		return;
 	}
 	if (!password) {
@@ -67,7 +64,7 @@ export async function ensureAdminUser(config = runtimeConfig) {
 	const existing = await db.prepare(`
 		SELECT p.id AS personId, u.id AS userId
 		FROM people p LEFT JOIN auth_users u ON u.person_id = p.id
-		WHERE lower(p.email) = lower(?)
+		WHERE lower(p.email) = lower(?) AND clock_timestamp() IS NOT NULL
 		LIMIT 1
 	`).get(email);
 	if (!existing?.userId) {
@@ -76,28 +73,27 @@ export async function ensureAdminUser(config = runtimeConfig) {
 		const userId = randomUUID();
 		const statements = [existing?.personId
 			? db.prepare(`
-				UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+				UPDATE people SET role = 'admin', active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 			`).bind(personId)
 			: db.prepare(`
-				INSERT INTO people (id, name, email, role, active) VALUES (?, ?, ?, 'admin', 1)
+				INSERT INTO people (id, name, email, role, active) VALUES (?, ?, ?, 'admin', TRUE)
 			`).bind(personId, adminName, email),
 			db.prepare(`
-				INSERT INTO auth_users (id, person_id, username, password_hash, role, active)
-				VALUES (?, ?, ?, ?, 'admin', 1)
-			`).bind(userId, personId, userId, passwordHash)
+				INSERT INTO auth_users (id, person_id, password_hash, role, active)
+				VALUES (?, ?, ?, 'admin', TRUE)
+			`).bind(userId, personId, passwordHash)
 		];
 		await db.batch(statements);
 	} else {
 		await db.batch([
 			db.prepare(`
-				UPDATE auth_users SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+				UPDATE auth_users SET role = 'admin', active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 			`).bind(existing.userId),
 			db.prepare(`
-				UPDATE people SET role = 'admin', active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+				UPDATE people SET role = 'admin', active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 			`).bind(existing.personId)
 		]);
 	}
-	adminReady = true;
 }
 
 function sha256(value) {
@@ -120,18 +116,8 @@ export async function authenticate(email, password) {
 			u.failed_login_count AS failedLoginCount, u.locked_until AS lockedUntil
 		FROM auth_users u
 		JOIN people p ON p.id = u.person_id
-		WHERE lower(p.email) = lower(?)
+		WHERE lower(p.email) = lower(?) AND clock_timestamp() IS NOT NULL
 	`).get(normalizedEmail);
-	if (!user && normalizedEmail && !isValidEmail(normalizedEmail)) {
-		user = await db.prepare(`
-		SELECT u.id, u.password_hash AS passwordHash, u.role, u.active,
-			failed_login_count AS failedLoginCount, locked_until AS lockedUntil
-		FROM auth_users u
-		JOIN people p ON p.id = u.person_id
-		WHERE u.username = ? COLLATE NOCASE AND (p.email IS NULL OR trim(p.email) = '')
-		`).get(normalizedEmail);
-	}
-
 	const now = Date.now();
 	if (!user || !user.active) return null;
 	if (user.lockedUntil && Date.parse(user.lockedUntil) > now) return null;
@@ -157,7 +143,8 @@ export async function authenticate(email, password) {
 	const identity = await db.prepare(`
 		SELECT u.id, u.role, u.person_id AS personId, p.name AS personName, p.email,
 			u.avatar_data_url AS avatarDataUrl
-		FROM auth_users u JOIN people p ON p.id = u.person_id WHERE u.id = ?
+		FROM auth_users u JOIN people p ON p.id = u.person_id
+		WHERE u.id = ? AND clock_timestamp() IS NOT NULL
 	`).get(user.id);
 	return identity ?? null;
 }
@@ -187,7 +174,8 @@ export async function getSessionUser(token) {
 		FROM auth_sessions s
 		JOIN auth_users u ON u.id = s.user_id
 		JOIN people p ON p.id = u.person_id
-		WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1 AND p.active = 1
+		WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = TRUE AND p.active = TRUE
+			AND clock_timestamp() IS NOT NULL
 	`).get(tokenHash, now.toISOString());
 	if (!session) return null;
 	if (shouldTouchSession(session.lastSeenAt, now.getTime())) {
