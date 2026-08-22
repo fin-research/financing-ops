@@ -9,7 +9,10 @@ const ALLOWED_ENTITY_TYPES = new Set([
 	'reminder_rule',
 	'auth',
 	'finance_parameter',
-	'debt_limit'
+	'debt_limit',
+	'debt',
+	'cashflow',
+	'balance_snapshot'
 ]);
 const SENSITIVE_KEYS = /password|secret|token|api[_-]?key|authorization|cookie/i;
 

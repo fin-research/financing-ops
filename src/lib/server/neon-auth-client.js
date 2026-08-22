@@ -42,6 +42,10 @@ export function sessionMaxAgeFromSetCookie(header, fallback = 7 * 24 * 60 * 60) 
 	return Number.isFinite(maxAge) && maxAge > 0 ? maxAge : fallback;
 }
 
+export function jwtFromResponseHeaders(headers) {
+	return headers?.get?.('set-auth-jwt')?.trim() || null;
+}
+
 async function responseBody(response) {
 	const contentType = response.headers.get('content-type') ?? '';
 	if (!contentType.includes('application/json')) return null;
@@ -79,6 +83,7 @@ export function createNeonAuthClient({ baseUrl, origin, token = null, fetchImpl 
 		return {
 			data,
 			token: sessionTokenFromSetCookie(setCookie) ?? data?.token ?? sessionToken ?? null,
+			jwt: jwtFromResponseHeaders(response.headers),
 			maxAge: sessionMaxAgeFromSetCookie(setCookie)
 		};
 	};

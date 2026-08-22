@@ -42,6 +42,7 @@
 	"dependencies": {
 		"@lucide/svelte": "^1.27.0",
 		"@noble/hashes": "^2.3.0",
+		"@tanstack/svelte-table": "9.1.2",
 		"pg": "^8.16.3",
 		"resend": "^6.18.0"
 	}

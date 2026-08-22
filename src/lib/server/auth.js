@@ -73,6 +73,7 @@ export async function getSessionUser(event, token = currentToken(event)) {
 	if (!token) return null;
 	try {
 		const result = await client(event, token).getSession();
+		event.locals.dataApiJwt = result.jwt ?? null;
 		if (!result.data?.user) return null;
 		if (result.token && result.token !== token) setSessionCookie(event, result.token, result.maxAge);
 		return await localIdentity(result.data.user);
@@ -80,6 +81,10 @@ export async function getSessionUser(event, token = currentToken(event)) {
 		if (error instanceof NeonAuthApiError && (error.status === 401 || error.status === 403)) return null;
 		throw error;
 	}
+}
+
+export function currentDataApiJwt(event) {
+	return event.locals.dataApiJwt ?? null;
 }
 
 export async function deleteSession(event, token = currentToken(event)) {

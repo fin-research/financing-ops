@@ -13,6 +13,7 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const handle: Handle = async ({ event, resolve }) => {
 	try {
+		event.locals.dataApiJwt = null;
 		const routeId = event.route.id;
 		const isStaticAsset = event.url.pathname.startsWith(withBase('/_app/'));
 		const isPublic = routeId === '/login' || isStaticAsset;
