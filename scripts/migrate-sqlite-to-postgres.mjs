@@ -183,7 +183,7 @@ function makeDebtRows(idByOldId) {
 					: source.debt_type === '收益权转让' ? 'income_right'
 						: source.debt_type === '转融资' ? 'refinancing'
 							: source.debt_type === '互换便利' ? 'swap_facility' : 'debt',
-			id: idByOldId.get(source.id), project_id: source.project_id, debt_type: debtType, subtype,
+			id: idByOldId.get(source.id), debt_type: debtType, subtype,
 			name: name || `${source.debt_type}·${source.issue_date || idByOldId.get(source.id)}`,
 			counterparty: counterparty || null,
 			amount: nonnegative(source.outstanding_amount ?? source.principal_amount),
@@ -227,7 +227,7 @@ async function migrateDebts() {
 	const idByOldId = new Map(sourceDebts.map((debt, index) => [debt.id, Number(allocated[index].id)]));
 	const debtRows = makeDebtRows(idByOldId);
 	const common = [
-		['id', 'bigint'], ['project_id', 'text'], ['debt_type', 'text'], ['subtype', 'text'], ['name', 'text'],
+		['id', 'bigint'], ['debt_type', 'text'], ['subtype', 'text'], ['name', 'text'],
 		['counterparty', 'text'], ['amount', 'numeric'], ['interest_payable', 'numeric'], ['annual_rate', 'numeric'],
 		['issue_date', 'date'], ['maturity_date', 'date'], ['activated_at', 'date'], ['settled_at', 'date'], ['closed_at', 'date'],
 		['created_at', 'timestamptz'], ['updated_at', 'timestamptz']

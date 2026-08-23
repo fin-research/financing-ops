@@ -2,16 +2,14 @@
 
 /**
  * Delete one project and every reminder delivery that points to the project or
- * one of its tasks. Project tasks are removed by the projects foreign key and
- * linked debts are detached by the database trigger.
+ * one of its tasks. Project tasks are removed by the projects foreign key.
  */
 export async function deleteProjectWithReminders(database, projectId, afterDelete) {
 	if (!projectId) return null;
 	return database.transaction(async (transaction) => {
 		const selected = await transaction.query(`
 			SELECT p.id, p.code, p.name, p.debt_type, p.status, p.owner_id,
-				(SELECT COUNT(*) FROM financing.project_tasks task WHERE task.project_id = p.id) AS task_count,
-				(SELECT COUNT(*) FROM financing.debt debt WHERE debt.project_id = p.id) AS debt_count
+				(SELECT COUNT(*) FROM financing.project_tasks task WHERE task.project_id = p.id) AS task_count
 			FROM financing.projects p
 			WHERE p.id = $1
 			FOR UPDATE
@@ -42,7 +40,6 @@ export async function deleteProjectWithReminders(database, projectId, afterDelet
 			status: row.status,
 			ownerId: row.owner_id,
 			taskCount: Number(row.task_count ?? 0),
-			debtCount: Number(row.debt_count ?? 0),
 			reminderCount: reminders.rows.length
 		};
 		if (afterDelete) await afterDelete({ transaction, before });

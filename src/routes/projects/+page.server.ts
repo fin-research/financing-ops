@@ -2,23 +2,18 @@ import { randomUUID } from 'node:crypto';
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getDatabase } from '$lib/server/db.js';
-import { getAssignableDebtOptions, getProjectGanttData } from '$lib/server/queries.js';
+import { getActiveProjectSopOptions, getProjectGanttData } from '$lib/server/queries.js';
+import { buildProjectTimeline, positionInTimeline, widthInTimeline } from '$lib/project-timeline.js';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 import { deleteProjectWithReminders } from '$lib/server/project-deletion.js';
 
 const PROJECT_STATUSES = new Set(['planning', 'in_progress', 'at_risk', 'completed', 'cancelled']);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-const timelineStart = Date.parse('2026-07-20T00:00:00Z');
-const timelineEnd = Date.parse('2026-08-31T00:00:00Z');
-const timelineSpan = timelineEnd - timelineStart;
 
-function clamp(value: number, min: number, max: number) {
-	return Math.min(max, Math.max(min, value));
-}
-
-function position(date: string | null | undefined) {
-	if (!date) return 0;
-	return clamp(((Date.parse(`${date}T00:00:00Z`) - timelineStart) / timelineSpan) * 100, 0, 100);
+function dateInShanghai() {
+	return new Intl.DateTimeFormat('en-CA', {
+		timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+	}).format(new Date());
 }
 
 function statusMeta(status: string) {
@@ -29,14 +24,8 @@ function statusMeta(status: string) {
 	return { label: '需求确认', tone: 'teal' };
 }
 
-function dueText(date: string | null | undefined) {
+function dueText(date: string | null | undefined, today: string) {
 	if (!date) return '待安排';
-	const today = new Intl.DateTimeFormat('en-CA', {
-		timeZone: 'Asia/Shanghai',
-		year: 'numeric',
-		month: '2-digit',
-		day: '2-digit'
-	}).format(new Date());
 	const days = Math.ceil((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
 	if (days === 0) return '今天';
 	if (days === 1) return '明天';
@@ -44,18 +33,18 @@ function dueText(date: string | null | undefined) {
 	return date.slice(5).replace('-', '月') + '日';
 }
 
-async function mapProjects() {
+async function getProjectPageData(today: string) {
 	const source = await getProjectGanttData();
-	return source.projects.map((project: any) => {
+	const timeline = buildProjectTimeline(source.projects, today);
+	const projects = source.projects.map((project: any) => {
 		const tasks = project.tasks;
 		const completed = tasks.filter((task: any) => task.status === 'completed').length;
 		const progress = tasks.length
 			? Math.round((completed / tasks.length) * 100)
 			: project.status === 'completed' ? 100 : 0;
-		const start = project.plannedStartDate ?? project.plannedIssueDate ?? '2026-07-28';
+		const start = project.plannedStartDate ?? project.plannedIssueDate ?? today;
 		const end = project.plannedIssueDate ?? project.plannedMaturityDate ?? start;
-		const startPct = position(start);
-		const endPct = Math.max(position(end), startPct + 5);
+		const startPct = positionInTimeline(start, timeline);
 		const nextTask = tasks.find((task: any) => task.status !== 'completed');
 		const meta = statusMeta(project.status);
 		const members = [...new Set([project.ownerName, ...tasks.map((task: any) => task.assigneeName)]
@@ -70,42 +59,32 @@ async function mapProjects() {
 			rawStatus: project.status,
 			owner: project.ownerName ?? '待分配',
 			ownerId: project.ownerId ?? null,
-			debtId: project.debtId ?? null,
-			debtName: project.debtName ?? null,
+			amount: project.amount ?? null,
 			notes: project.notes ?? '',
 			status: meta.label,
 			progress,
 			start,
 			end,
 			startPct,
-			widthPct: clamp(endPct - startPct, 5, 100 - startPct),
+			widthPct: widthInTimeline(start, end, timeline, 1.5),
 			tone: meta.tone,
 			nextNode: nextTask?.name ?? '项目归档',
-			dueText: dueText(nextTask?.dueDate ?? end),
+			dueText: dueText(nextTask?.dueDate ?? end, today),
 			members: members.length ? members : ['待'],
 			tasks: tasks.map((task: any) => {
-				const taskStart = position(task.plannedStartDate ?? start);
-				const taskEnd = Math.max(position(task.dueDate ?? task.plannedStartDate ?? start), taskStart + 3);
+				const taskStartDate = task.plannedStartDate ?? start;
+				const taskEndDate = task.dueDate ?? taskStartDate;
+				const taskStart = positionInTimeline(taskStartDate, timeline);
 				return {
 					name: task.name,
 					status: task.status === 'completed' ? 'done' : task.status === 'in_progress' ? 'doing' : 'waiting',
 					startPct: taskStart,
-					widthPct: clamp(taskEnd - taskStart, 3, 100 - taskStart)
+					widthPct: widthInTimeline(taskStartDate, taskEndDate, timeline, 1)
 				};
 			})
 		};
 	});
-}
-
-async function activeSop(db: ReturnType<typeof getDatabase>, debtType: string) {
-	return await db.prepare(`
-		SELECT id FROM sop_templates
-		WHERE is_active = TRUE AND (
-			debt_type = @debtType OR
-			(@debtType IN ('小公募', '私募债', '次级债') AND debt_type = '公司债')
-		)
-		ORDER BY CASE WHEN debt_type = @debtType THEN 0 ELSE 1 END LIMIT 1
-	`).get({ debtType }) as { id: string } | undefined;
+	return { projects, timeline };
 }
 
 function projectDates(data: FormData) {
@@ -123,21 +102,16 @@ function invalidProjectDates(startDate: string, endDate: string) {
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const db = getDatabase();
-	const today = new Intl.DateTimeFormat('en-CA', {
-		timeZone: 'Asia/Shanghai',
-		year: 'numeric',
-		month: '2-digit',
-		day: '2-digit'
-	}).format(new Date());
-	const [projects, people, assignableDebts] = await Promise.all([
-		mapProjects(),
+	const today = dateInShanghai();
+	const [projectData, people, projectSops] = await Promise.all([
+		getProjectPageData(today),
 		db.prepare('SELECT id, name, role FROM people WHERE active = TRUE ORDER BY name').all(),
-		getAssignableDebtOptions()
+		getActiveProjectSopOptions()
 	]);
 	return {
-		projects,
+		...projectData,
 		people,
-		assignableDebts,
+		projectSops,
 		today,
 		viewContext: {
 			role: locals.user?.role ?? 'reviewer',
@@ -151,10 +125,20 @@ export const load: PageServerLoad = async ({ locals }) => {
 export const actions: Actions = {
 	createProject: async (event) => {
 		const data = await event.request.formData();
-		const debtId = String(data.get('debtId') ?? '').trim();
+		const name = String(data.get('name') ?? '').trim();
+		const sopTemplateId = String(data.get('sopTemplateId') ?? '').trim();
+		const borrower = String(data.get('borrower') ?? '').trim();
+		const amountYi = String(data.get('amountYi') ?? '').trim();
 		const ownerId = String(data.get('ownerId') ?? '').trim();
+		const notes = String(data.get('notes') ?? '').trim();
 		const { startDate, endDate } = projectDates(data);
-		if (!/^\d+$/.test(debtId)) return fail(400, { message: '请选择一笔已经存在的负债' });
+		if (!name || name.length > 160) return fail(400, { message: '项目名称须为 1–160 个字符' });
+		if (!sopTemplateId) return fail(400, { message: '请选择融资品种和对应 SOP' });
+		if (borrower.length > 160) return fail(400, { message: '融资主体不能超过 160 个字符' });
+		if (notes.length > 4000) return fail(400, { message: '项目说明不能超过 4,000 个字符' });
+		if (amountYi && (!/^\d+(?:\.\d{1,8})?$/.test(amountYi) || Number(amountYi) < 0)) {
+			return fail(400, { message: '项目规模须为有效的非负亿元数值' });
+		}
 		const dateError = invalidProjectDates(startDate, endDate);
 		if (dateError) return fail(400, { message: dateError });
 
@@ -162,16 +146,11 @@ export const actions: Actions = {
 		if (ownerId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = TRUE').get(ownerId)) {
 			return fail(400, { message: '负责人不存在或已停用' });
 		}
-		const debt = await db.prepare(`
-			SELECT debt.id::text AS id, debt.name, debt.counterparty, debt.amount,
-				debt.maturity_date AS maturityDate,
-				COALESCE(NULLIF(debt.subtype, ''), debt.debt_type) AS projectDebtType
-			FROM debt
-			WHERE debt.id = ?::bigint AND debt.project_id IS NULL
-		`).get(debtId) as any;
-		if (!debt) return fail(409, { message: '该负债不存在或已绑定其他项目，请重新选择' });
-		const sop = await activeSop(db, debt.projectDebtType);
-		if (!sop) return fail(400, { message: '该负债品种没有启用中的 SOP，请先完成 SOP 配置' });
+		const sop = await db.prepare(`
+			SELECT id, name, debt_type AS debtType
+			FROM sop_templates WHERE id = ? AND is_active = TRUE
+		`).get(sopTemplateId) as { id: string; name: string; debtType: string } | undefined;
+		if (!sop) return fail(400, { message: '所选 SOP 不存在或已停用，请重新选择' });
 
 		const projectId = randomUUID();
 		const code = `FIN-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${projectId.slice(0, 8).toUpperCase()}`;
@@ -186,22 +165,16 @@ export const actions: Actions = {
 			if (!assigneeByRole.has(assignee.role)) assigneeByRole.set(assignee.role, assignee);
 		}
 		const issueTime = Date.parse(`${endDate}T00:00:00Z`);
-		try {
-			await db.transaction(async (transaction: ReturnType<typeof getDatabase>) => {
+		await db.transaction(async (transaction: ReturnType<typeof getDatabase>) => {
 				await transaction.prepare(`
 					INSERT INTO projects (
 						id, code, name, debt_type, borrower, amount, status,
-						planned_start_date, planned_issue_date, planned_maturity_date,
-						sop_template_id, owner_id
-					) VALUES (?, ?, ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?)
+						planned_start_date, planned_issue_date, sop_template_id, owner_id, notes
+					) VALUES (?, ?, ?, ?, ?, ?::numeric * 100000000, 'planning', ?, ?, ?, ?, ?)
 				`).run(
-					projectId, code, debt.name, debt.projectDebtType, debt.counterparty,
-					debt.amount, startDate, endDate, debt.maturityDate, sop.id, ownerId || null
+					projectId, code, name, sop.debtType, borrower || null,
+					amountYi || null, startDate, endDate, sop.id, ownerId || null, notes || null
 				);
-				const linked = await transaction.prepare(`
-					UPDATE debt SET project_id = ? WHERE id = ?::bigint AND project_id IS NULL
-				`).run(projectId, debtId);
-				if (linked.meta.changes !== 1) throw new Error('DEBT_ALREADY_BOUND');
 				for (const node of nodes) {
 					const dueDate = new Date(issueTime + Number(node.offsetDays) * 86_400_000).toISOString().slice(0, 10);
 					const assignee = assigneeByRole.get(node.ownerRole) ?? (ownerId ? { id: ownerId } : undefined);
@@ -218,12 +191,13 @@ export const actions: Actions = {
 					action: 'project.create',
 					entityType: 'project',
 					entityId: projectId,
-					summary: `从既有负债创建项目：${debt.name}`,
+					summary: `创建独立融资项目：${name}`,
 					after: {
 						code,
-						name: debt.name,
-						debtId,
-						debtType: debt.projectDebtType,
+						name,
+						debtType: sop.debtType,
+						borrower: borrower || null,
+						amountYi: amountYi || null,
 						status: 'planning',
 						plannedStartDate: startDate,
 						plannedIssueDate: endDate,
@@ -231,14 +205,9 @@ export const actions: Actions = {
 						ownerId: ownerId || null
 					}
 				}).run();
-			});
-		} catch (error) {
-			if (error instanceof Error && (error.message.includes('DEBT_ALREADY_BOUND') || error.message.includes('already linked'))) {
-				return fail(409, { message: '该负债刚刚已被其他项目绑定，请重新选择' });
-			}
-			throw error;
-		}
-		return { success: true, projectId, message: '项目已绑定既有负债，并已套用对应 SOP 节点。' };
+		});
+		const refreshed = await getProjectPageData(dateInShanghai());
+		return { success: true, projectId, ...refreshed, message: '项目已创建，并已套用对应 SOP 节点。' };
 	},
 
 	updateProject: async (event) => {
@@ -287,7 +256,8 @@ export const actions: Actions = {
 				summary: `更新项目：${name}`, before, after
 			})
 		]);
-		return { success: true, updatedProjectId: projectId, message: `已更新项目 ${name}` };
+		const refreshed = await getProjectPageData(dateInShanghai());
+		return { success: true, updatedProjectId: projectId, ...refreshed, message: `已更新项目 ${name}` };
 	},
 
 	deleteProject: async (event) => {
@@ -312,7 +282,7 @@ export const actions: Actions = {
 		return {
 			success: true,
 			deletedProjectId: projectId,
-			message: `已删除项目 ${before.name}；项目节点和关联提醒已清理，负债已保留并解除绑定`
+			message: `已删除项目 ${before.name}；项目节点和关联提醒已清理`
 		};
 	}
 };

@@ -35,9 +35,9 @@
 	let newProjectDialog: HTMLDialogElement;
 	let editProjectDialog: HTMLDialogElement;
 	let editingProject = $state<any>(null);
-	let selectedDebtId = $state('');
 	let newProjectEndDate = $state('');
 	let displayedProjects = $state<any[]>([]);
+	let activeTimeline = $state<any>(null);
 	let deletedProjectIds = $state<string[]>([]);
 	let actionState = $state<{ key: string; status: 'idle' | 'pending' | 'success' | 'error'; message: string }>({
 		key: '', status: 'idle', message: ''
@@ -46,16 +46,18 @@
 		displayedProjects = (data?.projects ?? []).filter(
 			(project: any) => !deletedProjectIds.includes(String(project.id))
 		);
+		activeTimeline = data?.timeline;
 	});
 	const canManage = $derived(data?.user?.role === 'admin');
-	const selectedDebt = $derived(
-		data?.assignableDebts?.find((debt: any) => debt.id === selectedDebtId) ?? null
-	);
 
 	const enhanceProjectAction = (key: string, dialog?: 'create' | 'edit'): SubmitFunction => () => {
 		actionState = { key, status: 'pending', message: '正在保存，请稍候…' };
 		return async ({ result, update }) => {
 			if (result.type === 'success') {
+				const returnedProjects = Array.isArray(result.data?.projects) ? result.data.projects : null;
+				const returnedTimeline = result.data?.timeline ?? null;
+				if (returnedProjects) displayedProjects = returnedProjects;
+				if (returnedTimeline) activeTimeline = returnedTimeline;
 				const deletedProjectId = String(result.data?.deletedProjectId ?? '');
 				if (deletedProjectId) {
 					if (!deletedProjectIds.includes(deletedProjectId)) {
@@ -65,6 +67,8 @@
 					if (String(expandedProject ?? '') === deletedProjectId) expandedProject = null;
 				}
 				await update({ reset: false, invalidateAll: true });
+				if (returnedProjects) displayedProjects = returnedProjects;
+				if (returnedTimeline) activeTimeline = returnedTimeline;
 				if (deletedProjectId) {
 					displayedProjects = displayedProjects.filter((project: any) => project.id !== deletedProjectId);
 				}
@@ -90,7 +94,6 @@
 	};
 
 	function openNewProject() {
-		selectedDebtId = '';
 		newProjectEndDate = data.today;
 		newProjectDialog.showModal();
 	}
@@ -98,17 +101,6 @@
 	function openEditProject(project: any) {
 		editingProject = project;
 		editProjectDialog.showModal();
-	}
-
-	function updateSelectedDebt(debtId: string) {
-		selectedDebtId = debtId;
-		const debt = data.assignableDebts.find((item: any) => item.id === debtId);
-		newProjectEndDate = debt?.issueDate && debt.issueDate >= data.today ? debt.issueDate : data.today;
-	}
-
-	function formatDebtAmount(value: unknown) {
-		const amount = Number(value);
-		return Number.isFinite(amount) ? `${(amount / 100_000_000).toFixed(2)} 亿元` : '金额未登记';
 	}
 
 	const projects = $derived(displayedProjects);
@@ -143,8 +135,12 @@
 			projects.map((project: any) => String(project.status))
 		)
 	]);
-
-	const weeks = ['7/20', '7/27', '8/3', '8/10', '8/17', '8/24'];
+	const primaryTimelineBands = $derived(
+		view === 'quarter' ? activeTimeline?.quarters ?? [] : activeTimeline?.months ?? []
+	);
+	const secondaryTimelineBands = $derived(
+		view === 'quarter' ? activeTimeline?.months ?? [] : activeTimeline?.weeks ?? []
+	);
 </script>
 
 <svelte:head>
@@ -190,7 +186,7 @@
 	<div class="select-group">
 		<Filter size={14} />
 		<MultiSelectFilter
-			label="负债品种"
+			label="融资品种"
 			options={projectTypes}
 			bind:values={selectedTypes}
 			allLabel="全部品种"
@@ -221,17 +217,21 @@
 		<div class="project-column-title">项目 / 负责人</div>
 		<div class="status-column-title">状态</div>
 		<div class="timeline-head">
-			<div class="month-band"><span>2026年7月</span><span>2026年8月</span></div>
+			<div class="month-band">
+				{#each primaryTimelineBands as band (band.key)}
+					<span style:flex-basis={`${band.widthPct}%`}>{band.label}</span>
+				{/each}
+			</div>
 			<div class="week-band">
-				{#each weeks as week}
-					<span>{week}</span>
+				{#each secondaryTimelineBands as band (band.key)}
+					<span style:flex-basis={`${band.widthPct}%`}>{band.label}</span>
 				{/each}
 			</div>
 		</div>
 	</div>
 
 	<div class="gantt-body">
-		{#each visibleProjects as project}
+		{#each visibleProjects as project (project.id)}
 			<div class:expanded={expandedProject === project.id} class="project-row">
 				<div class="project-info">
 					<button
@@ -274,7 +274,7 @@
 								action="?/deleteProject"
 								use:enhance={enhanceProjectAction(`delete-${project.id}`)}
 								onsubmit={(event) => {
-									if (!confirm(`确定删除项目 ${project.name} 吗？项目任务将一并删除，关联负债会保留并解除绑定。`)) event.preventDefault();
+									if (!confirm(`确定删除项目 ${project.name} 吗？项目任务和关联提醒将一并删除。`)) event.preventDefault();
 								}}
 							>
 								<input type="hidden" name="id" value={project.id} />
@@ -298,8 +298,8 @@
 					</div>
 					<small>{project.progress}%</small>
 				</div>
-				<div class="timeline-cell">
-					<div class="today-line"><span>今天</span></div>
+				<div class="timeline-cell" style:--timeline-columns={Math.max(1, secondaryTimelineBands.length)}>
+					<div class="today-line" style:left={`${activeTimeline?.todayPct ?? 0}%`}><span>今天</span></div>
 					<div
 						class={`project-bar ${project.tone}`}
 						style:left={`${project.startPct}%`}
@@ -331,7 +331,7 @@
 							<div class="task-status">
 								{task.status === 'done' ? '已完成' : task.status === 'doing' ? '进行中' : '待开始'}
 							</div>
-							<div class="task-timeline">
+							<div class="task-timeline" style:--timeline-columns={Math.max(1, secondaryTimelineBands.length)}>
 								<div
 									class={`task-bar ${task.status}`}
 									style:left={`${task.startPct}%`}
@@ -345,6 +345,8 @@
 					</a>
 				</div>
 			{/if}
+		{:else}
+			<p class="empty-projects">当前筛选条件下暂无项目</p>
 		{/each}
 	</div>
 </section>
@@ -367,24 +369,31 @@
 			<div>
 				<p class="eyebrow">NEW PROJECT</p>
 				<h2>新建融资项目</h2>
-				<p>从已存在且尚未绑定项目的负债中选择，并自动套用对应 SOP 节点。</p>
+				<p>项目独立建档，不读取、不绑定也不修改现有负债。</p>
 			</div>
 			<button type="button" aria-label="关闭" onclick={() => newProjectDialog.close()}>×</button>
 		</div>
 		<div class="form-grid">
 			<label class="wide">
-				<span>关联负债</span>
-				<select
-					name="debtId"
-					required
-					value={selectedDebtId}
-					onchange={(event) => updateSelectedDebt(event.currentTarget.value)}
-				>
-					<option value="">请选择已有负债</option>
-					{#each data.assignableDebts as debt}
-						<option value={debt.id}>{debt.name} · {debt.projectDebtType} · #{debt.id}</option>
+				<span>项目名称</span>
+				<input name="name" maxlength="160" required />
+			</label>
+			<label class="wide">
+				<span>融资品种 / SOP</span>
+				<select name="sopTemplateId" required>
+					<option value="">请选择融资品种</option>
+					{#each data.projectSops as sop}
+						<option value={sop.id}>{sop.debtType} · {sop.name}</option>
 					{/each}
 				</select>
+			</label>
+			<label>
+				<span>融资主体</span>
+				<input name="borrower" maxlength="160" />
+			</label>
+			<label>
+				<span>项目规模（亿元）</span>
+				<input name="amountYi" type="number" min="0" step="0.01" inputmode="decimal" />
 			</label>
 			<label>
 				<span>负责人</span>
@@ -403,16 +412,18 @@
 				<span>计划完成</span>
 				<input name="endDate" type="date" bind:value={newProjectEndDate} required />
 			</label>
+			<label class="wide">
+				<span>项目说明</span>
+				<textarea name="notes" rows="3" maxlength="4000"></textarea>
+			</label>
 		</div>
 		<div class="modal-note">
 			<CheckCircle2 size={15} />
 			<span>
-				{#if selectedDebt}
-					项目名称与品种取自“{selectedDebt.name}”，当前金额 {formatDebtAmount(selectedDebt.amount)}。
-				{:else if data.assignableDebts.length === 0}
-					暂无符合启用 SOP 且未绑定项目的负债，请先在数据后台新增负债。
+				{#if data.projectSops.length === 0}
+					暂无启用中的 SOP，请先在 SOP 管理中启用至少一个模板。
 				{:else}
-					创建项目不会新增负债；项目名称、品种、金额和到期日均取自所选负债。
+					创建后会按所选 SOP 生成项目节点，现有负债数据保持不变。
 				{/if}
 			</span>
 		</div>
@@ -421,7 +432,7 @@
 			<button
 				class="primary-action"
 				type="submit"
-				disabled={actionState.status === 'pending' || data.assignableDebts.length === 0}
+				disabled={actionState.status === 'pending' || data.projectSops.length === 0}
 			>
 				{#if actionState.status === 'pending' && actionState.key === 'create'}<LoaderCircle class="spin" size={16} />{/if}
 				{actionState.status === 'pending' && actionState.key === 'create' ? '创建中…' : '创建项目'}
@@ -437,7 +448,7 @@
 				<div>
 					<p class="eyebrow">EDIT PROJECT</p>
 					<h2>修改融资项目</h2>
-					<p>调整项目名称、状态、负责人和计划日期；关联负债保持不变。</p>
+					<p>调整项目名称、状态、负责人和计划日期。</p>
 				</div>
 				<button type="button" aria-label="关闭" onclick={() => editProjectDialog.close()}>×</button>
 			</div>
@@ -448,11 +459,8 @@
 					<input name="name" maxlength="160" required value={editingProject.name} />
 				</label>
 				<label class="wide">
-					<span>关联负债</span>
-					<input
-						value={editingProject.debtId ? `${editingProject.debtName} · #${editingProject.debtId}` : '历史项目尚未绑定负债'}
-						readonly
-					/>
+					<span>融资品种</span>
+					<input value={editingProject.type} readonly />
 				</label>
 				<label>
 					<span>项目状态</span>
@@ -731,21 +739,25 @@
 
 	.month-band,
 	.week-band {
-		display: grid;
+		display: flex;
 		align-items: center;
 		text-align: center;
 	}
 
 	.month-band {
 		height: 2rem;
-		grid-template-columns: 1fr 2fr;
 		border-bottom: 1px solid #e4e7ec;
 	}
 
 	.month-band span {
+		min-width: 0;
+		flex: 0 0 auto;
 		height: 100%;
+		overflow: hidden;
 		padding-top: 0.5625rem;
 		border-right: 1px solid #e4e7ec;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.month-band span:last-child {
@@ -754,14 +766,18 @@
 
 	.week-band {
 		height: 2.1875rem;
-		grid-template-columns: repeat(6, 1fr);
 	}
 
 	.week-band span {
+		min-width: 0;
+		flex: 0 0 auto;
 		height: 100%;
+		overflow: hidden;
 		padding-top: 0.625rem;
 		border-right: 1px solid #eaecf0;
 		font-weight: 500;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.project-row {
@@ -966,13 +982,8 @@
 	.task-timeline {
 		position: relative;
 		overflow: hidden;
-		background-image: repeating-linear-gradient(
-			to right,
-			transparent 0,
-			transparent calc(16.666% - 1px),
-			#eef0f3 calc(16.666% - 1px),
-			#eef0f3 16.666%
-		);
+		background-image: linear-gradient(to right, #eef0f3 1px, transparent 1px);
+		background-size: calc(100% / var(--timeline-columns, 1)) 100%;
 	}
 
 	.today-line {
@@ -980,9 +991,16 @@
 		z-index: 2;
 		top: 0;
 		bottom: 0;
-		left: 22%;
 		width: 1px;
 		background: #f04438;
+	}
+
+	.empty-projects {
+		margin: 0;
+		padding: 2rem 1rem;
+		font-size: 1rem;
+		color: #667085;
+		text-align: center;
 	}
 
 	.today-line span {

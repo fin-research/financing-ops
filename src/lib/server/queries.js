@@ -255,20 +255,12 @@ export async function getProjectGanttData(filters = {}) {
 			p.planned_start_date AS plannedStartDate, p.planned_issue_date AS plannedIssueDate,
 			p.planned_maturity_date AS plannedMaturityDate, p.amount, p.notes,
 			p.owner_id AS ownerId, owner.name AS ownerName,
-			linked_debt.id::text AS debtId, linked_debt.name AS debtName,
 			pt.id AS taskId, pt.name AS taskName, pt.status AS taskStatus,
 			pt.planned_start_date AS taskPlannedStartDate, pt.due_date AS taskDueDate,
 			pt.completed_at AS taskCompletedAt, pt.sort_order AS taskSortOrder,
 			assignee.name AS taskAssigneeName
 		FROM projects p
 		LEFT JOIN people owner ON owner.id = p.owner_id
-		LEFT JOIN LATERAL (
-			SELECT debt.id, debt.name
-			FROM debt
-			WHERE debt.project_id = p.id
-			ORDER BY debt.id
-			LIMIT 1
-		) linked_debt ON TRUE
 		LEFT JOIN project_tasks pt ON pt.project_id = p.id
 		LEFT JOIN people assignee ON assignee.id = pt.assignee_id
 		WHERE (?::text IS NULL OR p.debt_type = ?)
@@ -291,7 +283,7 @@ export async function getProjectGanttData(filters = {}) {
 				plannedStartDate: row.plannedStartDate, plannedIssueDate: row.plannedIssueDate,
 				plannedMaturityDate: row.plannedMaturityDate, amount: row.amount == null ? null : number(row.amount),
 				ownerId: row.ownerId, ownerName: row.ownerName, notes: row.notes,
-				debtId: row.debtId, debtName: row.debtName, tasks: []
+				tasks: []
 			});
 		}
 		if (row.taskId) projects.get(row.id).tasks.push({
@@ -304,27 +296,12 @@ export async function getProjectGanttData(filters = {}) {
 	return { filters, projects: [...projects.values()] };
 }
 
-export async function getAssignableDebtOptions() {
+export async function getActiveProjectSopOptions() {
 	return getDatabase().prepare(`
-		SELECT debt.id::text AS id, debt.name,
-			COALESCE(NULLIF(debt.subtype, ''), debt.debt_type) AS projectDebtType,
-			debt.counterparty, debt.amount,
-			debt.issue_date AS issueDate, debt.maturity_date AS maturityDate
-		FROM debt
-		WHERE debt.project_id IS NULL
-			AND EXISTS (
-				SELECT 1
-				FROM sop_templates template
-				WHERE template.is_active = TRUE
-					AND (
-						template.debt_type = COALESCE(NULLIF(debt.subtype, ''), debt.debt_type)
-						OR (
-							COALESCE(NULLIF(debt.subtype, ''), debt.debt_type) IN ('小公募', '私募债', '次级债')
-							AND template.debt_type = '公司债'
-						)
-					)
-			)
-		ORDER BY debt.issue_date DESC NULLS LAST, debt.id DESC
+		SELECT id, name, debt_type AS debtType
+		FROM sop_templates
+		WHERE is_active = TRUE
+		ORDER BY debt_type, name, id
 	`).all();
 }
 

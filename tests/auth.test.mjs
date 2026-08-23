@@ -31,7 +31,15 @@ async function installSchema(db) {
 			"createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 	`);
-	for (const name of ['0001_financing_postgres.sql', '0002_neon_auth_prepare.sql', '0003_remove_custom_auth.sql', '0004_data_api_rls.sql', '0005_hide_derived_data_api_tables.sql', '0006_enforce_single_debt_project.sql']) await db.exec(migrationSql(name));
+	for (const name of [
+		'0001_financing_postgres.sql',
+		'0002_neon_auth_prepare.sql',
+		'0003_remove_custom_auth.sql',
+		'0004_data_api_rls.sql',
+		'0005_hide_derived_data_api_tables.sql',
+		'0006_enforce_single_debt_project.sql',
+		'0007_detach_projects_from_debt.sql'
+	]) await db.exec(migrationSql(name));
 }
 
 test('login emails are normalized and validated', () => {
@@ -134,6 +142,8 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 	const columns = (await db.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'financing' AND table_name = 'people'")).rows.map((row) => row.column_name);
 	assert.ok(columns.includes('neon_auth_user_id'));
 	assert.ok(columns.includes('avatar_data_url'));
+	const debtColumns = (await db.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'financing' AND table_name = 'debt'")).rows.map((row) => row.column_name);
+	assert.equal(debtColumns.includes('project_id'), false);
 
 	await db.query("INSERT INTO financing.people (id, name, email, role) VALUES ('one', '甲', 'user@example.com', 'handler')");
 	await assert.rejects(db.query("INSERT INTO financing.people (id, name, email, role) VALUES ('two', '乙', 'USER@example.com', 'reviewer')"), /duplicate key value|unique constraint/i);
@@ -141,12 +151,9 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 		INSERT INTO financing.sop_templates (id, name, debt_type) VALUES ('sop', '测试 SOP', '小公募');
 		INSERT INTO financing.projects (id, code, name, debt_type, sop_template_id) VALUES ('project', 'P-1', '测试项目', '小公募', 'sop');
 	`);
-	await db.query(`INSERT INTO financing.bond (id, project_id, debt_type, subtype, name, amount, interest_payable, annual_rate, issue_date, maturity_date, activated_at)
-		VALUES (101, 'project', '债券', '小公募', '26东财01', 1000, 25, 0.02, '2026-01-01', '2027-01-01', '2026-01-01')`);
-	await assert.rejects(
-		db.query("INSERT INTO financing.debt (id, project_id, debt_type, name, amount) VALUES (102, 'project', '集团借款', '重复绑定', 100)"),
-		/project is already linked to another debt/i
-	);
+	await db.query(`INSERT INTO financing.bond (id, debt_type, subtype, name, amount, interest_payable, annual_rate, issue_date, maturity_date, activated_at)
+		VALUES (101, '债券', '小公募', '26东财01', 1000, 25, 0.02, '2026-01-01', '2027-01-01', '2026-01-01')`);
+	await db.query("INSERT INTO financing.debt (id, debt_type, name, amount) VALUES (102, '集团借款', '独立负债', 100)");
 	const debt = (await db.query('SELECT total_amount, term_days, status, tableoid::regclass::text AS physical_table FROM financing.debt WHERE id = 101')).rows[0];
 	assert.equal(Number(debt.total_amount), 1025);
 	assert.equal(debt.term_days, 365);
@@ -174,7 +181,7 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 		['delivery-debt']
 	);
 	assert.equal(await deleteProjectWithReminders(db, 'project'), null);
-	assert.equal((await db.query('SELECT project_id FROM financing.debt WHERE id = 101')).rows[0].project_id, null);
+	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.debt')).rows[0].count, 2);
 	await db.query('DELETE FROM financing.bond WHERE id = 101');
 	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.cashflow')).rows[0].count, 0);
 });

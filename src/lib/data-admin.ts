@@ -43,7 +43,6 @@ const commonTimestamps: FieldConfig[] = [
 
 const commonDebtFields: FieldConfig[] = [
 	{ key: 'id', label: 'ID', type: 'number', readOnly: true },
-	{ key: 'project_id', label: '关联项目 ID' },
 	{ key: 'name', label: '负债简称', required: true },
 	{ key: 'counterparty', label: '交易对手' },
 	{ key: 'amount', label: '本金（元）', type: 'number', required: true, min: 0, step: '0.01' },
