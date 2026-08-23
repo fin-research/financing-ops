@@ -13,6 +13,7 @@
 - `bond`、`income_certificate`、`income_right`、`refinancing`、`swap_facility` 使用 PostgreSQL 原生表继承，只保存品种专属字段；同业拆借与集团借款没有有效专属字段，直接使用基表。
 - 所有还本、付息、费用及补充现金流统一进入 `cashflow`，以 `(debt_id, sequence)` 为联合主键。
 - PostgreSQL 外键不会自动覆盖继承子表，因此负债 ID 全局唯一、项目引用、现金流引用和删除级联由事务级 advisory lock 与触发器保证。
+- 融资项目通过 `debt.project_id` 一对一绑定已有负债；项目建档只选择未绑定且存在启用 SOP 的负债，不创建新负债。删除项目会级联删除项目任务，但保留负债并解除绑定。
 - 历史余额统一存放在 `balance_snapshot`；`debt_overview`、`cashflow_overview`、`data_overview` 提供常用口径。
 - 负债品种目录是 [`src/lib/debt-types.js`](./src/lib/debt-types.js) 中的代码配置，不在数据库建立目录表。
 - 数据库没有 Excel 文件、导入状态、暂存、原始 JSON、原始行或原始单元格表。
@@ -41,6 +42,12 @@
 - 账号、密码和会话由 Neon Managed Better Auth 托管；Worker 只保存作用域为 `/financing` 的不透明会话 Cookie，并从 Auth 会话响应取得短期 Data API JWT。
 - 每个受保护请求调用一次 Neon Auth 会话接口，并用一次 Hyperdrive 查询完成 `people.neon_auth_user_id` 与业务角色映射；静态资源不触发认证或数据库查询。
 - `wrangler.jsonc` 启用 Smart Placement，并绑定 Hyperdrive ID `26b76413a03a4328836d95f3ca320a1e`。
+
+## 项目管理
+
+- `/financing/projects` 可新建、修改和删除项目。新建时必须选择一笔已有、未绑定且受启用 SOP 覆盖的负债。
+- 项目名称、品种、规模和计划到期日从负债带出；负责人可暂不分配，计划开始日和计划完成日由项目单独维护。
+- 项目删除会同步删除项目任务，并将关联负债恢复为可再次建档状态。项目页仍保持 3 次请求级集合 SQL，不增加 N+1 查询。
 
 ## 初始化与迁移
 

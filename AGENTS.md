@@ -96,6 +96,7 @@ Cloudflare Git 当前使用 pnpm 10.11.1；`pnpm-workspace.yaml` 必须显式包
 - `bond`、`income_certificate`、`income_right`、`refinancing`、`swap_facility` 使用 PostgreSQL 原生 `INHERITS`；子表只保存该品种特有字段。
 - 同业拆借和集团借款没有有效专属字段，直接存于基表；不得重建只有对手方、期限、金额、利率或状态的冗余子表。
 - PostgreSQL 主键、唯一约束和外键不会自动覆盖继承子表；跨层级 ID 唯一、项目引用、现金流引用和删除级联必须由触发器与事务级 advisory lock 保证，并有测试。
+- 融资项目只能从已有且尚未绑定项目的负债建档，`debt.project_id` 与项目是一对一绑定；新建项目不得顺带新增负债。删除项目时保留负债并解除绑定。
 
 ### 现金流与余额
 
@@ -141,6 +142,7 @@ Cloudflare Git 当前使用 pnpm 10.11.1；`pnpm-workspace.yaml` 必须显式包
 - 使用 Lucide，不用 emoji 充当结构图标。
 - 交互具备键盘焦点、可访问名称和适度反馈，并支持 `prefers-reduced-motion`。
 - 页面标题或模块标题下不写没有新增业务信息的说明性小字。
+- 项目进度页支持项目修改和删除；新建项目必须先选择已有负债，项目名称、品种、金额和到期日由负债带出。
 
 ## 8. 代码风格与变更纪律
 

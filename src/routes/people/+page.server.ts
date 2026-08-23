@@ -171,7 +171,7 @@ export const actions: Actions = {
 				prepareAudit({ ...auditRequestMeta(event), db, action: 'person.delete', entityType: 'person', entityId: id, summary: `删除人员及关联账号：${before.name}`, before }),
 				db.prepare('DELETE FROM people WHERE id = ?').bind(id)
 			]);
-			return { success: true, message: `已删除 ${before.name} 及其 Neon Auth 登录权限` };
+			return { success: true, deletedPersonId: id, message: `已删除 ${before.name} 及其 Neon Auth 登录权限` };
 		} catch (error) {
 			return fail(409, { message: constraintMessage(error) });
 		}

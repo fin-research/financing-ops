@@ -30,7 +30,7 @@ async function installSchema(db) {
 			"createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 	`);
-	for (const name of ['0001_financing_postgres.sql', '0002_neon_auth_prepare.sql', '0003_remove_custom_auth.sql', '0004_data_api_rls.sql', '0005_hide_derived_data_api_tables.sql']) await db.exec(migrationSql(name));
+	for (const name of ['0001_financing_postgres.sql', '0002_neon_auth_prepare.sql', '0003_remove_custom_auth.sql', '0004_data_api_rls.sql', '0005_hide_derived_data_api_tables.sql', '0006_enforce_single_debt_project.sql']) await db.exec(migrationSql(name));
 }
 
 test('login emails are normalized and validated', () => {
@@ -142,6 +142,10 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 	`);
 	await db.query(`INSERT INTO financing.bond (id, project_id, debt_type, subtype, name, amount, interest_payable, annual_rate, issue_date, maturity_date, activated_at)
 		VALUES (101, 'project', '债券', '小公募', '26东财01', 1000, 25, 0.02, '2026-01-01', '2027-01-01', '2026-01-01')`);
+	await assert.rejects(
+		db.query("INSERT INTO financing.debt (id, project_id, debt_type, name, amount) VALUES (102, 'project', '集团借款', '重复绑定', 100)"),
+		/project is already linked to another debt/i
+	);
 	const debt = (await db.query('SELECT total_amount, term_days, status, tableoid::regclass::text AS physical_table FROM financing.debt WHERE id = 101')).rows[0];
 	assert.equal(Number(debt.total_amount), 1025);
 	assert.equal(debt.term_days, 365);

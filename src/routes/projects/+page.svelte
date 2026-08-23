@@ -12,8 +12,11 @@
 		Filter,
 		Flag,
 		LoaderCircle,
+		Pencil,
 		Plus,
+		Save,
 		Search,
+		Trash2,
 		Users
 	} from '@lucide/svelte';
 	import MultiSelectFilter from '$lib/MultiSelectFilter.svelte';
@@ -30,164 +33,107 @@
 	let view = $state<'month' | 'quarter'>('month');
 	let expandedProject = $state<string | number | null>(null);
 	let newProjectDialog: HTMLDialogElement;
-	let createState = $state<{ pending: boolean; success: boolean; message: string }>({
-		pending: false,
-		success: false,
-		message: ''
+	let editProjectDialog: HTMLDialogElement;
+	let editingProject = $state<any>(null);
+	let selectedDebtId = $state('');
+	let newProjectEndDate = $state('');
+	let displayedProjects = $state<any[]>([]);
+	let actionState = $state<{ key: string; status: 'idle' | 'pending' | 'success' | 'error'; message: string }>({
+		key: '', status: 'idle', message: ''
 	});
+	$effect(() => {
+		displayedProjects = [...(data?.projects ?? [])];
+	});
+	const canManage = $derived(data?.user?.role === 'admin');
+	const selectedDebt = $derived(
+		data?.assignableDebts?.find((debt: any) => debt.id === selectedDebtId) ?? null
+	);
 
-	const enhanceCreate: SubmitFunction = () => {
-		createState = { pending: true, success: false, message: '正在创建项目…' };
+	const enhanceProjectAction = (key: string, dialog?: 'create' | 'edit'): SubmitFunction => () => {
+		actionState = { key, status: 'pending', message: '正在保存，请稍候…' };
 		return async ({ result, update }) => {
-			await update();
 			if (result.type === 'success') {
-				createState = {
-					pending: false,
-					success: true,
-					message: String(result.data?.message ?? '项目已创建。')
+				const deletedProjectId = String(result.data?.deletedProjectId ?? '');
+				if (deletedProjectId) {
+					displayedProjects = displayedProjects.filter((project: any) => project.id !== deletedProjectId);
+				}
+				await update({ reset: false, invalidateAll: true });
+				if (deletedProjectId) {
+					displayedProjects = displayedProjects.filter((project: any) => project.id !== deletedProjectId);
+				}
+				actionState = {
+					key, status: 'success', message: String(result.data?.message ?? '项目已保存')
 				};
-				newProjectDialog?.close();
+				if (dialog === 'create') newProjectDialog?.close();
+				if (dialog === 'edit') editProjectDialog?.close();
 				return;
 			}
-			createState = {
-				pending: false,
-				success: false,
+			await update({ reset: false, invalidateAll: false });
+			actionState = {
+				key,
+				status: 'error',
 				message:
 					result.type === 'failure'
-						? String(result.data?.message ?? '创建失败，请检查填写内容后重试。')
-						: '创建失败，请稍后重试。'
+						? String(result.data?.message ?? '保存失败，请检查填写内容后重试。')
+						: result.type === 'error' && result.error?.message
+							? result.error.message
+							: '保存失败，请稍后重试。'
 			};
 		};
 	};
 
-	const fallbackProjects = [
-		{
-			id: 1,
-			code: 'BOND-2026-05',
-			name: '26东财证券C5',
-			type: '次级债',
-			owner: '王岚',
-			status: '材料准备',
-			progress: 42,
-			start: '2026-07-22',
-			end: '2026-08-25',
-			startPct: 5,
-			widthPct: 48,
-			tone: 'blue',
-			nextNode: '发行方案定稿',
-			dueText: '明天',
-			members: ['王', '陈', '周'],
-			tasks: [
-				{ name: '立项审批', status: 'done', startPct: 5, widthPct: 8 },
-				{ name: '中介机构选聘', status: 'done', startPct: 13, widthPct: 12 },
-				{ name: '申报材料准备', status: 'doing', startPct: 25, widthPct: 18 },
-				{ name: '发行方案定稿', status: 'waiting', startPct: 43, widthPct: 10 }
-			]
-		},
-		{
-			id: 2,
-			code: 'CP-2026-03',
-			name: '26东财证券CP003',
-			type: '短期融资券',
-			owner: '陈语桐',
-			status: '监管反馈',
-			progress: 68,
-			start: '2026-07-09',
-			end: '2026-08-13',
-			startPct: 0,
-			widthPct: 34,
-			tone: 'teal',
-			nextNode: '反馈回复确认',
-			dueText: '8月1日',
-			members: ['陈', '李', '赵'],
-			tasks: []
-		},
-		{
-			id: 3,
-			code: 'SFC-2026-07',
-			name: '转融资续作 2026-07',
-			type: '转融资',
-			owner: '周明远',
-			status: '发行执行',
-			progress: 82,
-			start: '2026-07-18',
-			end: '2026-08-11',
-			startPct: 2,
-			widthPct: 27,
-			tone: 'violet',
-			nextNode: '资金到账确认',
-			dueText: '8月11日',
-			members: ['周', '陈'],
-			tasks: []
-		},
-		{
-			id: 4,
-			code: 'IBL-2026-08',
-			name: '8月同业拆借滚动续作',
-			type: '同业拆借',
-			owner: '李乐',
-			status: '需求确认',
-			progress: 25,
-			start: '2026-07-28',
-			end: '2026-08-07',
-			startPct: 15,
-			widthPct: 18,
-			tone: 'orange',
-			nextNode: '交易对手询价',
-			dueText: '7月31日',
-			members: ['李', '赵'],
-			tasks: []
-		},
-		{
-			id: 5,
-			code: 'BOND-2026-04',
-			name: '26东财证券债04',
-			type: '小公募',
-			owner: '王岚',
-			status: '已完成',
-			progress: 100,
-			start: '2026-06-30',
-			end: '2026-07-24',
-			startPct: 0,
-			widthPct: 12,
-			tone: 'gray',
-			nextNode: '发行总结归档',
-			dueText: '已完成',
-			members: ['王', '陈', '周'],
-			tasks: []
-		}
-	];
+	function openNewProject() {
+		selectedDebtId = '';
+		newProjectEndDate = data.today;
+		newProjectDialog.showModal();
+	}
 
-	const projects = $derived(data?.projects ?? fallbackProjects);
+	function openEditProject(project: any) {
+		editingProject = project;
+		editProjectDialog.showModal();
+	}
+
+	function updateSelectedDebt(debtId: string) {
+		selectedDebtId = debtId;
+		const debt = data.assignableDebts.find((item: any) => item.id === debtId);
+		newProjectEndDate = debt?.issueDate && debt.issueDate >= data.today ? debt.issueDate : data.today;
+	}
+
+	function formatDebtAmount(value: unknown) {
+		const amount = Number(value);
+		return Number.isFinite(amount) ? `${(amount / 100_000_000).toFixed(2)} 亿元` : '金额未登记';
+	}
+
+	const projects = $derived(displayedProjects);
 	const visibleProjects = $derived(
 		projects.filter(
-			(project: (typeof fallbackProjects)[number]) =>
+			(project: any) =>
 				(selectedTypes.length === 0 || selectedTypes.includes(project.type)) &&
 				(selectedOwners.length === 0 || selectedOwners.includes(project.owner)) &&
 				(selectedStatuses.length === 0 || selectedStatuses.includes(project.status))
 		)
 	);
 	const summary = $derived({
-		inProgress: visibleProjects.filter((project: (typeof fallbackProjects)[number]) => project.progress < 100).length,
-		dueThisWeek: visibleProjects.filter((project: (typeof fallbackProjects)[number]) =>
+		inProgress: visibleProjects.filter((project: any) => project.progress < 100).length,
+		dueThisWeek: visibleProjects.filter((project: any) =>
 			['今天', '明天', '2天后', '3天后', '4天后', '5天后', '6天后', '7天后'].includes(project.dueText)
 		).length,
-		atRisk: visibleProjects.filter((project: (typeof fallbackProjects)[number]) => project.tone === 'orange').length,
-		completed: visibleProjects.filter((project: (typeof fallbackProjects)[number]) => project.progress === 100).length
+		atRisk: visibleProjects.filter((project: any) => project.tone === 'orange').length,
+		completed: visibleProjects.filter((project: any) => project.progress === 100).length
 	});
 	const projectTypes = $derived([
 		...new Set<string>(
-			projects.map((project: (typeof fallbackProjects)[number]) => String(project.type))
+			projects.map((project: any) => String(project.type))
 		)
 	]);
 	const projectOwners = $derived([
 		...new Set<string>(
-			projects.map((project: (typeof fallbackProjects)[number]) => String(project.owner))
+			projects.map((project: any) => String(project.owner))
 		)
 	]);
 	const projectStatuses = $derived([
 		...new Set<string>(
-			projects.map((project: (typeof fallbackProjects)[number]) => String(project.status))
+			projects.map((project: any) => String(project.status))
 		)
 	]);
 
@@ -198,9 +144,15 @@
 	<title>项目进度 · 融资工作台</title>
 </svelte:head>
 
-{#if createState.message}
-	<p class:success={createState.success} class="action-feedback" role={createState.success ? 'status' : 'alert'}>
-		{createState.message}
+{#if actionState.status !== 'idle'}
+	<p
+		class:success={actionState.status === 'success'}
+		class="action-feedback"
+		role={actionState.status === 'error' ? 'alert' : 'status'}
+		aria-live="polite"
+	>
+		{#if actionState.status === 'pending'}<LoaderCircle class="spin" size={16} />{/if}
+		{actionState.message}
 	</p>
 {/if}
 
@@ -300,6 +252,37 @@
 							<span style:z-index={3 - index}>{member}</span>
 						{/each}
 					</div>
+					{#if canManage}
+						<div class="project-row-actions">
+							<button
+								type="button"
+								aria-label={`编辑 ${project.name}`}
+								title="编辑项目"
+								onclick={() => openEditProject(project)}
+							>
+								<Pencil size={15} />
+							</button>
+							<form
+								method="post"
+								action="?/deleteProject"
+								use:enhance={enhanceProjectAction(`delete-${project.id}`)}
+								onsubmit={(event) => {
+									if (!confirm(`确定删除项目 ${project.name} 吗？项目任务将一并删除，关联负债会保留并解除绑定。`)) event.preventDefault();
+								}}
+							>
+								<input type="hidden" name="id" value={project.id} />
+								<button
+									type="submit"
+									class="danger-action"
+									aria-label={`删除 ${project.name}`}
+									title="删除项目"
+									disabled={actionState.status === 'pending'}
+								>
+									<Trash2 size={15} />
+								</button>
+							</form>
+						</div>
+					{/if}
 				</div>
 				<div class="project-status">
 					<span class={`status-pill ${project.tone}`}>{project.status}</span>
@@ -359,45 +342,49 @@
 	</div>
 </section>
 
-<button
-	class="floating-create-button"
-	type="button"
-	onclick={() => newProjectDialog.showModal()}
-	aria-label="新建项目"
-	title="新建项目"
->
-	<Plus size={23} />
-</button>
+{#if canManage}
+	<button
+		class="floating-create-button"
+		type="button"
+		onclick={openNewProject}
+		aria-label="新建项目"
+		title="新建项目"
+	>
+		<Plus size={23} />
+	</button>
+{/if}
 
 <dialog class="new-project-modal" bind:this={newProjectDialog}>
-	<form method="post" action="?/createProject" use:enhance={enhanceCreate}>
+	<form method="post" action="?/createProject" use:enhance={enhanceProjectAction('create', 'create')}>
 		<div class="modal-header">
 			<div>
 				<p class="eyebrow">NEW PROJECT</p>
 				<h2>新建融资项目</h2>
-				<p>选择负债品种后，将自动套用对应 SOP 节点。</p>
+				<p>从已存在且尚未绑定项目的负债中选择，并自动套用对应 SOP 节点。</p>
 			</div>
 			<button type="button" aria-label="关闭" onclick={() => newProjectDialog.close()}>×</button>
 		</div>
 		<div class="form-grid">
 			<label class="wide">
-				<span>项目名称</span>
-				<input name="name" required placeholder="例如：26东财证券C6" />
-			</label>
-			<label>
-				<span>负债品种</span>
-				<select name="debtType" required>
-					<option value="">请选择</option>
-					{#each data.activeSopDebtTypes as debtType}
-						<option>{debtType}</option>
+				<span>关联负债</span>
+				<select
+					name="debtId"
+					required
+					value={selectedDebtId}
+					onchange={(event) => updateSelectedDebt(event.currentTarget.value)}
+				>
+					<option value="">请选择已有负债</option>
+					{#each data.assignableDebts as debt}
+						<option value={debt.id}>{debt.name} · {debt.projectDebtType} · #{debt.id}</option>
 					{/each}
 				</select>
 			</label>
 			<label>
 				<span>负责人</span>
-				<select name="owner" required>
+				<select name="ownerId" value={data.viewContext.personId ?? ''}>
+					<option value="">待分配</option>
 					{#each data.people as person}
-						<option>{person.name}</option>
+						<option value={person.id}>{person.name}</option>
 					{/each}
 				</select>
 			</label>
@@ -407,21 +394,100 @@
 			</label>
 			<label>
 				<span>计划完成</span>
-				<input name="endDate" type="date" value="2026-09-30" required />
+				<input name="endDate" type="date" bind:value={newProjectEndDate} required />
 			</label>
 		</div>
 		<div class="modal-note">
 			<CheckCircle2 size={15} />
-			<span>创建后可继续分配参与人员，并调整每个 SOP 节点的时间。</span>
+			<span>
+				{#if selectedDebt}
+					项目名称与品种取自“{selectedDebt.name}”，当前金额 {formatDebtAmount(selectedDebt.amount)}。
+				{:else if data.assignableDebts.length === 0}
+					暂无符合启用 SOP 且未绑定项目的负债，请先在数据后台新增负债。
+				{:else}
+					创建项目不会新增负债；项目名称、品种、金额和到期日均取自所选负债。
+				{/if}
+			</span>
 		</div>
 		<div class="modal-actions">
-			<button type="button" disabled={createState.pending} onclick={() => newProjectDialog.close()}>取消</button>
-			<button class="primary-action" type="submit" disabled={createState.pending}>
-				{#if createState.pending}<LoaderCircle class="spin" size={16} />{/if}
-				{createState.pending ? '创建中…' : '创建项目'}
+			<button type="button" disabled={actionState.status === 'pending'} onclick={() => newProjectDialog.close()}>取消</button>
+			<button
+				class="primary-action"
+				type="submit"
+				disabled={actionState.status === 'pending' || data.assignableDebts.length === 0}
+			>
+				{#if actionState.status === 'pending' && actionState.key === 'create'}<LoaderCircle class="spin" size={16} />{/if}
+				{actionState.status === 'pending' && actionState.key === 'create' ? '创建中…' : '创建项目'}
 			</button>
 		</div>
 	</form>
+</dialog>
+
+<dialog class="new-project-modal" bind:this={editProjectDialog}>
+	{#if editingProject}
+		<form method="post" action="?/updateProject" use:enhance={enhanceProjectAction('edit', 'edit')}>
+			<div class="modal-header">
+				<div>
+					<p class="eyebrow">EDIT PROJECT</p>
+					<h2>修改融资项目</h2>
+					<p>调整项目名称、状态、负责人和计划日期；关联负债保持不变。</p>
+				</div>
+				<button type="button" aria-label="关闭" onclick={() => editProjectDialog.close()}>×</button>
+			</div>
+			<input type="hidden" name="id" value={editingProject.id} />
+			<div class="form-grid">
+				<label class="wide">
+					<span>项目名称</span>
+					<input name="name" maxlength="160" required value={editingProject.name} />
+				</label>
+				<label class="wide">
+					<span>关联负债</span>
+					<input
+						value={editingProject.debtId ? `${editingProject.debtName} · #${editingProject.debtId}` : '历史项目尚未绑定负债'}
+						readonly
+					/>
+				</label>
+				<label>
+					<span>项目状态</span>
+					<select name="status" value={editingProject.rawStatus} required>
+						<option value="planning">规划中</option>
+						<option value="in_progress">执行中</option>
+						<option value="at_risk">存在风险</option>
+						<option value="completed">已完成</option>
+						<option value="cancelled">已取消</option>
+					</select>
+				</label>
+				<label>
+					<span>负责人</span>
+					<select name="ownerId" value={editingProject.ownerId ?? ''}>
+						<option value="">待分配</option>
+						{#each data.people as person}
+							<option value={person.id}>{person.name}</option>
+						{/each}
+					</select>
+				</label>
+				<label>
+					<span>计划开始</span>
+					<input name="startDate" type="date" value={editingProject.start} required />
+				</label>
+				<label>
+					<span>计划完成</span>
+					<input name="endDate" type="date" value={editingProject.end} required />
+				</label>
+				<label class="wide">
+					<span>项目说明</span>
+					<textarea name="notes" rows="4" maxlength="4000">{editingProject.notes}</textarea>
+				</label>
+			</div>
+			<div class="modal-actions">
+				<button type="button" disabled={actionState.status === 'pending'} onclick={() => editProjectDialog.close()}>取消</button>
+				<button class="primary-action" type="submit" disabled={actionState.status === 'pending'}>
+					<Save size={16} />
+					{actionState.status === 'pending' && actionState.key === 'edit' ? '保存中…' : '保存修改'}
+				</button>
+			</div>
+		</form>
+	{/if}
 </dialog>
 
 <style>
@@ -784,6 +850,46 @@
 		background: #e9f1ff;
 	}
 
+	.project-row-actions {
+		display: flex;
+		flex: 0 0 auto;
+		gap: 0.25rem;
+		margin-left: 0.25rem;
+	}
+
+	.project-row-actions form {
+		display: contents;
+	}
+
+	.project-row-actions button {
+		display: grid;
+		width: 2.75rem;
+		height: 2.75rem;
+		place-items: center;
+		border: 1px solid #d0d5dd;
+		border-radius: 0.4375rem;
+		color: #475467;
+		background: #fff;
+		cursor: pointer;
+	}
+
+	.project-row-actions button:hover {
+		border-color: #84adff;
+		color: #175cd3;
+		background: #eff4ff;
+	}
+
+	.project-row-actions button.danger-action:hover {
+		border-color: #fda29b;
+		color: #b42318;
+		background: #fef3f2;
+	}
+
+	.project-row-actions button:disabled {
+		cursor: wait;
+		opacity: 0.55;
+	}
+
 	.project-status {
 		display: grid;
 		grid-template-columns: 1fr auto;
@@ -1089,14 +1195,25 @@
 	}
 
 	.form-grid input,
-	.form-grid select {
-		height: 2.375rem;
+	.form-grid select,
+	.form-grid textarea {
+		min-height: 2.75rem;
 		padding: 0 0.625rem;
 		border: 1px solid #d0d5dd;
 		border-radius: 0.4375rem;
-		font-size: 0.75rem;
+		font-size: 1rem;
 		color: #344054;
 		background: #fff;
+	}
+
+	.form-grid textarea {
+		padding-block: 0.625rem;
+		resize: vertical;
+	}
+
+	.form-grid input[readonly] {
+		color: #667085;
+		background: #f9fafb;
 	}
 
 	.modal-note {
@@ -1118,11 +1235,11 @@
 	}
 
 	.modal-actions > button:first-child {
-		min-height: 2.375rem;
+		min-height: 2.75rem;
 		padding: 0 0.8125rem;
 		border: 1px solid #d0d5dd;
 		border-radius: 0.5rem;
-		font-size: 0.75rem;
+		font-size: 1rem;
 		color: #475467;
 		background: #fff;
 		cursor: pointer;

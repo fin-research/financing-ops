@@ -29,10 +29,14 @@
 		message: string;
 	}>({ key: '', status: 'idle', message: '' });
 
-	const fallback = { people: [], roleCounts: [] };
-	const peopleAccess = $derived(data?.peopleAccess ?? fallback);
+	const fallback = { people: [] };
+	let displayedPeople = $state<any[]>([]);
+	$effect(() => {
+		displayedPeople = [...(data?.peopleAccess?.people ?? fallback.people)];
+	});
+	const peopleAccess = $derived({ people: displayedPeople });
 	const roleCount = (role: string) =>
-		peopleAccess.roleCounts.find((item: any) => item.role === role)?.count ?? 0;
+		displayedPeople.filter((person: any) => person.role === role).length;
 	const canManage = $derived(data?.user?.role === 'admin');
 
 	const enhanceAction = (key: string, closeDialog = false): SubmitFunction => {
@@ -40,7 +44,14 @@
 			actionState = { key, status: 'pending', message: '正在保存，请稍候…' };
 			return async ({ result, update }) => {
 				if (result.type === 'success') {
+					const deletedPersonId = String(result.data?.deletedPersonId ?? '');
+					if (deletedPersonId) {
+						displayedPeople = displayedPeople.filter((person: any) => person.id !== deletedPersonId);
+					}
 					await update({ reset: false, invalidateAll: true });
+					if (deletedPersonId) {
+						displayedPeople = displayedPeople.filter((person: any) => person.id !== deletedPersonId);
+					}
 					actionState = {
 						key,
 						status: 'success',
