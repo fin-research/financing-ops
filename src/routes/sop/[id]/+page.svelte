@@ -123,6 +123,7 @@
 				if (result.type === 'success') {
 					applyActionData(result.data);
 					await update({ reset: false, invalidateAll: true });
+					applyActionData(result.data);
 					feedback = {
 						status: 'success',
 						message: String(result.data?.message ?? '保存成功')

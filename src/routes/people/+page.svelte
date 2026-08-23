@@ -44,11 +44,16 @@
 			actionState = { key, status: 'pending', message: '正在保存，请稍候…' };
 			return async ({ result, update }) => {
 				if (result.type === 'success') {
+					const returnedPeople = Array.isArray(result.data?.peopleAccess?.people)
+						? result.data.peopleAccess.people
+						: null;
+					if (returnedPeople) displayedPeople = [...returnedPeople];
 					const deletedPersonId = String(result.data?.deletedPersonId ?? '');
 					if (deletedPersonId) {
 						displayedPeople = displayedPeople.filter((person: any) => person.id !== deletedPersonId);
 					}
 					await update({ reset: false, invalidateAll: true });
+					if (returnedPeople) displayedPeople = [...returnedPeople];
 					if (deletedPersonId) {
 						displayedPeople = displayedPeople.filter((person: any) => person.id !== deletedPersonId);
 					}

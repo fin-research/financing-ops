@@ -55,7 +55,11 @@ export const actions: Actions = {
 			summary: `创建提醒规则：${name}`,
 			after: { name, triggerField, offsetDays, frequency, recipientMode }
 		})]);
-		return { success: true, message: '提醒规则已保存' };
+		return {
+			success: true,
+			message: '提醒规则已保存',
+			settings: await getWorkflowSettingsData()
+		};
 	},
 	createSop: async (event) => {
 		const data = await event.request.formData();
@@ -77,9 +81,14 @@ export const actions: Actions = {
 				summary: `创建 SOP：${name}`,
 				after: { name, debtType, description }
 			})]);
-			return { success: true, message: 'SOP 模板已创建', sopId: id };
 		} catch (error) {
 			return fail(409, { message: error instanceof Error ? error.message : String(error) });
 		}
+		return {
+			success: true,
+			message: 'SOP 模板已创建',
+			sopId: id,
+			settings: await getWorkflowSettingsData()
+		};
 	}
 };

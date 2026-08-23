@@ -2,6 +2,7 @@
 	import '../management.css';
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import { untrack } from 'svelte';
 	import {
 		ArrowRight,
 		BellRing,
@@ -30,7 +31,11 @@
 		sopTemplates: [],
 		reminderRules: []
 	};
-	const settings = $derived(data?.settings ?? fallback);
+	let displayedSettings = $state(untrack(() => data?.settings ?? fallback));
+	$effect(() => {
+		displayedSettings = data?.settings ?? fallback;
+	});
+	const settings = $derived(displayedSettings);
 	const activeSopTemplates = $derived(
 		settings.sopTemplates.filter((sop: { isActive: boolean }) => sop.isActive)
 	);
@@ -40,7 +45,10 @@
 			actionState = { key, status: 'pending', message: '正在提交，请稍候…' };
 			return async ({ result, update }) => {
 				if (result.type === 'success') {
+					const returnedSettings = result.data?.settings ?? null;
+					if (returnedSettings) displayedSettings = returnedSettings;
 					await update({ reset: false, invalidateAll: true });
+					if (returnedSettings) displayedSettings = returnedSettings;
 					actionState = {
 						key,
 						status: 'success',

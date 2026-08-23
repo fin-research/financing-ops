@@ -11,6 +11,44 @@ const mutationPages = [
 	'src/routes/sop/[id]/+page.svelte'
 ];
 
+const snapshotContracts = [
+	{
+		name: 'people',
+		server: 'src/routes/people/+page.server.ts',
+		client: 'src/routes/people/+page.svelte',
+		response: /peopleAccess:\s*await getPeopleAccessData\(\)/,
+		apply: /result\.data\?\.peopleAccess\?\.people/
+	},
+	{
+		name: 'projects',
+		server: 'src/routes/projects/+page.server.ts',
+		client: 'src/routes/projects/+page.svelte',
+		response: /const refreshed = await getProjectPageData/,
+		apply: /result\.data\?\.projects/
+	},
+	{
+		name: 'project detail',
+		server: 'src/routes/projects/[id]/+page.server.ts',
+		client: 'src/routes/projects/[id]/+page.svelte',
+		response: /detail:\s*await loadProject/,
+		apply: /result\.data\?\.detail/
+	},
+	{
+		name: 'SOP management',
+		server: 'src/routes/sop/+page.server.ts',
+		client: 'src/routes/sop/+page.svelte',
+		response: /settings:\s*await getWorkflowSettingsData\(\)/,
+		apply: /result\.data\?\.settings/
+	},
+	{
+		name: 'profile settings',
+		server: 'src/routes/settings/+page.server.ts',
+		client: 'src/routes/settings/+page.svelte',
+		response: /profile:\s*publicProfile\(/,
+		apply: /result\.data\?\.profile/
+	}
+];
+
 test('route forms never use SvelteKit default form reset outside login', async () => {
 	const routesDirectory = new URL('../src/routes/', import.meta.url);
 	const routeFiles = (await readdir(routesDirectory, { recursive: true }))
@@ -34,4 +72,41 @@ test('SOP and project detail edit forms explicitly preserve their controls', asy
 		const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
 		assert.match(source, /update\(\{\s*reset:\s*false,/);
 	}
+});
+
+test('mutation pages explicitly choose form reset and invalidation behavior', async () => {
+	for (const file of mutationPages) {
+		const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+		assert.match(source, /update\(\{\s*reset:/, `${file} must choose reset behavior explicitly`);
+	}
+});
+
+test('aggregate mutation pages return and apply server-confirmed view data', async () => {
+	for (const contract of snapshotContracts) {
+		const [serverSource, clientSource] = await Promise.all([
+			readFile(new URL(`../${contract.server}`, import.meta.url), 'utf8'),
+			readFile(new URL(`../${contract.client}`, import.meta.url), 'utf8')
+		]);
+		assert.match(serverSource, contract.response, `${contract.name} action must return refreshed view data`);
+		assert.match(clientSource, contract.apply, `${contract.name} page must apply action response data immediately`);
+	}
+});
+
+test('granular mutation pages merge confirmed entities around global invalidation', async () => {
+	const source = await readFile(new URL('../src/routes/sop/[id]/+page.svelte', import.meta.url), 'utf8');
+	assert.match(
+		source,
+		/applyActionData\(result\.data\);\s*await update\(\{ reset: false, invalidateAll: true \}\);\s*applyActionData\(result\.data\);/
+	);
+});
+
+test('Data API mutations request returned rows and merge them without a reload', async () => {
+	const [apiSource, tableSource] = await Promise.all([
+		readFile(new URL('../src/lib/neon-data-api.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/lib/DataAdminTable.svelte', import.meta.url), 'utf8')
+	]);
+	assert.ok((apiSource.match(/Prefer: 'return=representation'/g) ?? []).length >= 3);
+	assert.match(tableSource, /rows = sortCurrentRows\(\[savedRows\[0\], \.\.\.rows\]\)/);
+	assert.match(tableSource, /rows = sortCurrentRows\(rows\.map\(/);
+	assert.match(tableSource, /rows = rows\.filter\(/);
 });

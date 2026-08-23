@@ -2,12 +2,17 @@
 	import './profile.css';
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import { untrack } from 'svelte';
 	import { Camera, CheckCircle2, KeyRound, LoaderCircle, Save, ShieldCheck, UserRound } from '@lucide/svelte';
 
 	let { data, form } = $props();
+	let displayedProfile = $state(untrack(() => ({ ...data.profile })));
+	$effect(() => {
+		displayedProfile = { ...data.profile };
+	});
 	let avatarPreview = $state<string | null>(null);
 	let avatarTouched = $state(false);
-	const displayedAvatar = $derived(avatarTouched ? avatarPreview : data.profile.avatarDataUrl);
+	const displayedAvatar = $derived(avatarTouched ? avatarPreview : displayedProfile.avatarDataUrl);
 	let pendingSection = $state<'profile' | 'password' | null>(null);
 	let feedback = $state<{ section: string; success: boolean; message: string } | null>(null);
 	const visibleFeedback = $derived(
@@ -20,7 +25,17 @@
 		pendingSection = section;
 		feedback = null;
 		return async ({ result, update }) => {
-			await update({ reset: result.type === 'success' && section === 'password' });
+			const returnedProfile = result.type === 'success' ? result.data?.profile : null;
+			if (returnedProfile) {
+				displayedProfile = { ...returnedProfile };
+				avatarTouched = false;
+				avatarPreview = null;
+			}
+			await update({
+				reset: result.type === 'success' && section === 'password',
+				invalidateAll: result.type === 'success'
+			});
+			if (returnedProfile) displayedProfile = { ...returnedProfile };
 			pendingSection = null;
 			if (result.type === 'success' || result.type === 'failure') {
 				feedback = {
@@ -52,13 +67,13 @@
 <div class="profile-page">
 	<section class="profile-summary" aria-label="当前账号信息">
 		{#if displayedAvatar}
-			<img src={displayedAvatar} alt={`${data.profile.name}的头像`} />
+			<img src={displayedAvatar} alt={`${displayedProfile.name}的头像`} />
 		{:else}
-			<span class="profile-initial">{data.profile.name.slice(0, 1).toUpperCase()}</span>
+			<span class="profile-initial">{displayedProfile.name.slice(0, 1).toUpperCase()}</span>
 		{/if}
 		<div>
-			<strong>{data.profile.name}</strong>
-			<span>{data.profile.email ?? '待设置登录邮箱'}</span>
+			<strong>{displayedProfile.name}</strong>
+			<span>{displayedProfile.email ?? '待设置登录邮箱'}</span>
 		</div>
 		<span class="security-state"><ShieldCheck size={16} /> 账号已启用</span>
 	</section>
@@ -77,7 +92,7 @@
 					{#if displayedAvatar}
 						<img src={displayedAvatar} alt="头像预览" />
 					{:else}
-						<span>{data.profile.name.slice(0, 1).toUpperCase()}</span>
+						<span>{displayedProfile.name.slice(0, 1).toUpperCase()}</span>
 					{/if}
 					<div>
 						<label class="upload-button">
@@ -92,11 +107,11 @@
 				<div class="form-grid">
 					<label>
 						<span>显示姓名</span>
-						<input name="name" required maxlength="50" value={data.profile.name} autocomplete="name" />
+						<input name="name" required maxlength="50" value={displayedProfile.name} autocomplete="name" />
 					</label>
 					<label>
 						<span>登录邮箱</span>
-						<input type="email" readonly value={data.profile.email ?? ''} autocomplete="email" />
+						<input type="email" readonly value={displayedProfile.email ?? ''} autocomplete="email" />
 						<small>登录邮箱由管理员在“人员与权限”中维护</small>
 					</label>
 				</div>

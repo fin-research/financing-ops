@@ -70,6 +70,15 @@ async function duplicatePerson(db: ReturnType<typeof getDatabase>, name: string,
 
 export const load: PageServerLoad = async () => ({ peopleAccess: await getPeopleAccessData() });
 
+async function peopleSuccess(message: string, extra: Record<string, unknown> = {}) {
+	return {
+		success: true,
+		message,
+		...extra,
+		peopleAccess: await getPeopleAccessData()
+	};
+}
+
 export const actions: Actions = {
 	createPerson: async (event) => {
 		const fields = identityFields(await event.request.formData());
@@ -89,11 +98,11 @@ export const actions: Actions = {
 				db.prepare('INSERT INTO people (id, name, email, role, active, neon_auth_user_id) VALUES (?, ?, ?, ?, TRUE, ?::uuid)').bind(personId, fields.name, fields.email, fields.role, accountId),
 				prepareAudit({ ...auditRequestMeta(event), db, action: 'person.create', entityType: 'person', entityId: personId, summary: `添加人员：${fields.name}`, after: { name: fields.name, email: fields.email, role: fields.role, accountEnabled: fields.accountEnabled, active: true } })
 			]);
-			return { success: true, message: `已添加 ${fields.name}${fields.accountEnabled ? ' 并开通 Neon Auth 登录' : ''}` };
 		} catch (error) {
 			if (accountId) await removeManagedUser(event, accountId).catch(() => null);
 			return fail(409, { message: constraintMessage(error) });
 		}
+		return await peopleSuccess(`已添加 ${fields.name}${fields.accountEnabled ? ' 并开通 Neon Auth 登录' : ''}`);
 	},
 
 	updatePerson: async (event) => {
@@ -129,11 +138,11 @@ export const actions: Actions = {
 				db.prepare('UPDATE people SET name = ?, email = ?, role = ?, neon_auth_user_id = ?::uuid, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(fields.name, fields.email, fields.role, accountId, id),
 				prepareAudit({ ...auditRequestMeta(event), db, action: 'person.update', entityType: 'person', entityId: id, summary: `更新人员与账号：${fields.name}`, before, after: { ...before, name: fields.name, email: fields.email, role: fields.role, accountEnabled: fields.accountEnabled } })
 			]);
-			return { success: true, message: `已更新 ${fields.name} 的人员、角色与 Neon Auth 账号关联` };
 		} catch (error) {
 			if (created && accountId) await removeManagedUser(event, accountId).catch(() => null);
 			return fail(409, { message: constraintMessage(error) });
 		}
+		return await peopleSuccess(`已更新 ${fields.name} 的人员、角色与 Neon Auth 账号关联`);
 	},
 
 	togglePerson: async (event) => {
@@ -151,10 +160,10 @@ export const actions: Actions = {
 				db.prepare('UPDATE people SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(active, id),
 				prepareAudit({ ...auditRequestMeta(event), db, action: active ? 'person.activate' : 'person.deactivate', entityType: 'person', entityId: id, summary: `${active ? '启用' : '停用'}人员与账号：${before.name}`, before, after: { ...before, active, accountActive: before.accountId ? active : null } })
 			]);
-			return { success: true, message: active ? '人员与 Neon Auth 登录已启用' : '人员与 Neon Auth 登录已停用' };
 		} catch (error) {
 			return fail(409, { message: constraintMessage(error) });
 		}
+		return await peopleSuccess(active ? '人员与 Neon Auth 登录已启用' : '人员与 Neon Auth 登录已停用');
 	},
 
 	deletePerson: async (event) => {
@@ -171,9 +180,9 @@ export const actions: Actions = {
 				prepareAudit({ ...auditRequestMeta(event), db, action: 'person.delete', entityType: 'person', entityId: id, summary: `删除人员及关联账号：${before.name}`, before }),
 				db.prepare('DELETE FROM people WHERE id = ?').bind(id)
 			]);
-			return { success: true, deletedPersonId: id, message: `已删除 ${before.name} 及其 Neon Auth 登录权限` };
 		} catch (error) {
 			return fail(409, { message: constraintMessage(error) });
 		}
+		return await peopleSuccess(`已删除 ${before.name} 及其 Neon Auth 登录权限`, { deletedPersonId: id });
 	}
 };

@@ -114,7 +114,12 @@ export const actions: Actions = {
 					after: { name, hasAvatar: Boolean(avatarDataUrl) }
 				})
 			]);
-			return { section: 'profile', success: true, message: '个人资料已更新' };
+			return {
+				section: 'profile',
+				success: true,
+				message: '个人资料已更新',
+				profile: publicProfile({ ...before, name, avatarDataUrl })
+			};
 		} catch (databaseError) {
 			await updateCurrentAuthProfile(event, { name: before.name }).catch(() => null);
 			return fail(409, { section: 'profile', message: constraintMessage(databaseError) });
