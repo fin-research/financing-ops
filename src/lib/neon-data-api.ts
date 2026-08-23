@@ -56,10 +56,13 @@ export class NeonDataApi {
 		const selected = config.fields.map((field) => field.key).join(',');
 		const params = new URLSearchParams({
 			select: selected,
-			order: `${options.sortKey}.${options.sortDirection}`,
+			order: `${options.sortKey}.${options.sortDirection}.nullslast`,
 			limit: String(options.pageSize),
 			offset: String(options.page * options.pageSize)
 		});
+		for (const [key, value] of Object.entries(config.fixedValues ?? {})) {
+			params.set(key, value === null ? 'is.null' : `eq.${String(value)}`);
+		}
 		const search = options.search.trim().replace(/[,*()]/g, ' ');
 		if (search && config.searchFields.length) {
 			params.set('or', `(${config.searchFields.map((field) => `${field}.ilike.*${search}*`).join(',')})`);
@@ -78,11 +81,10 @@ export class NeonDataApi {
 	}
 
 	async insert(config: EntityConfig, row: DataRow) {
-		const tableName = config.insertTable?.(row) ?? config.tableName;
-		const response = await this.#request(tableName, {
+		const response = await this.#request(config.tableName, {
 			method: 'POST',
 			headers: { Prefer: 'return=representation' },
-			body: JSON.stringify(row)
+			body: JSON.stringify({ ...config.fixedValues, ...row })
 		});
 		return await response.json() as DataRow[];
 	}

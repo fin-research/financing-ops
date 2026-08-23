@@ -515,33 +515,6 @@ export async function getWorkflowSettingsData() {
 	};
 }
 
-export async function getDataManagementData() {
-	const db = getDatabase();
-	const row = await db.prepare(`
-		SELECT overview.debt_count AS debtCount, overview.cashflow_count AS cashflowCount,
-			overview.history_date_count AS historyDateCount,
-			overview.history_start_date AS historyStartDate,
-			overview.history_end_date AS historyEndDate, overview.as_of_date AS asOfDate,
-			overview.amount / 100000000.0 AS totalYi,
-			COALESCE((SELECT jsonb_agg(jsonb_build_object('code', code, 'label', label,
-				'valueYi', value_yi, 'periodEnd', period_end, 'notes', notes) ORDER BY
-				CASE code WHEN 'securities_prior_year_net_assets' THEN 1 WHEN 'group_prior_year_net_assets' THEN 2 ELSE 3 END)
-				FROM finance_parameters), '[]'::jsonb) AS financeParameters
-		FROM data_overview overview
-	`).get();
-	return {
-		financeParameters: (row.financeParameters ?? []).map((item) => ({
-			...item, valueYi: item.valueYi == null ? null : number(item.valueYi)
-		})),
-		overview: {
-			debtCount: number(row.debtCount), cashflowCount: number(row.cashflowCount),
-			historyDateCount: number(row.historyDateCount), historyStartDate: row.historyStartDate,
-			historyEndDate: row.historyEndDate, asOfDate: row.asOfDate,
-			totalYi: row.totalYi == null ? null : number(row.totalYi)
-		}
-	};
-}
-
 export async function getPeopleAccessData() {
 	const people = (await getDatabase().prepare(`
 		SELECT p.id, p.name, p.email, p.role, p.active,
@@ -598,8 +571,7 @@ export async function getLayoutData({ today, toDate, personId = null, ownOnly = 
 			WHEN pt.due_date = @today THEN 2 ELSE 3 END, pt.due_date, p.name, pt.sort_order
 		LIMIT @limit
 		)
-		SELECT (SELECT MAX(as_of_date) FROM balance_snapshot) AS dataAsOfDate,
-			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+		SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object(
 				'id', id, 'taskName', taskname, 'status', status, 'dueDate', duedate,
 				'projectId', projectid, 'projectName', projectname, 'debtType', debttype,
 				'assigneeName', assigneename, 'totalCount', totalcount
@@ -622,7 +594,6 @@ export async function getLayoutData({ today, toDate, personId = null, ownOnly = 
 		};
 	});
 	return {
-		dataAsOfDate: result.dataAsOfDate ?? null,
 		reminders: { items, total: rows.length ? number(rows[0].totalCount) : 0 }
 	};
 }

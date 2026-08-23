@@ -87,14 +87,6 @@
 			{/each}
 		</nav>
 
-		<div class="sidebar-status">
-			<div class="status-title">
-				<span class="status-dot"></span>
-				<span>数据已同步</span>
-			</div>
-			<p>借入资金台账</p>
-			<small>更新至 {data.dataAsOfDate ?? '待导入'}</small>
-		</div>
 	</aside>
 
 	<div class="workspace">

@@ -15,10 +15,9 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 				personId: locals.user.personId,
 				ownOnly: locals.user.role === 'handler'
 			})
-		: { dataAsOfDate: null, reminders: { items: [], total: 0 } };
+		: { reminders: { items: [], total: 0 } };
 	return {
 		user: locals.user,
-		dataAsOfDate: layout.dataAsOfDate,
 		reminders: layout.reminders
 	};
 };

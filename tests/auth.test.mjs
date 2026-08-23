@@ -30,7 +30,7 @@ async function installSchema(db) {
 			"createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 	`);
-	for (const name of ['0001_financing_postgres.sql', '0002_neon_auth_prepare.sql', '0003_remove_custom_auth.sql', '0004_data_api_rls.sql']) await db.exec(migrationSql(name));
+	for (const name of ['0001_financing_postgres.sql', '0002_neon_auth_prepare.sql', '0003_remove_custom_auth.sql', '0004_data_api_rls.sql', '0005_hide_derived_data_api_tables.sql']) await db.exec(migrationSql(name));
 }
 
 test('login emails are normalized and validated', () => {
@@ -77,6 +77,11 @@ test('Data API RLS lets every active financing role edit and writes audit record
 	t.after(() => db.close());
 	await installSchema(db);
 	const roles = ['admin', 'handler', 'reviewer'];
+	const debtFixtures = [
+		{ table: 'bond', debtType: '债券', subtype: '小公募' },
+		{ table: 'income_certificate', debtType: '收益凭证', subtype: '固定收益凭证' },
+		{ table: 'swap_facility', debtType: '互换便利', subtype: null }
+	];
 	for (const [index, role] of roles.entries()) {
 		const authId = `00000000-0000-4000-8000-00000000000${index + 1}`;
 		await db.query('INSERT INTO neon_auth."user" (id, name, email, "emailVerified", role) VALUES ($1, $2, $3, TRUE, $4)', [authId, role, `${role}@example.com`, role]);
@@ -85,12 +90,20 @@ test('Data API RLS lets every active financing role edit and writes audit record
 		await db.exec('SET ROLE authenticated');
 		await db.query('INSERT INTO financing.finance_parameters (code, label, value_yi) VALUES ($1, $2, $3)', [`rls-${role}`, role, index + 1]);
 		await db.query('UPDATE financing.finance_parameters SET value_yi = $1 WHERE code = $2', [index + 10, `rls-${role}`]);
+		const fixture = debtFixtures[index];
+		const debt = (await db.query(
+			`INSERT INTO financing.${fixture.table} (debt_type, subtype, name, amount, issue_date) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+			[fixture.debtType, fixture.subtype, `rls-${role}`, index + 100, `2026-08-0${index + 1}`]
+		)).rows[0];
+		await db.query(`UPDATE financing.${fixture.table} SET amount = $1 WHERE id = $2`, [index + 200, debt.id]);
 		await db.exec('RESET ROLE');
 	}
 	const saved = (await db.query("SELECT code, value_yi FROM financing.finance_parameters WHERE code LIKE 'rls-%' ORDER BY code")).rows;
 	assert.equal(saved.length, 3);
 	const audit = (await db.query("SELECT COUNT(*)::integer AS count FROM financing.audit_logs WHERE entity_type = 'finance_parameter' AND entity_id LIKE 'rls-%'")).rows[0];
 	assert.equal(audit.count, 6);
+	const debtAudit = (await db.query("SELECT COUNT(*)::integer AS count FROM financing.audit_logs WHERE entity_type = 'debt' AND summary LIKE 'Data API %'")).rows[0];
+	assert.equal(debtAudit.count, 6);
 
 	const inactiveAuthId = '00000000-0000-4000-8000-000000000009';
 	await db.query('INSERT INTO neon_auth."user" (id, name, email, "emailVerified", role) VALUES ($1, $2, $3, TRUE, $4)', [inactiveAuthId, 'inactive', 'inactive@example.com', 'reviewer']);
@@ -99,6 +112,15 @@ test('Data API RLS lets every active financing role edit and writes audit record
 	await db.exec('SET ROLE authenticated');
 	await assert.rejects(db.query("INSERT INTO financing.finance_parameters (code, label) VALUES ('rls-denied', 'denied')"), /row-level security|policy/i);
 	await db.exec('RESET ROLE');
+
+	for (const table of ['cashflow', 'balance_snapshot', 'audit_logs']) {
+		const privilege = (await db.query(
+			"SELECT has_table_privilege('authenticated', $1, 'SELECT') AS can_select, has_table_privilege('authenticated', $1, 'INSERT') AS can_insert",
+			[`financing.${table}`]
+		)).rows[0];
+		assert.equal(privilege.can_select, false);
+		assert.equal(privilege.can_insert, false);
+	}
 });
 
 test('PostgreSQL schema removes custom auth and preserves debt integrity', async (t) => {
