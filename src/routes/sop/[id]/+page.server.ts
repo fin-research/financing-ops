@@ -3,6 +3,7 @@ import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 import { getDatabase } from '$lib/server/db.js';
+import { hasSameOrder, isCompleteReorder } from '$lib/reorder-items.js';
 
 const MAX_NODE_NAME = 120;
 const MIN_OFFSET = -3650;
@@ -11,6 +12,30 @@ const PROJECT_ROLES = new Set(['handler', 'reviewer']);
 
 async function templateExists(id: string) {
 	return getDatabase().prepare('SELECT 1 FROM sop_templates WHERE id = ?').get(id);
+}
+
+async function loadTemplate(id: string) {
+	const template = await getDatabase().prepare(`
+		SELECT id, name, debt_type AS debtType, description, is_active AS isActive,
+			created_at AS createdAt, updated_at AS updatedAt
+		FROM sop_templates WHERE id = ?
+	`).get(id) as any;
+	return template ? { ...template, isActive: Boolean(template.isActive) } : null;
+}
+
+async function loadNodes(templateId: string) {
+	return await getDatabase().prepare(`
+		SELECT id, name, description, sort_order AS sortOrder,
+			default_offset_days AS offsetDays, default_owner_role AS ownerRole
+		FROM sop_nodes WHERE template_id = ? ORDER BY sort_order, created_at, id
+	`).all(templateId) as Array<{
+		id: string;
+		name: string;
+		description: string | null;
+		sortOrder: number;
+		offsetDays: number;
+		ownerRole: string | null;
+	}>;
 }
 
 function parseNode(data: FormData) {
@@ -28,24 +53,15 @@ function parseNode(data: FormData) {
 }
 
 export const load: PageServerLoad = async ({ params }) => {
-	const db = getDatabase();
-	const template = await db.prepare(`
-		SELECT id, name, debt_type AS debtType, description, is_active AS isActive,
-			created_at AS createdAt, updated_at AS updatedAt
-		FROM sop_templates WHERE id = ?
-	`).get(params.id) as any;
+	const template = await loadTemplate(params.id);
 	if (!template) throw error(404, 'SOP 模板不存在');
-	const nodes = await db.prepare(`
-		SELECT id, name, description, sort_order AS sortOrder,
-			default_offset_days AS offsetDays, default_owner_role AS ownerRole
-		FROM sop_nodes WHERE template_id = ? ORDER BY sort_order, created_at
-	`).all(params.id);
+	const nodes = await loadNodes(params.id);
 	const roles = [
 		{ code: 'handler', label: '经办' },
 		{ code: 'reviewer', label: '复核' }
 	];
 	return {
-		template: { ...template, isActive: Boolean(template.isActive) },
+		template,
 		nodes,
 		roles
 	};
@@ -83,7 +99,11 @@ export const actions: Actions = {
 					after: { name, debtType, description: description || null }
 				})
 			]);
-			return { success: true, message: 'SOP 基本信息已保存' };
+			return {
+				success: true,
+				message: 'SOP 基本信息已保存',
+				template: await loadTemplate(params.id)
+			};
 		} catch (cause) {
 			return fail(409, { message: cause instanceof Error ? cause.message : '同品种下已存在同名 SOP' });
 		}
@@ -111,7 +131,11 @@ export const actions: Actions = {
 				after
 			})
 		]);
-		return { success: true, message: 'SOP 启停状态已更新' };
+		return {
+			success: true,
+			message: 'SOP 启停状态已更新',
+			isActive: Boolean(after.isActive)
+		};
 	},
 	addNode: async (event) => {
 		const { request, params } = event;
@@ -149,7 +173,7 @@ export const actions: Actions = {
 				after
 			})
 		]);
-		return { success: true, message: 'SOP 节点已添加' };
+		return { success: true, message: 'SOP 节点已添加', node: after };
 	},
 	updateNode: async (event) => {
 		const { request, params } = event;
@@ -186,43 +210,56 @@ export const actions: Actions = {
 				after: { ...before, name: parsed.name, description: parsed.description || null, offsetDays: parsed.offsetDays, ownerRole: parsed.ownerRole || null }
 			})
 		]);
-		return { success: true, message: 'SOP 节点已更新' };
+		return {
+			success: true,
+			message: 'SOP 节点已更新',
+			node: {
+				...before,
+				name: parsed.name,
+				description: parsed.description || null,
+				offsetDays: parsed.offsetDays,
+				ownerRole: parsed.ownerRole || null
+			}
+		};
 	},
-	moveNode: async (event) => {
+	reorderNodes: async (event) => {
 		const { request, params } = event;
 		if (!await templateExists(params.id)) return fail(404, { message: 'SOP 模板不存在' });
 		const data = await request.formData();
-		const nodeId = String(data.get('nodeId') ?? '');
-		const direction = String(data.get('direction') ?? '');
-		if (!['up', 'down'].includes(direction)) return fail(400, { message: '排序方向无效' });
+		const proposedIds = String(data.get('orderedNodeIds') ?? '')
+			.split(',')
+			.map((id) => id.trim())
+			.filter(Boolean);
 		const db = getDatabase();
-		const node = await db.prepare(`
-			SELECT id, sort_order AS sortOrder FROM sop_nodes
-			WHERE id = ? AND template_id = ?
-		`).get(nodeId, params.id) as { id: string; sortOrder: number } | undefined;
-		if (!node) return fail(404, { message: 'SOP 节点不存在' });
-		const neighbour = await db.prepare(`
-			SELECT id, sort_order AS sortOrder FROM sop_nodes
-			WHERE template_id = ? AND sort_order ${direction === 'up' ? '<' : '>'} ?
-			ORDER BY sort_order ${direction === 'up' ? 'DESC' : 'ASC'} LIMIT 1
-		`).get(params.id, node.sortOrder) as { id: string; sortOrder: number } | undefined;
-		if (!neighbour) return { success: true, message: direction === 'up' ? '已经是首个节点' : '已经是最后一个节点' };
+		const currentNodes = await loadNodes(params.id);
+		const currentIds = currentNodes.map((node) => node.id);
+		if (!isCompleteReorder(currentIds, proposedIds)) {
+			return fail(409, { message: '节点列表已变化，请刷新后重试排序' });
+		}
+		if (hasSameOrder(currentIds, proposedIds)) {
+			return { success: true, message: '节点顺序没有变化', orderedNodeIds: currentIds };
+		}
 		await db.batch([
-			db.prepare('UPDATE sop_nodes SET sort_order = -1 WHERE id = ?').bind(node.id),
-			db.prepare('UPDATE sop_nodes SET sort_order = ? WHERE id = ?').bind(node.sortOrder, neighbour.id),
-			db.prepare('UPDATE sop_nodes SET sort_order = ? WHERE id = ?').bind(neighbour.sortOrder, node.id),
+			...proposedIds.map((nodeId, index) => db.prepare(`
+				UPDATE sop_nodes SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ? AND template_id = ?
+			`).bind(-(index + 1), nodeId, params.id)),
+			...proposedIds.map((nodeId, index) => db.prepare(`
+				UPDATE sop_nodes SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ? AND template_id = ?
+			`).bind(index + 1, nodeId, params.id)),
 			prepareAudit({
 				db,
 				...auditRequestMeta(event),
 				action: 'sop.node.reorder',
 				entityType: 'sop',
 				entityId: params.id,
-				summary: `${direction === 'up' ? '上移' : '下移'} SOP 节点`,
-				before: { nodeId, sortOrder: node.sortOrder },
-				after: { nodeId, sortOrder: neighbour.sortOrder }
+				summary: '拖拽调整 SOP 节点顺序',
+				before: { orderedNodeIds: currentIds },
+				after: { orderedNodeIds: proposedIds }
 			})
 		]);
-		return { success: true, message: '节点顺序已调整' };
+		return { success: true, message: '节点顺序已保存', orderedNodeIds: proposedIds };
 	},
 	deleteNode: async (event) => {
 		const { request, params } = event;
@@ -253,6 +290,11 @@ export const actions: Actions = {
 				before
 			})
 		]);
-		return { success: true, message: 'SOP 节点已删除' };
+		return {
+			success: true,
+			message: 'SOP 节点已删除',
+			deletedNodeId: nodeId,
+			orderedNodeIds: remaining.map((row) => row.id)
+		};
 	}
 };

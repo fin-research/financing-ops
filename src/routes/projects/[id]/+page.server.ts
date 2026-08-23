@@ -142,7 +142,11 @@ export const actions: Actions = {
 				after: { status, ownerId: ownerId || null, notes: notes || null }
 			})
 		]);
-		return { success: true, message: '项目状态与负责人已更新' };
+		return {
+			success: true,
+			message: '项目状态与负责人已更新',
+			detail: await loadProject(projectId)
+		};
 	},
 	updateTask: async (event) => {
 		const { request, params } = event;
@@ -189,7 +193,11 @@ export const actions: Actions = {
 				after: { ...before, status, assigneeId: assigneeId || null, dueDate: dueDate || null }
 			})
 		]);
-		return { success: true, message: '任务节点已更新' };
+		return {
+			success: true,
+			message: '任务节点已更新',
+			detail: await loadProject(projectId)
+		};
 	},
 	addTask: async (event) => {
 		const { request, params } = event;
@@ -226,6 +234,10 @@ export const actions: Actions = {
 				after: { id: taskId, name, assigneeId: assigneeId || null, dueDate: dueDate || null, sortOrder: nextOrder }
 			})
 		]);
-		return { success: true, message: '任务节点已添加' };
+		return {
+			success: true,
+			message: '任务节点已添加',
+			detail: await loadProject(projectId)
+		};
 	}
 };

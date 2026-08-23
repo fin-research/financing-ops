@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	import {
 		ArrowLeft,
 		CalendarDays,
@@ -37,12 +38,22 @@
 			: 0
 	);
 
-	function enhanceForm(label: string) {
-		return () => {
+	function enhanceForm(label: string, resetOnSuccess = false): SubmitFunction {
+		return ({ formElement }) => {
 			pendingAction = label;
-			return async ({ update }: { update: () => Promise<void> }) => {
-				await update();
-				pendingAction = '';
+			return async ({ result, update }) => {
+				try {
+					if (result.type === 'success') {
+						if (result.data?.detail) data = result.data.detail;
+						await update({ reset: false, invalidateAll: true });
+						if (result.data?.detail) data = result.data.detail;
+						if (resetOnSuccess) formElement.reset();
+						return;
+					}
+					await update({ reset: false, invalidateAll: false });
+				} finally {
+					pendingAction = '';
+				}
 			};
 		};
 	}
@@ -137,7 +148,7 @@
 							<span>截止日</span>
 							<input name="dueDate" type="date" value={task.dueDate ?? ''} aria-label={`${task.name}截止日`} />
 						</label>
-						<button type="submit" disabled={pendingAction === `task-${task.id}`}>
+						<button type="submit" disabled={pendingAction !== ''}>
 							<Save size={16} />
 							{pendingAction === `task-${task.id}` ? '保存中…' : '保存'}
 						</button>
@@ -146,7 +157,7 @@
 					<p class="empty-state">尚无任务节点，可在下方添加第一个任务。</p>
 				{/each}
 			</div>
-			<form method="post" action="?/addTask" use:enhance={enhanceForm('add-task')} class="add-task">
+			<form method="post" action="?/addTask" use:enhance={enhanceForm('add-task', true)} class="add-task">
 				<label>
 					<span>任务名称</span>
 					<input name="name" maxlength="120" required placeholder="例如：发行方案内部确认" />
@@ -164,7 +175,7 @@
 					<span>截止日</span>
 					<input name="dueDate" type="date" />
 				</label>
-				<button type="submit" disabled={pendingAction === 'add-task'}>
+				<button type="submit" disabled={pendingAction !== ''}>
 					<Plus size={16} />
 					{pendingAction === 'add-task' ? '添加中…' : '添加节点'}
 				</button>
@@ -223,7 +234,7 @@
 					<span>项目说明</span>
 					<textarea name="notes" rows="5" placeholder="补充项目背景、风险或执行说明">{data.project.notes ?? ''}</textarea>
 				</label>
-				<button type="submit" disabled={pendingAction === 'project'}>
+				<button type="submit" disabled={pendingAction !== ''}>
 					<Save size={16} />
 					{pendingAction === 'project' ? '保存中…' : '保存基本信息'}
 				</button>
