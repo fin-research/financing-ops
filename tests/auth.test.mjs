@@ -5,6 +5,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { isValidEmail, normalizeEmail } from '../src/lib/email.js';
 import { createNeonAuthClient, jwtFromResponseHeaders, NEON_SESSION_COOKIE, sessionMaxAgeFromSetCookie, sessionTokenFromSetCookie } from '../src/lib/server/neon-auth-client.js';
 import { dataApiUrlFromAuthUrl } from '../src/lib/neon-urls.js';
+import { deleteProjectWithReminders } from '../src/lib/server/project-deletion.js';
 
 function migrationSql(name) {
 	return fs.readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8')
@@ -155,7 +156,24 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 	await db.query("INSERT INTO financing.cashflow (debt_id, cashflow_type, due_date, amount) VALUES (101, 'interest', '2026-12-31', 25)");
 	assert.equal((await db.query('SELECT sequence FROM financing.cashflow')).rows[0].sequence, 1);
 	await assert.rejects(db.query("INSERT INTO financing.cashflow (debt_id, cashflow_type, due_date, amount) VALUES (999, 'principal', '2026-12-31', 100)"), /debt does not exist/i);
-	await db.query("DELETE FROM financing.projects WHERE id = 'project'");
+	await db.exec(`
+		INSERT INTO financing.project_tasks (id, project_id, name, due_date) VALUES ('task', 'project', '测试节点', '2026-08-23');
+		INSERT INTO financing.reminder_rules (id, name, target_type, trigger_field) VALUES ('rule', '测试提醒', 'project_task', 'due_date');
+		INSERT INTO financing.reminder_deliveries (id, rule_id, target_type, target_id, delivery_date, recipients, status) VALUES
+			('delivery-project', 'rule', 'project', 'project', '2026-08-23', '[]', 'pending'),
+			('delivery-task', 'rule', 'project_task', 'task', '2026-08-23', '[]', 'pending'),
+			('delivery-debt', 'rule', 'debt', '101', '2026-08-23', '[]', 'pending');
+	`);
+	const deleted = await deleteProjectWithReminders(db, 'project');
+	assert.equal(deleted.taskCount, 1);
+	assert.equal(deleted.reminderCount, 2);
+	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.projects')).rows[0].count, 0);
+	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.project_tasks')).rows[0].count, 0);
+	assert.deepEqual(
+		(await db.query('SELECT id FROM financing.reminder_deliveries ORDER BY id')).rows.map((row) => row.id),
+		['delivery-debt']
+	);
+	assert.equal(await deleteProjectWithReminders(db, 'project'), null);
 	assert.equal((await db.query('SELECT project_id FROM financing.debt WHERE id = 101')).rows[0].project_id, null);
 	await db.query('DELETE FROM financing.bond WHERE id = 101');
 	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.cashflow')).rows[0].count, 0);

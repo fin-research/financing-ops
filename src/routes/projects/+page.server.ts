@@ -4,6 +4,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { getDatabase } from '$lib/server/db.js';
 import { getAssignableDebtOptions, getProjectGanttData } from '$lib/server/queries.js';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
+import { deleteProjectWithReminders } from '$lib/server/project-deletion.js';
 
 const PROJECT_STATUSES = new Set(['planning', 'in_progress', 'at_risk', 'completed', 'cancelled']);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -293,26 +294,25 @@ export const actions: Actions = {
 		const data = await event.request.formData();
 		const projectId = String(data.get('id') ?? '').trim();
 		const db = getDatabase();
-		const before = projectId ? await db.prepare(`
-			SELECT p.id, p.code, p.name, p.debt_type AS debtType, p.status,
-				p.owner_id AS ownerId,
-				(SELECT COUNT(*) FROM project_tasks task WHERE task.project_id = p.id) AS taskCount,
-				(SELECT COUNT(*) FROM debt WHERE debt.project_id = p.id) AS debtCount
-			FROM projects p WHERE p.id = ?
-		`).get(projectId) as any : null;
-		if (!before) return fail(404, { message: '项目不存在' });
-		await db.batch([
-			prepareAudit({
-				...auditRequestMeta(event), db,
+		if (!projectId) return fail(400, { message: '项目参数无效' });
+		const before = await deleteProjectWithReminders(db, projectId, async ({ transaction, before: deleted }: any) => {
+			await prepareAudit({
+				...auditRequestMeta(event), db: transaction,
 				action: 'project.delete', entityType: 'project', entityId: projectId,
-				summary: `删除项目：${before.name}`, before
-			}),
-			db.prepare('DELETE FROM projects WHERE id = ?').bind(projectId)
-		]);
+				summary: `删除项目：${deleted.name}`, before: deleted
+			}).run();
+		});
+		if (!before) {
+			return {
+				success: true,
+				deletedProjectId: projectId,
+				message: '该项目已经删除，页面数据已同步'
+			};
+		}
 		return {
 			success: true,
 			deletedProjectId: projectId,
-			message: `已删除项目 ${before.name}；关联负债已保留并解除项目绑定`
+			message: `已删除项目 ${before.name}；项目节点和关联提醒已清理，负债已保留并解除绑定`
 		};
 	}
 };

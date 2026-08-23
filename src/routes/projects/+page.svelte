@@ -38,11 +38,14 @@
 	let selectedDebtId = $state('');
 	let newProjectEndDate = $state('');
 	let displayedProjects = $state<any[]>([]);
+	let deletedProjectIds = $state<string[]>([]);
 	let actionState = $state<{ key: string; status: 'idle' | 'pending' | 'success' | 'error'; message: string }>({
 		key: '', status: 'idle', message: ''
 	});
 	$effect(() => {
-		displayedProjects = [...(data?.projects ?? [])];
+		displayedProjects = (data?.projects ?? []).filter(
+			(project: any) => !deletedProjectIds.includes(String(project.id))
+		);
 	});
 	const canManage = $derived(data?.user?.role === 'admin');
 	const selectedDebt = $derived(
@@ -55,7 +58,11 @@
 			if (result.type === 'success') {
 				const deletedProjectId = String(result.data?.deletedProjectId ?? '');
 				if (deletedProjectId) {
+					if (!deletedProjectIds.includes(deletedProjectId)) {
+						deletedProjectIds = [...deletedProjectIds, deletedProjectId];
+					}
 					displayedProjects = displayedProjects.filter((project: any) => project.id !== deletedProjectId);
+					if (String(expandedProject ?? '') === deletedProjectId) expandedProject = null;
 				}
 				await update({ reset: false, invalidateAll: true });
 				if (deletedProjectId) {
