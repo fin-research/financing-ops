@@ -121,7 +121,8 @@ function parseSummaryHistory(workbook, sourceFile) {
 	const excludedFutureDates = sourceDate
 		? dateColumns.filter((candidate) => candidate.asOfDate > sourceDate).map((candidate) => candidate.asOfDate)
 		: [];
-	const snapshots = includedColumns.map((target) => {
+	const snapshotsByDate = new Map();
+	for (const target of includedColumns) {
 		const balances = SNAPSHOT_DEBT_TYPES.map((debtType, index) => {
 			const row = index + 3;
 			const sourceCell = XLSX.utils.encode_cell({ r: row, c: target.column });
@@ -137,15 +138,18 @@ function parseSummaryHistory(workbook, sourceFile) {
 		if (Math.abs(calculatedTotalYi - totalYi) > 1e-8) {
 			throw new Error(`汇总表 ${totalCell} 合计不一致：明细 ${calculatedTotalYi}，单元格 ${totalYi}`);
 		}
-		return {
+		snapshotsByDate.set(target.asOfDate, {
 			asOfDate: target.asOfDate,
 			balances,
 			totalYi,
 			sourceSheet: SUMMARY_SHEET_NAME,
 			totalCell,
 			sourceSequence: target.column
-		};
-	});
+		});
+	}
+	// Some workbooks contain the same historical date in adjacent columns;
+	// the rightmost occurrence is the later workbook revision.
+	const snapshots = [...snapshotsByDate.values()];
 	const latest = sourceDate
 		? snapshots.find((snapshot) => snapshot.asOfDate === sourceDate)
 		: snapshots.at(-1);

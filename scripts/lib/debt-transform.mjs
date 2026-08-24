@@ -112,14 +112,14 @@ function commonDebt(row, records) {
 		: oldType === '集团借款'
 			? text(value(main, '借款对象')) ?? text(oldCounterparty)
 			: text(oldCounterparty);
-	const issueDate = oldType === '收益凭证'
-		? date(value(main, '认购日')) ?? oldIssueDate
-		: oldType === '互换便利'
-			? date(value(main, '首次正回购日期')) ?? oldIssueDate
-			: oldIssueDate;
-	const maturityDate = oldType === '收益凭证'
-		? date(value(main, '兑付日')) ?? oldMaturityDate
-		: oldMaturityDate;
+	// The online debt contract labels these fields as 起息日/到期日. For
+	// income certificates, keep the parser's mapped dates (起息日/到期日)
+	// instead of the adjacent 认购日/兑付日 fields, so updates match the
+	// existing Neon rows and do not duplicate the historical ledger.
+	const issueDate = oldType === '互换便利'
+		? date(value(main, '首次正回购日期')) ?? oldIssueDate
+		: oldIssueDate;
+	const maturityDate = oldMaturityDate;
 	const interestPayable = isBond
 		? number(value(main, '应付利息（元）'))
 		: oldType === '收益凭证' ? number(value(main, '应付利息（元）'))
@@ -141,7 +141,9 @@ function commonDebt(row, records) {
 		name: displayName({ oldType, instrumentName: text(instrumentName), instrumentCode: text(instrumentCode), counterparty, issueDate, main }),
 		counterparty,
 		amount: Number(outstandingAmount ?? principalAmount ?? 0),
-		interestPayable: Number(interestPayable ?? 0),
+		// Match the existing SQLite-to-Postgres migration contract: negative
+		// accrued interest is not payable and is stored as zero.
+		interestPayable: Math.max(Number(interestPayable ?? 0), 0),
 		annualRate: resolvedRate == null ? null : Number(resolvedRate),
 		issueDate: issueDate ?? null,
 		maturityDate: maturityDate ?? null,
@@ -185,7 +187,9 @@ export function transformWorkbook(parsed) {
 		sourceKey,
 		cashflowType: eventType,
 		dueDate: eventDate,
-		amount: amount == null ? null : Number(amount),
+		// Cashflow amounts are unsigned in the financing schema; preserve the
+		// historical migration behavior for source rows containing losses.
+		amount: amount == null ? null : Math.abs(Number(amount)),
 		sourceSequence: Number(sourceSequence ?? 0),
 		paidAmount: null,
 		paidAt: null,
