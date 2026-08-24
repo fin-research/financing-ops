@@ -44,38 +44,6 @@
 	opacity: 0.55;
 }
 
-.management-page .action-feedback {
-	display: flex;
-	min-height: 2.75rem;
-	align-items: center;
-	gap: 0.5rem;
-	margin-bottom: 1rem;
-	padding: 0.625rem 0.75rem;
-	border: 1px solid #b2ccff;
-	border-radius: 0.5rem;
-	color: #175cd3;
-	background: #eff4ff;
-}
-
-.management-page .action-feedback.success {
-	border-color: #a6f4c5;
-	color: #067647;
-	background: #ecfdf3;
-}
-
-.management-page .action-feedback.error {
-	border-color: #fecdca;
-	color: #b42318;
-	background: #fef3f2;
-}
-
-.management-page .action-feedback button {
-	margin-left: auto;
-	border: 0;
-	color: currentColor;
-	background: transparent;
-}
-
 .management-page .spin {
 	animation: management-spin 900ms linear infinite;
 }

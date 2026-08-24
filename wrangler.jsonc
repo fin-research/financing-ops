@@ -1,9 +1,15 @@
 {
 	"$schema": "./node_modules/wrangler/config-schema.json",
 	"name": "eastmoney-financing",
-	"main": ".svelte-kit/cloudflare/_worker.js",
+	"main": "src/worker.ts",
 	"compatibility_date": "2026-08-21",
 	"compatibility_flags": ["nodejs_compat"],
+	"triggers": {
+		"crons": ["0 * * * *"]
+	},
+	"alias": {
+		"sveltekit-worker": "./.svelte-kit/cloudflare/_worker.js"
+	},
 	"vars": {
 		"NEON_AUTH_URL": "https://ep-polished-fog-a6xt57b1.neonauth.us-west-2.aws.neon.tech/neondb/auth"
 	},

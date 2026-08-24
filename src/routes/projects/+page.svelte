@@ -23,6 +23,7 @@
 	import MultiSelectFilter from '$lib/MultiSelectFilter.svelte';
 	import { autoSave, completeAutoSave, getAutoSaveRevision } from '$lib/auto-save';
 	import { withBase } from '$lib/app-paths';
+	import { globalMessages } from '$lib/global-messages';
 	import { buildProjectPageData } from '$lib/project-page.js';
 
 	let { data } = $props();
@@ -44,27 +45,20 @@
 	let projectOptions = $state<{ people: any[]; projectSops: any[] }>({ people: [], projectSops: [] });
 	let projectOptionsStatus = $state<'idle' | 'loading' | 'ready' | 'error'>('idle');
 	let projectOptionsRequest: Promise<boolean> | null = null;
-	let actionState = $state<{ key: string; status: 'idle' | 'pending' | 'success' | 'error'; message: string }>({
-		key: '', status: 'idle', message: ''
+	let actionState = $state<{ key: string; status: 'idle' | 'pending' }>({
+		key: '', status: 'idle'
 	});
 	const canManage = $derived(data?.user?.role === 'admin');
 
-	let savedFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
-
 	function showAutoSaved(message: string) {
-		actionState = { key: 'edit', status: 'success', message };
-		if (savedFeedbackTimer) clearTimeout(savedFeedbackTimer);
-		savedFeedbackTimer = setTimeout(() => {
-			if (actionState.key === 'edit' && actionState.status === 'success') {
-				actionState = { key: '', status: 'idle', message: '' };
-			}
-		}, 1800);
+		globalMessages.success(message, { key: 'project-list-auto-save', duration: 3000, title: '项目已同步' });
+		actionState = { key: '', status: 'idle' };
 	}
 
 	const enhanceProjectAction = (key: string, dialog?: 'create'): SubmitFunction => ({ formElement }) => {
 		const isAutoSave = key === 'edit';
 		const submittedRevision = isAutoSave ? getAutoSaveRevision(formElement) : 0;
-		actionState = { key, status: 'pending', message: '正在保存，请稍候…' };
+		actionState = { key, status: 'pending' };
 		return async ({ result, update }) => {
 			const responseIsCurrent = !isAutoSave || submittedRevision === getAutoSaveRevision(formElement);
 			if (result.type === 'success') {
@@ -90,28 +84,26 @@
 						if (confirmed) editingProject = confirmed;
 						showAutoSaved('已保存');
 					} else {
-						actionState = { key, status: 'pending', message: '正在保存，请稍候…' };
+						actionState = { key, status: 'pending' };
 					}
 				} else {
-					actionState = {
-						key, status: 'success', message: String(result.data?.message ?? '项目已保存')
-					};
+					globalMessages.success(String(result.data?.message ?? '项目已保存'), {
+						key: 'project-list-action'
+					});
+					actionState = { key: '', status: 'idle' };
 				}
 				if (dialog === 'create') newProjectDialog?.close();
 				if (isAutoSave) completeAutoSave(formElement, true);
 				return;
 			}
 			await update({ reset: false, invalidateAll: false });
-			actionState = {
-				key,
-				status: 'error',
-				message:
-					result.type === 'failure'
-						? String(result.data?.message ?? '保存失败，请检查填写内容后重试。')
-						: result.type === 'error' && result.error?.message
-							? result.error.message
-							: '保存失败，请稍后重试。'
-			};
+			const message = result.type === 'failure'
+				? String(result.data?.message ?? '保存失败，请检查填写内容后重试。')
+				: result.type === 'error' && result.error?.message
+					? result.error.message
+					: '保存失败，请稍后重试。';
+			globalMessages.error(message, { key: isAutoSave ? 'project-list-auto-save' : 'project-list-action' });
+			actionState = { key: '', status: 'idle' };
 			if (isAutoSave) completeAutoSave(formElement, false);
 		};
 	};
@@ -134,8 +126,12 @@
 				};
 				projectOptionsStatus = 'ready';
 				return true;
-			} catch {
+			} catch (error) {
 				projectOptionsStatus = 'error';
+				globalMessages.error(
+					error instanceof Error ? error.message : '项目表单选项加载失败，请稍后重试',
+					{ key: 'project-form-options' }
+				);
 				return false;
 			} finally {
 				projectOptionsRequest = null;
@@ -201,18 +197,6 @@
 <svelte:head>
 	<title>项目进度 · 融资工作台</title>
 </svelte:head>
-
-{#if actionState.status !== 'idle' && actionState.key !== 'edit'}
-	<p
-		class:success={actionState.status === 'success'}
-		class="action-feedback"
-		role={actionState.status === 'error' ? 'alert' : 'status'}
-		aria-live="polite"
-	>
-		{#if actionState.status === 'pending'}<LoaderCircle class="spin" size={16} />{/if}
-		{actionState.message}
-	</p>
-{/if}
 
 <section class="summary-strip" aria-label="项目汇总">
 	<div>
@@ -547,14 +531,7 @@
 				</label>
 			</div>
 			<div class="modal-actions">
-				<p
-					class:error={actionState.status === 'error'}
-					class="auto-save-status"
-					role={actionState.status === 'error' ? 'alert' : 'status'}
-					aria-live="polite"
-				>
-					{actionState.key === 'edit' && actionState.status !== 'idle' ? actionState.message : '修改后自动保存'}
-				</p>
+				<p class="auto-save-status">修改后自动保存</p>
 				<button type="button" onclick={() => editProjectDialog.close()}>关闭</button>
 			</div>
 		</form>
@@ -588,22 +565,6 @@
 	.modal-actions button:disabled {
 		opacity: 0.6;
 		cursor: wait;
-	}
-
-	.action-feedback {
-		margin: 0 0 0.75rem;
-		padding: 0.75rem 1rem;
-		border: 1px solid #fecdca;
-		border-radius: 0.5rem;
-		font-size: 1rem;
-		color: #b42318;
-		background: #fef3f2;
-	}
-
-	.action-feedback.success {
-		border-color: #abefc6;
-		color: #067647;
-		background: #ecfdf3;
 	}
 
 	.spin {
@@ -1331,10 +1292,6 @@
 		margin: 0 auto 0 0;
 		font-size: 0.75rem;
 		color: #067647;
-	}
-
-	.auto-save-status.error {
-		color: #b42318;
 	}
 
 	@media (max-width: 75rem) {

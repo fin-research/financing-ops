@@ -13,6 +13,7 @@
 		Workflow
 	} from '@lucide/svelte';
 	import { roleLabel } from '$lib/roles';
+	import GlobalMessages from '$lib/GlobalMessages.svelte';
 
 	let { children, data } = $props();
 
@@ -92,6 +93,7 @@
 	</aside>
 
 	<div class="workspace">
+		<GlobalMessages hasReminderTicker={data.reminders.total > 0} />
 		<header class="topbar">
 			<div class="mobile-brand">
 				<span class="brand-mark"><BarChart3 size={18} /></span>

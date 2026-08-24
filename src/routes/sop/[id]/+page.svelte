@@ -6,16 +6,14 @@
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import {
 		ArrowLeft,
-		CheckCircle2,
-		CircleAlert,
 		GitBranch,
 		GripVertical,
-		LoaderCircle,
 		Plus,
 		Trash2,
 		X
 	} from '@lucide/svelte';
 	import { autoSave, completeAutoSave, getAutoSaveRevision } from '$lib/auto-save';
+	import { globalMessages } from '$lib/global-messages';
 	import { withBase } from '$lib/app-paths';
 	import { hasSameOrder, reorderByOffset, reorderRelative } from '$lib/reorder-items.js';
 
@@ -30,7 +28,6 @@
 
 	let { data, form } = $props();
 	const initialData = untrack(() => data);
-	const initialForm = untrack(() => form);
 	let template = $state({
 		...initialData.template,
 		description: initialData.template.description ?? ''
@@ -39,16 +36,8 @@
 	let loadedTemplateId = $state(String(initialData.template.id));
 	let pendingActions = $state<string[]>([]);
 	const pendingAction = $derived(pendingActions.at(-1) ?? '');
-	let feedback = $state<{
-		status: 'idle' | 'pending' | 'success' | 'error';
-		message: string;
-		automatic: boolean;
-	}>({
-		status: initialForm?.message ? (initialForm.success ? 'success' : 'error') : 'idle',
-		message: String(initialForm?.message ?? ''),
-		automatic: false
-	});
-	let savedFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+	let handledForm = $state<unknown>(null);
+	let suppressFormFeedback = $state(false);
 	let addNodeDialog: HTMLDialogElement;
 	let addNodeNameInput: HTMLInputElement;
 	let reorderForm: HTMLFormElement;
@@ -59,6 +48,13 @@
 	let dragChanged = $state(false);
 	let keyboardGrabbedId = $state<string | null>(null);
 	let reorderAnnouncement = $state('');
+	$effect(() => {
+		if (!form?.message || suppressFormFeedback || handledForm === form) return;
+		handledForm = form;
+		const message = String(form.message);
+		if (form.success) globalMessages.success(message, { key: 'sop-detail-action' });
+		else globalMessages.error(message, { key: 'sop-detail-action' });
+	});
 
 	$effect(() => {
 		if (String(data.template.id) === loadedTemplateId) return;
@@ -123,11 +119,7 @@
 	): SubmitFunction => ({ formElement }) => {
 		pendingActions = [...pendingActions.filter((item) => item !== label), label];
 		const submittedRevision = getAutoSaveRevision(formElement);
-		feedback = {
-			status: 'pending',
-			message: options.autoSave ? '正在保存…' : '正在保存，请稍候…',
-			automatic: Boolean(options.autoSave)
-		};
+		suppressFormFeedback = true;
 		return async ({ result, update }) => {
 			try {
 				if (result.type === 'success') {
@@ -139,21 +131,17 @@
 					}
 					if (options.autoSave) {
 						if (responseIsCurrent) {
-							feedback = { status: 'success', message: '已保存', automatic: true };
-							if (savedFeedbackTimer) clearTimeout(savedFeedbackTimer);
-							savedFeedbackTimer = setTimeout(() => {
-								if (feedback.status === 'success' && feedback.automatic) {
-									feedback = { status: 'idle', message: '', automatic: false };
-								}
-							}, 1800);
+							globalMessages.success('已保存', {
+								key: 'sop-detail-auto-save',
+								duration: 3000,
+								title: 'SOP 已同步'
+							});
 						}
 						completeAutoSave(formElement, true);
 					} else {
-						feedback = {
-							status: 'success',
-							message: String(result.data?.message ?? '保存成功'),
-							automatic: false
-						};
+						globalMessages.success(String(result.data?.message ?? '保存成功'), {
+							key: 'sop-detail-action'
+						});
 					}
 					if (options.resetOnSuccess) formElement.reset();
 					if (options.closeOnSuccess) addNodeDialog?.close();
@@ -161,16 +149,14 @@
 				}
 				if (options.rollbackOrderOnFailure) applyOrder(dragSnapshotIds);
 				await update({ reset: false, invalidateAll: false });
-				feedback = {
-					status: 'error',
-					automatic: Boolean(options.autoSave),
-					message:
-						result.type === 'failure'
-							? String(result.data?.message ?? '保存失败，请检查填写内容后重试')
-							: result.type === 'error' && result.error?.message
-								? result.error.message
-								: '保存失败，请稍后重试'
-				};
+				const message = result.type === 'failure'
+					? String(result.data?.message ?? '保存失败，请检查填写内容后重试')
+					: result.type === 'error' && result.error?.message
+						? result.error.message
+						: '保存失败，请稍后重试';
+				globalMessages.error(message, {
+					key: options.autoSave ? 'sop-detail-auto-save' : 'sop-detail-action'
+				});
 				if (options.autoSave) completeAutoSave(formElement, false);
 			} finally {
 				pendingActions = pendingActions.filter((item) => item !== label);
@@ -289,27 +275,6 @@
 			</button>
 		</form>
 	</div>
-
-	{#if feedback.status !== 'idle'}
-		<div
-			class:success={feedback.status === 'success'}
-			class:pending={feedback.status === 'pending'}
-			class:automatic={feedback.automatic}
-			class:error={feedback.status === 'error'}
-			class="feedback"
-			role={feedback.status === 'error' ? 'alert' : 'status'}
-			aria-live="polite"
-		>
-			{#if feedback.status === 'pending'}
-				<span class="spin"><LoaderCircle size={18} /></span>
-			{:else if feedback.status === 'success'}
-				<CheckCircle2 size={18} />
-			{:else}
-				<CircleAlert size={18} />
-			{/if}
-			{feedback.message}
-		</div>
-	{/if}
 
 	<p class="sr-only" aria-live="assertive">{reorderAnnouncement}</p>
 	<form method="post" action="?/reorderNodes" use:enhance={enhanceForm('reorder', { rollbackOrderOnFailure: true })} bind:this={reorderForm} class="reorder-form">
@@ -488,12 +453,6 @@
 	.back-nav a { display: inline-flex; min-height: 2.75rem; align-items: center; gap: 0.5rem; font-size: 1rem; font-weight: 600; color: var(--blue); }
 	.toggle-button { min-height: 2.75rem; padding: 0 1rem; border: 1px solid #d0d5dd; border-radius: 0.5rem; font-size: 1rem; font-weight: 700; color: #475467; background: #fff; }
 	.toggle-button.active { border-color: #a6f4c5; color: #067647; background: #ecfdf3; }
-	.feedback { display: flex; min-height: 2.75rem; align-items: center; gap: 0.5rem; margin-bottom: 1rem; padding: 0.75rem 1rem; border: 1px solid #fda29b; border-radius: 0.625rem; font-size: 1rem; color: #b42318; background: #fef3f2; }
-	.feedback.success { border-color: #a6f4c5; color: #067647; background: #ecfdf3; }
-	.feedback.pending { border-color: #b2ccff; color: #175cd3; background: #eff4ff; }
-	.feedback.automatic:not(.error) { width: fit-content; min-height: auto; margin-left: auto; padding: 0.35rem 0.65rem; border-color: transparent; background: transparent; }
-	.spin { animation: spin 900ms linear infinite; }
-	@keyframes spin { to { transform: rotate(360deg); } }
 	.editor-grid { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(18rem, 0.65fr); gap: 1rem; align-items: start; }
 	main, aside { display: grid; min-width: 0; gap: 1rem; }
 	.panel { overflow: hidden; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--surface); box-shadow: var(--shadow); }
@@ -530,5 +489,5 @@
 	@media (max-width: 75rem) { .editor-grid { grid-template-columns: 1fr; } }
 	@media (max-width: 64rem) { .node-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .node-description { grid-column: 1 / -1; } }
 	@media (max-width: 51.25rem) { .detail-toolbar { align-items: flex-start; flex-direction: column; } .node-card { grid-template-columns: 2.75rem minmax(0, 1fr); } .node-form { grid-template-columns: 1fr; } .node-description { grid-column: auto; } .delete-form { grid-column: 2; justify-self: end; } }
-	@media (prefers-reduced-motion: reduce) { .spin { animation: none; } .node-card { transition: none; } }
+	@media (prefers-reduced-motion: reduce) { .node-card { transition: none; } }
 </style>

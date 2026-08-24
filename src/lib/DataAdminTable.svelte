@@ -2,9 +2,10 @@
 	import { tick } from 'svelte';
 	import { createTable, FlexRender, tableFeatures, type ColumnDef } from '@tanstack/svelte-table';
 	import {
-		AlertCircle, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
+		Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
 		LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2, X
 	} from '@lucide/svelte';
+	import { globalMessages } from './global-messages';
 	import {
 		DATA_ENTITIES, formatDataValue, valueForDatabase, valueForEditor,
 		type DataRow, type EntityConfig, type FieldConfig
@@ -28,8 +29,6 @@
 	let editingKey = $state<string | null>(null);
 	let originalRow = $state<DataRow | null>(null);
 	let formValues = $state<Record<string, unknown>>({});
-	let message = $state('');
-	let errorMessage = $state('');
 	const api = $derived(new NeonDataApi(dataApiUrl));
 
 	const activeConfig = $derived(DATA_ENTITIES.find((item) => item.key === activeKey) ?? DATA_ENTITIES[0]);
@@ -51,8 +50,6 @@
 
 	async function loadRows() {
 		loading = true;
-		message = '';
-		errorMessage = '';
 		cancelEdit();
 		try {
 			const result = await api.list(activeConfig, {
@@ -65,7 +62,10 @@
 				await loadRows();
 			}
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : String(error);
+			globalMessages.error(error instanceof Error ? error.message : String(error), {
+				key: 'data-admin-load',
+				title: '数据读取失败'
+			});
 			rows = [];
 			total = 0;
 		} finally {
@@ -84,8 +84,6 @@
 		appliedSearch = '';
 		sortKey = config.defaultSort.key;
 		sortDirection = config.defaultSort.direction;
-		message = '';
-		errorMessage = '';
 		cancelEdit();
 	}
 
@@ -127,8 +125,6 @@
 		editingKey = rowKey(activeConfig, row);
 		originalRow = row;
 		formValues = editorValues(row, 'edit');
-		message = '';
-		errorMessage = '';
 		await focusEditor(cell, fieldKey);
 	}
 
@@ -138,8 +134,6 @@
 		editingKey = '__new__';
 		originalRow = null;
 		formValues = editorValues(null, 'create');
-		message = '';
-		errorMessage = '';
 		await focusEditor();
 	}
 
@@ -186,7 +180,6 @@
 		if (!editorMode) return;
 		const currentKey = editingKey ?? '__new__';
 		savingKey = currentKey;
-		errorMessage = '';
 		try {
 			const values = payload(editorMode);
 			if (editorMode === 'create') {
@@ -201,9 +194,11 @@
 				rows = sortCurrentRows(rows.map((row) => rowKey(activeConfig, row) === originalKey ? saved : row));
 			}
 			cancelEdit();
-			message = '已保存';
+			globalMessages.success('已保存', { key: 'data-admin-mutation', title: '数据已更新' });
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : String(error);
+			globalMessages.error(error instanceof Error ? error.message : String(error), {
+				key: 'data-admin-mutation'
+			});
 		} finally {
 			savingKey = null;
 		}
@@ -215,15 +210,16 @@
 		if (!confirm(`确定删除？\n${identity}`)) return;
 		const identityKey = rowKey(activeConfig, row);
 		savingKey = identityKey;
-		errorMessage = '';
 		try {
 			await api.delete(activeConfig, row);
 			rows = rows.filter((item) => rowKey(activeConfig, item) !== identityKey);
 			total = Math.max(0, total - 1);
 			if (editingKey === identityKey) cancelEdit();
-			message = '已删除';
+			globalMessages.success('已删除', { key: 'data-admin-mutation', title: '数据已更新' });
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : String(error);
+			globalMessages.error(error instanceof Error ? error.message : String(error), {
+				key: 'data-admin-mutation'
+			});
 		} finally {
 			savingKey = null;
 		}
@@ -264,9 +260,6 @@
 			<button type="button" class="icon-action" aria-label="刷新数据" title="刷新数据" onclick={() => void loadRows()} disabled={loading}><RefreshCw size={18} class={loading ? 'spin' : ''} /></button>
 		</div>
 	</div>
-
-	{#if message}<div class="table-feedback success" role="status">{message}</div>{/if}
-	{#if errorMessage}<div class="table-feedback error" role="alert"><AlertCircle size={18} /> {errorMessage}</div>{/if}
 
 	<div class="table-shell" aria-busy={loading}>
 		<table>
@@ -351,9 +344,6 @@
 	.icon-action, .pagination-bar button, .row-actions button, .data-create { display: inline-grid; place-items: center; padding: 0; line-height: 1; }
 	.icon-action :global(svg), .pagination-bar button :global(svg), .row-actions button :global(svg), .data-create :global(svg) { display: block; }
 	.table-meta { display: flex; align-items: center; gap: .75rem; white-space: nowrap; }
-	.table-feedback { display: flex; align-items: center; gap: .5rem; margin: 0 1rem .75rem; padding: .75rem 1rem; border-radius: .5rem; }
-	.table-feedback.success { color: #08715c; background: #ecfdf3; }
-	.table-feedback.error { color: var(--red); background: #fff1f0; }
 	.table-shell { min-width: 0; max-width: 100%; overflow: auto; border-block: 1px solid var(--line); }
 	table { width: max(100%, 70rem); border-collapse: collapse; font-size: 1rem; }
 	th, td { padding: .75rem; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; white-space: nowrap; font-variant-numeric: tabular-nums; }

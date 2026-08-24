@@ -4,6 +4,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { getDatabase } from '$lib/server/db.js';
 import { getWorkflowSettingsData } from '$lib/server/queries.js';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
+import { parseReminderPeriods } from '$lib/reminder-periods.js';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -15,16 +16,14 @@ export const actions: Actions = {
 	createReminder: async (event) => {
 		const data = await event.request.formData();
 		const name = String(data.get('name') ?? '').trim();
-		const triggerField = String(data.get('triggerField') ?? 'due_date');
-		const offsetDays = Number(data.get('offsetDays') ?? 3);
-		const frequency = String(data.get('frequency') ?? 'once');
 		const recipientMode = String(data.get('recipientMode') ?? 'assignee');
 		const recipients = String(data.get('recipients') ?? '').trim();
 		const customRecipients = recipients.split(/[;,，；\s]+/).filter(Boolean);
-		if (!name || !Number.isInteger(offsetDays) || offsetDays < 0 || offsetDays > 365) {
-			return fail(400, { message: '提醒规则参数无效' });
-		}
-		if (!['once', 'daily', 'weekly'].includes(frequency)) return fail(400, { message: '提醒频率无效' });
+		const nodeIds = [...new Set(data.getAll('nodeIds').map(String).map((id) => id.trim()).filter(Boolean))];
+		const parsedPeriods = parseReminderPeriods(data.getAll('periodDays'), data.getAll('periodHours'));
+		if (!name || name.length > 120) return fail(400, { message: '规则名称应为 1–120 个字符' });
+		if (!nodeIds.length || nodeIds.length > 100) return fail(400, { message: '请选择 1–100 个 SOP 节点' });
+		if ('error' in parsedPeriods) return fail(400, { message: parsedPeriods.error });
 		if (!['assignee', 'owner', 'custom'].includes(recipientMode)) return fail(400, { message: '收件人类型无效' });
 		if (recipientMode === 'custom') {
 			if (!customRecipients.length || customRecipients.some((email) => !emailPattern.test(email))) {
@@ -32,43 +31,81 @@ export const actions: Actions = {
 			}
 		}
 		const db = getDatabase();
+		const selectedNodes = await db.prepare(`
+			SELECT node.id, node.name, template.id AS sopId, template.name AS sopName,
+				template.debt_type AS debtType
+			FROM sop_nodes node
+			JOIN sop_templates template ON template.id = node.template_id
+			JOIN jsonb_to_recordset(?::jsonb) AS selected(id text) ON selected.id = node.id
+			WHERE template.is_active = TRUE
+			ORDER BY template.debt_type, template.name, node.sort_order, node.created_at, node.id
+		`).all(JSON.stringify(nodeIds.map((id) => ({ id })))) as Array<{
+			id: string;
+			name: string;
+			sopId: string;
+			sopName: string;
+			debtType: string;
+		}>;
+		if (selectedNodes.length !== nodeIds.length) {
+			return fail(409, { message: '所选 SOP 节点已变化或模板已停用，请重新选择' });
+		}
 		const id = randomUUID();
-		await db.batch([db.prepare(`
-			INSERT INTO reminder_rules (
-				id, name, target_type, debt_type, trigger_field, offset_days,
-				frequency, channel, recipient_mode, recipients, is_active
-			) VALUES (?, ?, 'project_task', ?, ?, ?, ?, 'email', ?, ?, TRUE)
-		`).bind(
-			id,
-			name,
-			String(data.get('debtType') ?? '').trim() || null,
-			triggerField,
-			offsetDays,
-			frequency,
-			recipientMode,
-			recipientMode === 'custom' ? JSON.stringify(customRecipients) : null
-		), prepareAudit({
-			...auditRequestMeta(event),
-			action: 'create',
-			entityType: 'reminder_rule',
-			entityId: id,
-			summary: `创建提醒规则：${name}`,
-			after: { name, triggerField, offsetDays, frequency, recipientMode }
-		})]);
+		const periodRows = parsedPeriods.periods.map((period) => ({ id: randomUUID(), ...period }));
+		await db.batch([
+			db.prepare(`
+				INSERT INTO reminder_rules (
+					id, name, channel, recipient_mode, recipients, is_active
+				) VALUES (?, ?, 'email', ?, ?, TRUE)
+			`).bind(
+				id,
+				name,
+				recipientMode,
+				recipientMode === 'custom' ? JSON.stringify(customRecipients) : null
+			),
+			db.prepare(`
+				INSERT INTO reminder_rule_nodes (rule_id, sop_node_id)
+				SELECT ?::text, source.sop_node_id
+				FROM jsonb_to_recordset(?::jsonb) AS source(sop_node_id text)
+			`).bind(id, JSON.stringify(selectedNodes.map((node) => ({ sop_node_id: node.id })))),
+			db.prepare(`
+				INSERT INTO reminder_rule_periods (id, rule_id, lead_hours, sort_order)
+				SELECT source.id, ?::text, source.lead_hours, source.sort_order
+				FROM jsonb_to_recordset(?::jsonb) AS source(id text, lead_hours integer, sort_order integer)
+			`).bind(id, JSON.stringify(periodRows.map((period) => ({
+				id: period.id,
+				lead_hours: period.leadHours,
+				sort_order: period.sortOrder
+			})))),
+			prepareAudit({
+				db,
+				...auditRequestMeta(event),
+				action: 'create',
+				entityType: 'reminder_rule',
+				entityId: id,
+				summary: `创建提醒规则：${name}`,
+				after: {
+					name,
+					nodeIds: selectedNodes.map((node) => node.id),
+					leadHours: periodRows.map((period) => period.leadHours),
+					recipientMode
+				}
+			})
+		]);
 		return {
 			success: true,
 			message: '提醒规则已保存',
 			reminderRule: {
 				id,
 				name,
-				targetType: 'project_task',
-				debtType: String(data.get('debtType') ?? '').trim() || null,
-				triggerField,
-				offsetDays,
-				frequency,
 				channel: 'email',
 				recipientMode,
 				recipients: recipientMode === 'custom' ? customRecipients : null,
+				targets: selectedNodes,
+				periods: periodRows.map(({ id: periodId, leadHours, sortOrder }) => ({
+					id: periodId,
+					leadHours,
+					sortOrder
+				})),
 				isActive: true
 			}
 		};

@@ -14,7 +14,7 @@ function migrationSql(name) {
 		.replace(/^\s*BEGIN\s*;?/i, '').replace(/\s*COMMIT\s*;?\s*$/i, '');
 }
 
-async function installSchema(db) {
+async function installSchema(db, { beforeReminderMigration } = {}) {
 	await db.exec(`
 		CREATE ROLE authenticated;
 		CREATE ROLE anonymous;
@@ -40,8 +40,14 @@ async function installSchema(db) {
 		'0004_data_api_rls.sql',
 		'0005_hide_derived_data_api_tables.sql',
 		'0006_enforce_single_debt_project.sql',
-		'0007_detach_projects_from_debt.sql'
-	]) await db.exec(migrationSql(name));
+		'0007_detach_projects_from_debt.sql',
+		'0008_sop_node_reminder_periods.sql'
+	]) {
+		if (name === '0008_sop_node_reminder_periods.sql' && beforeReminderMigration) {
+			await beforeReminderMigration(db);
+		}
+		await db.exec(migrationSql(name));
+	}
 }
 
 test('login emails are normalized and validated', () => {
@@ -146,6 +152,32 @@ test('Data API URL is derived from the branch-scoped Neon Auth URL', () => {
 	assert.equal(dataApiUrlFromAuthUrl('https://example.com/auth'), null);
 });
 
+test('SOP-node reminder migration removes legacy rules before installing the new relation model', async (t) => {
+	const db = new PGlite();
+	t.after(() => db.close());
+	await installSchema(db, {
+		beforeReminderMigration: async (database) => {
+			await database.exec(`
+				INSERT INTO financing.reminder_rules (id, name, trigger_field)
+				VALUES ('legacy-rule', '旧提醒', 'due_date');
+				INSERT INTO financing.reminder_deliveries (
+					id, rule_id, target_type, target_id, delivery_date, recipients, status
+				) VALUES ('legacy-delivery', 'legacy-rule', 'project_task', 'task', '2026-08-23', '[]', 'sent');
+			`);
+		}
+	});
+	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.reminder_rules')).rows[0].count, 0);
+	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.reminder_deliveries')).rows[0].count, 0);
+	const ruleColumns = (await db.query(`
+		SELECT column_name FROM information_schema.columns
+		WHERE table_schema = 'financing' AND table_name = 'reminder_rules'
+	`)).rows.map((row) => row.column_name);
+	assert.equal(ruleColumns.includes('frequency'), false);
+	assert.equal(ruleColumns.includes('offset_days'), false);
+	assert.equal((await db.query("SELECT to_regclass('financing.reminder_rule_nodes') AS table_name")).rows[0].table_name, 'financing.reminder_rule_nodes');
+	assert.equal((await db.query("SELECT to_regclass('financing.reminder_rule_periods') AS table_name")).rows[0].table_name, 'financing.reminder_rule_periods');
+});
+
 test('Data API RLS lets every active financing role edit and writes audit records', async (t) => {
 	const db = new PGlite();
 	t.after(() => db.close());
@@ -214,6 +246,7 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 	await assert.rejects(db.query("INSERT INTO financing.people (id, name, email, role) VALUES ('two', '乙', 'USER@example.com', 'reviewer')"), /duplicate key value|unique constraint/i);
 	await db.exec(`
 		INSERT INTO financing.sop_templates (id, name, debt_type) VALUES ('sop', '测试 SOP', '小公募');
+		INSERT INTO financing.sop_nodes (id, template_id, name, sort_order) VALUES ('node', 'sop', '测试节点', 1);
 		INSERT INTO financing.projects (id, code, name, debt_type, sop_template_id) VALUES ('project', 'P-1', '测试项目', '小公募', 'sop');
 	`);
 	await db.query(`INSERT INTO financing.bond (id, debt_type, subtype, name, amount, interest_payable, annual_rate, issue_date, maturity_date, activated_at)
@@ -229,12 +262,14 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 	assert.equal((await db.query('SELECT sequence FROM financing.cashflow')).rows[0].sequence, 1);
 	await assert.rejects(db.query("INSERT INTO financing.cashflow (debt_id, cashflow_type, due_date, amount) VALUES (999, 'principal', '2026-12-31', 100)"), /debt does not exist/i);
 	await db.exec(`
-		INSERT INTO financing.project_tasks (id, project_id, name, due_date) VALUES ('task', 'project', '测试节点', '2026-08-23');
-		INSERT INTO financing.reminder_rules (id, name, target_type, trigger_field) VALUES ('rule', '测试提醒', 'project_task', 'due_date');
-		INSERT INTO financing.reminder_deliveries (id, rule_id, target_type, target_id, delivery_date, recipients, status) VALUES
-			('delivery-project', 'rule', 'project', 'project', '2026-08-23', '[]', 'pending'),
-			('delivery-task', 'rule', 'project_task', 'task', '2026-08-23', '[]', 'pending'),
-			('delivery-debt', 'rule', 'debt', '101', '2026-08-23', '[]', 'pending');
+		INSERT INTO financing.project_tasks (id, project_id, sop_node_id, name, due_date) VALUES ('task', 'project', 'node', '测试节点', '2026-08-23');
+		INSERT INTO financing.reminder_rules (id, name) VALUES ('rule', '测试提醒');
+		INSERT INTO financing.reminder_rule_nodes (rule_id, sop_node_id) VALUES ('rule', 'node');
+		INSERT INTO financing.reminder_rule_periods (id, rule_id, lead_hours, sort_order) VALUES ('period', 'rule', 36, 1);
+		INSERT INTO financing.reminder_deliveries (id, rule_id, period_id, target_type, target_id, delivery_date, scheduled_for, recipients, status) VALUES
+			('delivery-project', 'rule', 'period', 'project', 'project', '2026-08-23', '2026-08-22T04:00:00Z', '[]', 'pending'),
+			('delivery-task', 'rule', 'period', 'project_task', 'task', '2026-08-23', '2026-08-22T04:00:00Z', '[]', 'pending'),
+			('delivery-debt', 'rule', 'period', 'debt', '101', '2026-08-23', '2026-08-22T04:00:00Z', '[]', 'pending');
 	`);
 	const deleted = await deleteProjectWithReminders(db, 'project');
 	assert.equal(deleted.taskCount, 1);

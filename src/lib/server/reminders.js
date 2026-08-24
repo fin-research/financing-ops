@@ -1,11 +1,7 @@
 // @ts-nocheck
 import { randomUUID } from 'node:crypto';
 import { Resend } from 'resend';
-
-const DAY_MS = 86_400_000;
-function parseDate(value) {
-	return new Date(`${value}T00:00:00Z`);
-}
+import { reminderPeriodLabel } from '../reminder-periods.js';
 
 function isoDate(value = new Date()) {
 	return new Intl.DateTimeFormat('en-CA', {
@@ -13,15 +9,11 @@ function isoDate(value = new Date()) {
 	}).format(value);
 }
 
-function shouldDeliver(rule, triggerDate, deliveryDate) {
-	const trigger = parseDate(triggerDate);
-	const delivery = parseDate(deliveryDate);
-	const first = new Date(trigger.getTime() - Number(rule.offsetDays) * DAY_MS);
-	const elapsedDays = Math.round((delivery.getTime() - first.getTime()) / DAY_MS);
-	if (elapsedDays < 0 || delivery > trigger) return false;
-	if (rule.frequency === 'daily') return true;
-	if (rule.frequency === 'weekly') return elapsedDays % 7 === 0;
-	return elapsedDays === 0;
+function normaliseAsOf(asOf, asOfDate) {
+	const value = asOf ?? (asOfDate ? `${asOfDate}T23:59:59+08:00` : new Date());
+	const instant = value instanceof Date ? value : new Date(value);
+	if (!Number.isFinite(instant.getTime())) throw new Error('提醒任务时间无效');
+	return instant;
 }
 
 function recipientsFor(row) {
@@ -50,58 +42,75 @@ async function resolveDatabase(db) {
 	return (await import('./db.js')).getDatabase();
 }
 
-export async function collectDueReminders({ asOfDate = isoDate(), db } = {}) {
+export async function collectDueReminders({ asOf, asOfDate, db } = {}) {
 	db = await resolveDatabase(db);
+	const instant = normaliseAsOf(asOf, asOfDate);
+	const asOfIso = instant.toISOString();
 	const rows = await db.prepare(`
-		SELECT r.id AS ruleId, r.name AS ruleName, r.target_type AS targetType,
-			r.debt_type AS ruleDebtType, r.trigger_field AS triggerField,
-			r.offset_days AS offsetDays, r.frequency, r.recipient_mode AS recipientMode,
-			r.recipients, pt.id AS targetId, pt.name AS taskName, p.name AS projectName,
-			p.debt_type AS debtType,
-			CASE r.trigger_field
-				WHEN 'due_date' THEN pt.due_date
-				WHEN 'planned_issue_date' THEN p.planned_issue_date
-				WHEN 'planned_maturity_date' THEN p.planned_maturity_date
-			END AS triggerDate,
-			assignee.email AS assigneeEmail, owner.email AS ownerEmail
-		FROM reminder_rules r
-		JOIN project_tasks pt ON r.target_type = 'project_task' AND pt.status <> 'completed'
-		JOIN projects p ON p.id = pt.project_id
-		LEFT JOIN people assignee ON assignee.id = pt.assignee_id
-		LEFT JOIN people owner ON owner.id = p.owner_id
-		WHERE r.is_active = TRUE
-			AND (r.debt_type IS NULL OR r.debt_type = p.debt_type)
-			AND CASE r.trigger_field
-				WHEN 'due_date' THEN pt.due_date
-				WHEN 'planned_issue_date' THEN p.planned_issue_date
-				WHEN 'planned_maturity_date' THEN p.planned_maturity_date
-			END IS NOT NULL
-	`).all();
+		WITH candidates AS (
+			SELECT rule.id AS ruleId, rule.name AS ruleName,
+				rule.recipient_mode AS recipientMode, rule.recipients,
+				period.id AS periodId, period.lead_hours AS leadHours,
+				task.id AS targetId, task.name AS taskName, project.name AS projectName,
+				project.debt_type AS debtType, template.name AS sopName, node.name AS nodeName,
+				task.due_date AS triggerDate,
+				(task.due_date::timestamp AT TIME ZONE 'Asia/Shanghai') AS triggerAt,
+				CASE
+					WHEN period.lead_hours % 24 = 0 THEN
+						((task.due_date - (period.lead_hours / 24)::integer) + TIME '09:00')
+							AT TIME ZONE 'Asia/Shanghai'
+					ELSE (task.due_date::timestamp AT TIME ZONE 'Asia/Shanghai')
+						- make_interval(hours => period.lead_hours)
+				END AS scheduledFor,
+				assignee.email AS assigneeEmail, owner.email AS ownerEmail
+			FROM reminder_rules rule
+			JOIN reminder_rule_nodes target ON target.rule_id = rule.id
+			JOIN sop_nodes node ON node.id = target.sop_node_id
+			JOIN sop_templates template ON template.id = node.template_id AND template.is_active = TRUE
+			JOIN project_tasks task ON task.sop_node_id = node.id AND task.status <> 'completed'
+			JOIN projects project ON project.id = task.project_id AND project.sop_template_id = template.id
+			JOIN reminder_rule_periods period ON period.rule_id = rule.id
+			LEFT JOIN people assignee ON assignee.id = task.assignee_id
+			LEFT JOIN people owner ON owner.id = project.owner_id
+			WHERE rule.is_active = TRUE AND task.due_date IS NOT NULL
+		)
+		SELECT * FROM candidates
+		WHERE scheduledFor <= ?::timestamptz
+			AND ?::timestamptz < triggerAt + INTERVAL '1 day'
+		ORDER BY scheduledFor, ruleId, targetId, periodId
+	`).all(asOfIso, asOfIso);
 	const reminders = [];
 
 	for (const row of rows) {
-		if (!shouldDeliver(row, row.triggerDate, asOfDate)) continue;
 		const recipients = recipientsFor(row);
 		if (!recipients.length) continue;
+		const leadHours = Number(row.leadHours);
 		reminders.push({
 			ruleId: row.ruleId,
 			ruleName: row.ruleName,
-			targetType: row.targetType,
+			periodId: row.periodId,
+			leadHours,
+			periodLabel: reminderPeriodLabel(leadHours),
+			targetType: 'project_task',
 			targetId: row.targetId,
 			projectName: row.projectName,
 			taskName: row.taskName,
 			debtType: row.debtType,
+			sopName: row.sopName,
+			nodeName: row.nodeName,
 			triggerDate: row.triggerDate,
-			deliveryDate: asOfDate,
+			scheduledFor: new Date(row.scheduledFor).toISOString(),
+			deliveryDate: isoDate(instant),
 			recipients
 		});
 	}
 	return reminders;
 }
 
-export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false, db, config = process.env } = {}) {
+export async function sendDueReminders({ asOf, asOfDate, dryRun = false, db, config = process.env } = {}) {
 	db = await resolveDatabase(db);
-	const reminders = await collectDueReminders({ asOfDate, db });
+	const instant = normaliseAsOf(asOf, asOfDate);
+	const reminders = await collectDueReminders({ asOf: instant, db });
 	const apiKey = config.RESEND_API_KEY;
 	const from = config.FROM_EMAIL
 		?? config.REMINDER_FROM_EMAIL
@@ -109,15 +118,26 @@ export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false, d
 	const resend = apiKey ? new Resend(apiKey) : null;
 	const results = [];
 	const existingRows = reminders.length ? await db.prepare(`
-		SELECT id, rule_id AS ruleId, target_id AS targetId, status
-		FROM reminder_deliveries
-		WHERE delivery_date = ?
-	`).all(asOfDate) : [];
-	const existingByTarget = new Map(existingRows.map((row) => [`${row.ruleId}:${row.targetId}`, row]));
+		WITH keys AS (
+			SELECT rule_id, target_id, period_id
+			FROM jsonb_to_recordset(?::jsonb) AS source(rule_id text, target_id text, period_id text)
+		)
+		SELECT delivery.id, delivery.rule_id AS ruleId, delivery.target_id AS targetId,
+			delivery.period_id AS periodId, delivery.status
+		FROM reminder_deliveries delivery
+		JOIN keys ON keys.rule_id = delivery.rule_id
+			AND keys.target_id = delivery.target_id
+			AND keys.period_id = delivery.period_id
+	`).all(JSON.stringify(reminders.map((reminder) => ({
+		rule_id: reminder.ruleId,
+		target_id: reminder.targetId,
+		period_id: reminder.periodId
+	})))) : [];
+	const existingByTarget = new Map(existingRows.map((row) => [`${row.ruleId}:${row.targetId}:${row.periodId}`, row]));
 	const deliveries = [];
 
 	for (const reminder of reminders) {
-		const existing = existingByTarget.get(`${reminder.ruleId}:${reminder.targetId}`);
+		const existing = existingByTarget.get(`${reminder.ruleId}:${reminder.targetId}:${reminder.periodId}`);
 		if (existing?.status === 'sent') {
 			results.push({ ...reminder, status: 'skipped' });
 			continue;
@@ -138,6 +158,8 @@ export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false, d
 				html: `<h2>${escapeHtml(reminder.ruleName)}</h2>
 					<p>项目：${escapeHtml(reminder.projectName)}</p>
 					<p>任务：${escapeHtml(reminder.taskName)}</p>
+					<p>SOP 节点：${escapeHtml(reminder.sopName)} / ${escapeHtml(reminder.nodeName)}</p>
+					<p>提醒周期：${escapeHtml(reminder.periodLabel)}</p>
 					<p>节点日期：${escapeHtml(reminder.triggerDate)}</p>
 					<p>负债品种：${escapeHtml(reminder.debtType)}</p>`
 			});
@@ -159,25 +181,29 @@ export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false, d
 	if (deliveries.length) {
 		await db.prepare(`
 			INSERT INTO reminder_deliveries (
-				id, rule_id, target_type, target_id, delivery_date, recipients, status,
+				id, rule_id, period_id, target_type, target_id, delivery_date, scheduled_for, recipients, status,
 				provider_message_id, error_message, sent_at
 			)
-			SELECT id, rule_id, target_type, target_id, delivery_date, recipients, status,
+			SELECT id, rule_id, period_id, target_type, target_id, delivery_date, scheduled_for, recipients, status,
 				provider_message_id, error_message, sent_at
 			FROM jsonb_to_recordset(?::jsonb) AS source(
-				id text, rule_id text, target_type text, target_id text, delivery_date date,
+				id text, rule_id text, period_id text, target_type text, target_id text, delivery_date date,
+				scheduled_for timestamptz,
 				recipients jsonb, status text, provider_message_id text, error_message text, sent_at timestamptz
 			)
-			ON CONFLICT(rule_id, target_id, delivery_date) DO UPDATE SET
+			ON CONFLICT(rule_id, target_id, period_id) DO UPDATE SET
+				delivery_date = EXCLUDED.delivery_date, scheduled_for = EXCLUDED.scheduled_for,
 				recipients = EXCLUDED.recipients, status = EXCLUDED.status,
 				provider_message_id = EXCLUDED.provider_message_id,
 				error_message = EXCLUDED.error_message, sent_at = EXCLUDED.sent_at
 		`).run(JSON.stringify(deliveries.map((delivery) => ({
 			id: delivery.id,
 			rule_id: delivery.ruleId,
+			period_id: delivery.periodId,
 			target_type: delivery.targetType,
 			target_id: delivery.targetId,
 			delivery_date: delivery.deliveryDate,
+			scheduled_for: delivery.scheduledFor,
 			recipients: delivery.recipients,
 			status: delivery.status,
 			provider_message_id: delivery.providerMessageId,
@@ -185,5 +211,5 @@ export async function sendDueReminders({ asOfDate = isoDate(), dryRun = false, d
 			sent_at: delivery.sentAt
 		}))));
 	}
-	return { asOfDate, dryRun: dryRun || !apiKey, count: reminders.length, results };
+	return { asOf: instant.toISOString(), asOfDate: isoDate(instant), dryRun: dryRun || !apiKey, count: reminders.length, results };
 }

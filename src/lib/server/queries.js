@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { REPORTING_DEBT_TYPES } from '../debt-types.js';
+import { reminderPeriodLabel } from '../reminder-periods.js';
 import { getDatabase } from './db.js';
 
 const number = (value) => Number(value ?? 0);
@@ -517,25 +518,57 @@ export async function getWorkflowSettingsData() {
 			SELECT jsonb_agg(jsonb_build_object(
 				'id', st.id, 'name', st.name, 'debtType', st.debt_type,
 				'description', st.description, 'isActive', st.is_active,
-				'nodeCount', (SELECT COUNT(*) FROM sop_nodes sn WHERE sn.template_id = st.id)
+				'nodeCount', (SELECT COUNT(*) FROM sop_nodes sn WHERE sn.template_id = st.id),
+				'nodes', COALESCE((
+					SELECT jsonb_agg(jsonb_build_object(
+						'id', sn.id, 'name', sn.name, 'sortOrder', sn.sort_order
+					) ORDER BY sn.sort_order, sn.created_at, sn.id)
+					FROM sop_nodes sn WHERE sn.template_id = st.id
+				), '[]'::jsonb)
 			) ORDER BY st.debt_type, st.name)
 			FROM sop_templates st
 		), '[]'::jsonb) AS sopTemplates,
 		COALESCE((
 			SELECT jsonb_agg(jsonb_build_object(
-				'id', id, 'name', name, 'targetType', target_type, 'debtType', debt_type,
-				'triggerField', trigger_field, 'offsetDays', offset_days, 'frequency', frequency,
-				'channel', channel, 'recipientMode', recipient_mode, 'recipients', recipients,
-				'isActive', is_active
-			) ORDER BY is_active DESC, name)
-			FROM reminder_rules
+				'id', rule.id, 'name', rule.name,
+				'channel', rule.channel, 'recipientMode', rule.recipient_mode,
+				'recipients', rule.recipients, 'isActive', rule.is_active,
+				'targets', COALESCE((
+					SELECT jsonb_agg(jsonb_build_object(
+						'id', node.id, 'name', node.name, 'sopId', template.id,
+						'sopName', template.name, 'debtType', template.debt_type
+					) ORDER BY template.debt_type, template.name, node.sort_order, node.created_at, node.id)
+					FROM reminder_rule_nodes target
+					JOIN sop_nodes node ON node.id = target.sop_node_id
+					JOIN sop_templates template ON template.id = node.template_id
+					WHERE target.rule_id = rule.id
+				), '[]'::jsonb),
+				'periods', COALESCE((
+					SELECT jsonb_agg(jsonb_build_object(
+						'id', period.id, 'leadHours', period.lead_hours,
+						'sortOrder', period.sort_order
+					) ORDER BY period.sort_order, period.id)
+					FROM reminder_rule_periods period WHERE period.rule_id = rule.id
+				), '[]'::jsonb)
+			) ORDER BY rule.is_active DESC, rule.name)
+			FROM reminder_rules rule
 		), '[]'::jsonb) AS reminderRules
 	`).get();
 	const sopTemplates = result.sopTemplates ?? [];
 	const reminderRules = result.reminderRules ?? [];
 	return {
-		sopTemplates: sopTemplates.map((item) => ({ ...item, isActive: Boolean(item.isActive), nodeCount: number(item.nodeCount) })),
-		reminderRules: reminderRules.map((item) => ({ ...item, isActive: Boolean(item.isActive) }))
+		sopTemplates: sopTemplates.map((item) => ({
+			...item,
+			isActive: Boolean(item.isActive),
+			nodeCount: number(item.nodeCount),
+			nodes: item.nodes ?? []
+		})),
+		reminderRules: reminderRules.map((item) => ({
+			...item,
+			isActive: Boolean(item.isActive),
+			targets: item.targets ?? [],
+			periods: (item.periods ?? []).map((period) => ({ ...period, leadHours: number(period.leadHours) }))
+		}))
 	};
 }
 
@@ -682,10 +715,13 @@ export async function getReminderHistory({ status, query, cursor, limit = 50, in
 	const result = await database.prepare(`
 		WITH filtered AS (
 			SELECT rd.id, rd.delivery_date AS deliveryDate, rd.target_type AS targetType,
-				rd.target_id AS targetId, rd.recipients, rd.status,
+				rd.scheduled_for AS scheduledFor, rd.target_id AS targetId, rd.recipients, rd.status,
 				rd.provider_message_id AS providerMessageId, rd.error_message AS errorMessage,
-				rd.created_at AS createdAt, rd.sent_at AS sentAt, rr.name AS ruleName
-			FROM reminder_deliveries rd JOIN reminder_rules rr ON rr.id = rd.rule_id
+				rd.created_at AS createdAt, rd.sent_at AS sentAt, rr.name AS ruleName,
+				period.lead_hours AS leadHours
+			FROM reminder_deliveries rd
+			JOIN reminder_rules rr ON rr.id = rd.rule_id
+			JOIN reminder_rule_periods period ON period.id = rd.period_id AND period.rule_id = rd.rule_id
 			WHERE (?::text IS NULL OR rd.status = ?)
 				AND (?::text IS NULL OR rr.name ILIKE ? OR rd.target_id ILIKE ?
 					OR rd.recipients::text ILIKE ? OR COALESCE(rd.error_message, '') ILIKE ?)
@@ -693,10 +729,10 @@ export async function getReminderHistory({ status, query, cursor, limit = 50, in
 			ORDER BY rd.delivery_date DESC, rd.created_at DESC, rd.id DESC LIMIT ?
 		)${summaryCte}
 		SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object(
-			'id', id, 'deliveryDate', deliverydate, 'targetType', targettype,
+			'id', id, 'deliveryDate', deliverydate, 'scheduledFor', scheduledfor, 'targetType', targettype,
 			'targetId', targetid, 'recipients', recipients, 'status', status,
 			'providerMessageId', providermessageid, 'errorMessage', errormessage,
-			'createdAt', createdat, 'sentAt', sentat, 'ruleName', rulename
+			'createdAt', createdat, 'sentAt', sentat, 'ruleName', rulename, 'leadHours', leadhours
 		) ORDER BY deliverydate DESC, createdat DESC, id DESC) FROM filtered), '[]'::jsonb) AS rows
 			${summarySelect}
 	`).get(
@@ -712,6 +748,8 @@ export async function getReminderHistory({ status, query, cursor, limit = 50, in
 	return {
 		rows: pageRows.map((row) => ({
 			...row,
+			leadHours: number(row.leadHours),
+			periodLabel: reminderPeriodLabel(number(row.leadHours)),
 			recipients: Array.isArray(row.recipients) ? row.recipients : []
 		})),
 		hasMore,

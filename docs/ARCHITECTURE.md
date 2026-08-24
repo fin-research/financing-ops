@@ -30,6 +30,7 @@ Local scripts → direct DATABASE_URL → Neon financing
 - `src/lib/server/db.js` 从当前 request 的 Hyperdrive binding 获取并复用一个连接。
 - `src/lib/server/queries.js` 承载 Dashboard、项目、SOP、日历、额度和人员的集合查询。
 - `src/lib/server/reminders.js` 承载提醒候选、Resend 调用和发送日志。
+- `src/worker.ts` 在 SvelteKit fetch 入口外增加每小时 Cron；`src/lib/server/reminder-scheduler.js` 为每次调度创建并关闭一个 Hyperdrive 连接。
 - `src/lib/server/project-deletion.js` 负责项目、任务和提醒的原子删除。
 - `src/lib/server/auth.js` 与 `neon-auth-client.js` 封装 Neon Auth；业务页面不直接拼 Auth 请求。
 
@@ -45,7 +46,7 @@ Local scripts → direct DATABASE_URL → Neon financing
 
 ### 本地维护
 
-Excel / SQLite / 提醒脚本 → gitignored `.env.database` 直连 Neon。`scripts/` 不得被运行时 `src/` 引用，Worker 也不得暴露这些脚本能力。
+Excel / SQLite / 手工提醒脚本 → gitignored `.env.database` 直连 Neon；自动提醒由 Worker Cron → Hyperdrive → Neon。`scripts/` 不得被运行时 `src/` 引用，Worker 也不得暴露这些脚本能力。
 
 ## 查询约束
 

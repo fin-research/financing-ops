@@ -8,6 +8,7 @@
 		Search,
 		TriangleAlert
 	} from '@lucide/svelte';
+	import { globalMessages } from '$lib/global-messages';
 	import { withBase } from '$lib/app-paths';
 	import { untrack } from 'svelte';
 
@@ -19,7 +20,6 @@
 	let nextCursor = $state<string | null>(initialHistory.nextCursor);
 	let hasMore = $state(Boolean(initialHistory.hasMore));
 	let loadingMore = $state(false);
-	let loadError = $state('');
 
 	$effect(() => {
 		const key = `${data.filters.status}\0${data.filters.query}`;
@@ -28,13 +28,11 @@
 		historyRows = [...data.history.rows];
 		nextCursor = data.history.nextCursor;
 		hasMore = Boolean(data.history.hasMore);
-		loadError = '';
 	});
 
 	async function loadMore() {
 		if (!hasMore || !nextCursor || loadingMore) return;
 		loadingMore = true;
-		loadError = '';
 		const search = new URLSearchParams({
 			status: data.filters.status,
 			query: data.filters.query,
@@ -49,7 +47,7 @@
 			nextCursor = page.nextCursor;
 			hasMore = Boolean(page.hasMore);
 		} catch {
-			loadError = '加载更多记录失败，请稍后重试';
+			globalMessages.error('加载更多记录失败，请稍后重试', { key: 'reminder-history-load' });
 		} finally {
 			loadingMore = false;
 		}
@@ -60,6 +58,15 @@
 		pending: '待发送',
 		failed: '失败'
 	};
+
+	function scheduledTimeLabel(value: string) {
+		const date = new Date(value);
+		if (!Number.isFinite(date.getTime())) return value;
+		return new Intl.DateTimeFormat('zh-CN', {
+			timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit',
+			hour: '2-digit', minute: '2-digit', hour12: false
+		}).format(date);
+	}
 </script>
 
 <svelte:head>
@@ -128,7 +135,8 @@
 					<div>
 						<span class={`status-pill ${row.status}`}>{statusLabel[row.status] ?? row.status}</span>
 						<strong>{row.deliveryDate}</strong>
-						<small>{row.sentAt ?? row.createdAt}</small>
+						<small>{row.periodLabel} · 计划 {scheduledTimeLabel(row.scheduledFor)}</small>
+						<small>记录 {row.sentAt ?? row.createdAt}</small>
 					</div>
 					<div>
 						<strong>{row.ruleName}</strong>
@@ -162,7 +170,6 @@
 				</button>
 			</div>
 		{/if}
-		{#if loadError}<p class="load-error" role="alert">{loadError}</p>{/if}
 	{:else}
 		<div class="empty-state">
 			<Mail size={24} />
@@ -369,13 +376,6 @@
 		font-size: 1rem;
 		font-weight: 650;
 		background: #fff;
-	}
-
-	.load-error {
-		padding: 0 1rem 1rem;
-		font-size: 1rem;
-		text-align: center;
-		color: #b42318;
 	}
 
 	.history-row > div {

@@ -4,13 +4,15 @@ import { sendDueReminders } from '../src/lib/server/reminders.js';
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error('缺少 DATABASE_URL；提醒任务必须从本地直连 Neon');
 
-const asOfArgument = process.argv.find((argument) => argument.startsWith('--date='));
-const asOfDate = asOfArgument?.split('=')[1];
+const asOfArgument = process.argv.find((argument) => argument.startsWith('--at='));
+const dateArgument = process.argv.find((argument) => argument.startsWith('--date='));
+const asOf = asOfArgument?.slice('--at='.length)
+	?? (dateArgument ? `${dateArgument.slice('--date='.length)}T23:59:59+08:00` : undefined);
 const dryRun = process.argv.includes('--dry-run');
 const db = createPostgresDatabase(connectionString, 'eastmoney-financing-reminders');
 
 try {
-	const result = await sendDueReminders({ asOfDate, dryRun, db, config: process.env });
+	const result = await sendDueReminders({ asOf, dryRun, db, config: process.env });
 	console.log(JSON.stringify(result, null, 2));
 } finally {
 	await db.close();

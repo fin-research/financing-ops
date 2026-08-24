@@ -28,7 +28,7 @@ git diff --check
 - DDL：在 PostgreSQL 兼容环境执行全部相关 migration，覆盖继承、计算列、序列、视图、触发器、RLS 和 GRANT。
 - Excel：`pnpm db:import -- --dry-run`，核对来源日期、单位、数量、余额、重复 ID 和孤儿引用。
 - SQLite：`pnpm db:migrate:sqlite -- --dry-run`；目标库非空时不得强行覆盖。
-- 提醒：至少运行测试；查询线上候选前确认目标数据库，真实发送前确认收件人与发件人。
+- 提醒：Worker Cron 每个 UTC 整点执行一次候选检查；整天周期只会在上海时间 09:00 后进入候选，含小时周期按实际整点进入候选。至少运行测试；候选可用 `pnpm reminders:send -- --dry-run --at=<ISO 时间>` 盘点，`--date=YYYY-MM-DD` 表示该上海自然日末；查询线上候选前确认目标数据库，真实发送前确认收件人与发件人。
 - Auth / Data API：检查登录、短期 JWT、RLS、角色边界和失败状态，不在日志展示 token。
 - UI：按 `DESIGN.md` 检查受影响的桌面、移动、200% 缩放与减少动效场景；没有执行时明确说明边界。
 

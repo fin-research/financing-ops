@@ -4,7 +4,8 @@
 	import { invalidate } from '$app/navigation';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { untrack } from 'svelte';
-	import { Camera, CheckCircle2, KeyRound, LoaderCircle, Save, ShieldCheck, UserRound } from '@lucide/svelte';
+	import { Camera, KeyRound, LoaderCircle, Save, ShieldCheck, UserRound } from '@lucide/svelte';
+	import { globalMessages } from '$lib/global-messages';
 	import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
 	import { withBase } from '$lib/app-paths';
 
@@ -17,16 +18,19 @@
 		: null;
 	const displayedAvatar = $derived(avatarTouched ? avatarPreview : avatarUrl(displayedProfile));
 	let pendingSection = $state<'profile' | 'password' | null>(null);
-	let feedback = $state<{ section: string; success: boolean; message: string } | null>(null);
-	const visibleFeedback = $derived(
-		feedback ?? (form?.message
-			? { section: String(form.section ?? 'profile'), success: Boolean(form.success), message: String(form.message) }
-			: null)
-	);
+	let handledForm = $state<unknown>(null);
+	let suppressFormFeedback = $state(false);
+	$effect(() => {
+		if (!form?.message || suppressFormFeedback || handledForm === form) return;
+		handledForm = form;
+		const message = String(form.message);
+		if (form.success) globalMessages.success(message, { key: 'settings-action' });
+		else globalMessages.error(message, { key: 'settings-action' });
+	});
 
 	const enhanceSection = (section: 'profile' | 'password'): SubmitFunction => () => {
 		pendingSection = section;
-		feedback = null;
+		suppressFormFeedback = true;
 		return async ({ result, update }) => {
 			const returnedProfile = result.type === 'success' ? result.data?.profile : null;
 			if (returnedProfile) {
@@ -44,13 +48,14 @@
 			if (returnedProfile) displayedProfile = { ...returnedProfile };
 			pendingSection = null;
 			if (result.type === 'success' || result.type === 'failure') {
-				feedback = {
-					section,
-					success: result.type === 'success' && Boolean(result.data?.success),
-					message: String(result.data?.message ?? (result.type === 'success' ? '保存成功' : '保存失败'))
-				};
+				const message = String(result.data?.message ?? (result.type === 'success' ? '保存成功' : '保存失败'));
+				if (result.type === 'success' && Boolean(result.data?.success)) {
+					globalMessages.success(message, { key: 'settings-action' });
+				} else {
+					globalMessages.error(message, { key: 'settings-action' });
+				}
 			} else {
-				feedback = { section, success: false, message: '请求失败，请稍后重试' };
+				globalMessages.error('请求失败，请稍后重试', { key: 'settings-action' });
 			}
 		};
 	};
@@ -122,11 +127,6 @@
 					</label>
 				</div>
 
-				{#if visibleFeedback?.section === 'profile'}
-					<p class:success={visibleFeedback.success} class="form-feedback" role={visibleFeedback.success ? 'status' : 'alert'} aria-live="polite">
-						{#if visibleFeedback.success}<CheckCircle2 size={16} />{/if}{visibleFeedback.message}
-					</p>
-				{/if}
 				<div class="form-actions">
 					<button class="primary-action" type="submit" disabled={pendingSection !== null}>
 						{#if pendingSection === 'profile'}<LoaderCircle class="spin" size={16} />{:else}<Save size={16} />{/if}
@@ -158,11 +158,6 @@
 					<span>确认新密码</span>
 					<input name="confirmPassword" type="password" required minlength={MIN_PASSWORD_LENGTH} autocomplete="new-password" />
 				</label>
-				{#if visibleFeedback?.section === 'password'}
-					<p class:success={visibleFeedback.success} class="form-feedback" role={visibleFeedback.success ? 'status' : 'alert'} aria-live="polite">
-						{#if visibleFeedback.success}<CheckCircle2 size={16} />{/if}{visibleFeedback.message}
-					</p>
-				{/if}
 				<div class="form-actions">
 					<button class="primary-action" type="submit" disabled={pendingSection !== null}>
 						{#if pendingSection === 'password'}<LoaderCircle class="spin" size={16} />{:else}<KeyRound size={16} />{/if}

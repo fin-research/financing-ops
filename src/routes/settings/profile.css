@@ -232,26 +232,6 @@
 	background: #fff;
 }
 
-.form-feedback {
-	display: flex;
-	min-height: 2.75rem;
-	align-items: center;
-	gap: 0.4375rem;
-	margin: 0;
-	padding: 0.625rem 0.75rem;
-	border: 1px solid #fecdca;
-	border-radius: 0.5rem;
-	font-size: 1rem;
-	color: #b42318;
-	background: #fef3f2;
-}
-
-.form-feedback.success {
-	border-color: #a6f4c5;
-	color: #067647;
-	background: #ecfdf3;
-}
-
 .form-actions {
 	display: flex;
 	justify-content: flex-end;

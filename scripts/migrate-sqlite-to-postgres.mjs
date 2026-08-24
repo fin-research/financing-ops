@@ -95,18 +95,8 @@ async function migrateWorkflowTables() {
 		['sort_order', 'integer'], ['notes', 'text'], ['created_at', 'timestamptz'], ['updated_at', 'timestamptz']
 	], rows('project_tasks'), ['id']);
 
-	migrated.reminderRules = await bulkUpsert('reminder_rules', [
-		['id', 'text'], ['name', 'text'], ['target_type', 'text'], ['debt_type', 'text'], ['trigger_field', 'text'],
-		['offset_days', 'integer'], ['frequency', 'text'], ['channel', 'text'], ['recipient_mode', 'text'],
-		['recipients', 'jsonb'], ['is_active', 'boolean'], ['created_at', 'timestamptz'], ['updated_at', 'timestamptz']
-	], rows('reminder_rules').map((row) => ({
-		...row, recipients: parseJson(row.recipients), is_active: Boolean(row.is_active)
-	})), ['id']);
-	migrated.reminderDeliveries = await bulkUpsert('reminder_deliveries', [
-		['id', 'text'], ['rule_id', 'text'], ['target_type', 'text'], ['target_id', 'text'], ['delivery_date', 'date'],
-		['recipients', 'jsonb'], ['status', 'text'], ['provider_message_id', 'text'], ['error_message', 'text'],
-		['created_at', 'timestamptz'], ['sent_at', 'timestamptz']
-	], rows('reminder_deliveries').map((row) => ({ ...row, recipients: parseJson(row.recipients, []) })), ['id']);
+	migrated.skippedLegacyReminderRules = rows('reminder_rules').length;
+	migrated.skippedLegacyReminderDeliveries = rows('reminder_deliveries').length;
 	migrated.financeParameters = await bulkUpsert('finance_parameters', [
 		['code', 'text'], ['label', 'text'], ['value_yi', 'numeric'], ['period_end', 'date'], ['notes', 'text'],
 		['created_at', 'timestamptz'], ['updated_at', 'timestamptz']
@@ -295,7 +285,9 @@ if (dryRun) {
 		workflow: {
 			people: rows('people').length, skippedLegacyAuthAccounts: rows('auth_users').length,
 			projects: rows('projects').length, projectTasks: rows('project_tasks').length,
-			reminderRules: rows('reminder_rules').length, auditLogs: rows('audit_logs').length
+			skippedLegacyReminderRules: rows('reminder_rules').length,
+			skippedLegacyReminderDeliveries: rows('reminder_deliveries').length,
+			auditLogs: rows('audit_logs').length
 		},
 		debtTables: debtRows.reduce((counts, debt) => {
 			counts[debt.table] = (counts[debt.table] ?? 0) + 1;

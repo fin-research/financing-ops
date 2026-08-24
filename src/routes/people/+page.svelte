@@ -7,10 +7,8 @@
 	import {
 		BadgeCheck,
 		BriefcaseBusiness,
-		CheckCircle2,
 		Eye,
 		KeyRound,
-		LoaderCircle,
 		Pencil,
 		Plus,
 		Save,
@@ -20,6 +18,7 @@
 		Users
 	} from '@lucide/svelte';
 	import { ROLE_DEFINITIONS, roleLabel } from '$lib/roles';
+	import { globalMessages } from '$lib/global-messages';
 	import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
 
 	let { data } = $props();
@@ -28,9 +27,8 @@
 	let accountEnabled = $state(true);
 	let actionState = $state<{
 		key: string;
-		status: 'idle' | 'pending' | 'success' | 'error';
-		message: string;
-	}>({ key: '', status: 'idle', message: '' });
+		status: 'idle' | 'pending';
+	}>({ key: '', status: 'idle' });
 
 	const fallback = { people: [] };
 	let displayedPeople = $state<any[]>(untrack(() => [...(data?.peopleAccess?.people ?? fallback.people)]));
@@ -41,7 +39,7 @@
 
 	const enhanceAction = (key: string, closeDialog = false): SubmitFunction => {
 		return () => {
-			actionState = { key, status: 'pending', message: '正在保存，请稍候…' };
+			actionState = { key, status: 'pending' };
 			return async ({ result, update }) => {
 				if (result.type === 'success') {
 					const returnedPerson = result.data?.person ?? null;
@@ -60,25 +58,21 @@
 						await invalidate('financing:identity');
 					}
 					if (returnedPerson && editingPerson?.id === returnedPerson.id) editingPerson = returnedPerson;
-					actionState = {
-						key,
-						status: 'success',
-						message: String(result.data?.message ?? '人员与账号信息已保存')
-					};
+					globalMessages.success(String(result.data?.message ?? '人员与账号信息已保存'), {
+						key: 'people-action'
+					});
+					actionState = { key: '', status: 'idle' };
 					if (closeDialog) personDialog?.close();
 					return;
 				}
 				await update({ reset: false, invalidateAll: false });
-				actionState = {
-					key,
-					status: 'error',
-					message:
-						result.type === 'failure'
-							? String(result.data?.message ?? '保存失败，请检查后重试')
-							: result.type === 'error' && result.error?.message
-								? result.error.message
-								: '保存失败，请稍后重试'
-				};
+				const message = result.type === 'failure'
+					? String(result.data?.message ?? '保存失败，请检查后重试')
+					: result.type === 'error' && result.error?.message
+						? result.error.message
+						: '保存失败，请稍后重试';
+				globalMessages.error(message, { key: 'people-action' });
+				actionState = { key: '', status: 'idle' };
 			};
 		};
 	};
@@ -95,17 +89,6 @@
 </svelte:head>
 
 <div class="management-page people-page">
-	{#if actionState.status !== 'idle'}
-		<div
-			class={`action-feedback ${actionState.status}`}
-			role={actionState.status === 'error' ? 'alert' : 'status'}
-			aria-live="polite"
-		>
-			{#if actionState.status === 'pending'}<LoaderCircle size={17} class="spin" />{:else}<CheckCircle2 size={17} />{/if}
-			<span>{actionState.message}</span>
-		</div>
-	{/if}
-
 	<section class="role-grid" aria-label="系统角色">
 		{#each ROLE_DEFINITIONS as role, index}
 			<article class={`role-card role-${role.code}`}>

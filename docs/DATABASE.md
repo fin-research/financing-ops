@@ -35,7 +35,8 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 
 - `projects` 与 `project_tasks` 是独立融资项目体系，不引用负债。
 - `sop_templates` 与 `sop_nodes` 定义模板和相对日期节点。
-- `reminder_rules` 与 `reminder_deliveries` 保存规则和去重发送记录。
+- `reminder_rules` 保存规则本体，`reminder_rule_nodes` 保存规则与 SOP 节点的多对多关联，`reminder_rule_periods` 保存可排序的多个小时级提前周期。
+- `reminder_deliveries` 以 `(rule_id, target_id, period_id)` 去重，同时保存 `scheduled_for` 和实际发送结果。
 - 项目删除必须使用已有事务服务，同步清理任务与提醒，不在页面拼接多次删除。
 
 ## Neon Data API 与 RLS

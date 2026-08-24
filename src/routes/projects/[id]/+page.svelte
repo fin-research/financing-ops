@@ -6,8 +6,6 @@
 	import {
 		ArrowLeft,
 		CalendarDays,
-		CheckCircle2,
-		CircleAlert,
 		ClipboardList,
 		Clock3,
 		Plus,
@@ -15,6 +13,7 @@
 		UsersRound
 	} from '@lucide/svelte';
 	import { autoSave, completeAutoSave, getAutoSaveRevision } from '$lib/auto-save';
+	import { globalMessages } from '$lib/global-messages';
 	import { roleLabel } from '$lib/roles';
 	import { withBase } from '$lib/app-paths';
 
@@ -30,11 +29,15 @@
 	let pendingActions = $state<string[]>([]);
 	let pageEditRevision = $state(0);
 	let suppressFormFeedback = $state(false);
-	let autoSaveFeedback = $state<{ status: 'idle' | 'pending' | 'success' | 'error'; message: string }>({
-		status: 'idle', message: ''
-	});
-	let savedFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+	let handledForm = $state<unknown>(null);
 	const pendingAction = $derived(pendingActions.at(-1) ?? '');
+	$effect(() => {
+		if (!form?.message || suppressFormFeedback || handledForm === form) return;
+		handledForm = form;
+		const message = String(form.message);
+		if (form.success) globalMessages.success(message, { key: 'project-detail-action' });
+		else globalMessages.error(message, { key: 'project-detail-action' });
+	});
 
 	const statusLabels: Record<string, string> = {
 		planning: '规划中',
@@ -101,15 +104,6 @@
 
 	function markPageDirty() {
 		pageEditRevision += 1;
-		autoSaveFeedback = { status: 'pending', message: '正在保存…' };
-	}
-
-	function showAutoSaved() {
-		autoSaveFeedback = { status: 'success', message: '已保存' };
-		if (savedFeedbackTimer) clearTimeout(savedFeedbackTimer);
-		savedFeedbackTimer = setTimeout(() => {
-			if (autoSaveFeedback.status === 'success') autoSaveFeedback = { status: 'idle', message: '' };
-		}, 1800);
 	}
 
 	function enhanceForm(
@@ -120,12 +114,7 @@
 			pendingActions = [...pendingActions.filter((item) => item !== label), label];
 			const submittedRevision = getAutoSaveRevision(formElement);
 			const submittedPageRevision = pageEditRevision;
-			if (options.autoSave) {
-				suppressFormFeedback = true;
-				autoSaveFeedback = { status: 'pending', message: '正在保存…' };
-			} else {
-				suppressFormFeedback = false;
-			}
+			suppressFormFeedback = true;
 			return async ({ result, update }) => {
 				try {
 					if (result.type === 'success') {
@@ -140,17 +129,33 @@
 						}
 						if (options.resetOnSuccess) formElement.reset();
 						if (options.autoSave) {
-							if (responseIsCurrent) showAutoSaved();
+							if (responseIsCurrent) {
+								globalMessages.success('已保存', {
+									key: 'project-detail-auto-save',
+									duration: 3000,
+									title: '项目已同步'
+								});
+							}
 							completeAutoSave(formElement, true);
+						} else {
+							globalMessages.success(String(result.data?.message ?? '保存成功'), {
+								key: 'project-detail-action'
+							});
 						}
 						return;
 					}
 					await update({ reset: false, invalidateAll: false });
+					const message = String(
+						result.type === 'failure'
+							? result.data?.message ?? '保存失败，请修改后重试'
+							: result.type === 'error' && result.error?.message
+								? result.error.message
+								: '保存失败，请稍后重试'
+					);
+					globalMessages.error(message, {
+						key: options.autoSave ? 'project-detail-auto-save' : 'project-detail-action'
+					});
 					if (options.autoSave) {
-						autoSaveFeedback = {
-							status: 'error',
-							message: String(result.type === 'failure' ? result.data?.message ?? '保存失败，请修改后重试' : '保存失败，请稍后重试')
-						};
 						completeAutoSave(formElement, false);
 					}
 				} finally {
@@ -180,18 +185,6 @@
 	<a href={withBase('/projects')}><ArrowLeft size={18} /> 返回项目进度</a>
 	<span class={`project-state ${data.project.status}`}>{statusLabels[data.project.status] ?? data.project.status}</span>
 </div>
-
-{#if autoSaveFeedback.status !== 'idle'}
-	<div class:success={autoSaveFeedback.status === 'success'} class:error={autoSaveFeedback.status === 'error'} class="feedback auto-save-feedback" role={autoSaveFeedback.status === 'error' ? 'alert' : 'status'} aria-live="polite">
-		{#if autoSaveFeedback.status === 'success'}<CheckCircle2 size={18} />{:else if autoSaveFeedback.status === 'error'}<CircleAlert size={18} />{/if}
-		{autoSaveFeedback.message}
-	</div>
-{:else if form?.message && !suppressFormFeedback}
-	<div class:success={form.success} class="feedback" role={form.success ? 'status' : 'alert'} aria-live="polite">
-		{#if form.success}<CheckCircle2 size={18} />{:else}<CircleAlert size={18} />{/if}
-		{form.message}
-	</div>
-{/if}
 
 <section class="summary-grid" aria-label="项目概览">
 	<article>
@@ -421,30 +414,6 @@
 	.project-state.cancelled {
 		color: #475467;
 		background: #f2f4f7;
-	}
-	.feedback {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin-bottom: 1rem;
-		padding: 0.75rem 1rem;
-		border: 1px solid #fda29b;
-		border-radius: 0.625rem;
-		font-size: 1rem;
-		color: #b42318;
-		background: #fef3f2;
-	}
-	.feedback.success {
-		border-color: #a6f4c5;
-		color: #067647;
-		background: #ecfdf3;
-	}
-	.feedback.auto-save-feedback:not(.error) {
-		width: fit-content;
-		margin-left: auto;
-		padding: 0.35rem 0.65rem;
-		border-color: transparent;
-		background: transparent;
 	}
 	.summary-grid {
 		display: grid;

@@ -15,7 +15,7 @@ export default defineConfig({
 				runes: ({ filename }) => filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 			adapter: adapter({
-				config: 'wrangler.jsonc',
+				config: 'wrangler.sveltekit.jsonc',
 				platformProxy: {
 					configPath: 'wrangler.jsonc',
 					persist: true,
