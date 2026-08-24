@@ -7,6 +7,7 @@ import {
 	updateCurrentAuthProfile
 } from '$lib/server/auth.js';
 import { auditRequestMeta, prepareAudit, recordAudit } from '$lib/server/audit.js';
+import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
 
 const avatarTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const maxAvatarBytes = 512 * 1024;
@@ -135,8 +136,8 @@ export const actions: Actions = {
 		const currentPassword = String(data.get('currentPassword') ?? '');
 		const newPassword = String(data.get('newPassword') ?? '');
 		const confirmPassword = String(data.get('confirmPassword') ?? '');
-		if (newPassword.length < 16) {
-			return fail(400, { section: 'password', message: '新密码不得少于 16 个字符' });
+		if (newPassword.length < MIN_PASSWORD_LENGTH) {
+			return fail(400, { section: 'password', message: `新密码不得少于 ${MIN_PASSWORD_LENGTH} 个字符` });
 		}
 		if (newPassword !== confirmPassword) {
 			return fail(400, { section: 'password', message: '两次输入的新密码不一致' });

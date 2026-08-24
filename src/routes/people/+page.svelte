@@ -18,6 +18,7 @@
 		Users
 	} from '@lucide/svelte';
 	import { ROLE_DEFINITIONS, roleLabel } from '$lib/roles';
+	import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
 
 	let { data } = $props();
 	let personDialog: HTMLDialogElement;
@@ -263,7 +264,7 @@
 							name="password"
 							type="password"
 							required={!editingPerson?.accountId}
-							minlength="16"
+							minlength={MIN_PASSWORD_LENGTH}
 							autocomplete="new-password"
 						/>
 					</label>

@@ -9,6 +9,7 @@ import {
 import { getPeopleAccessData } from '$lib/server/queries.js';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 import { isValidEmail, normalizeEmail } from '$lib/email.js';
+import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
 
 const validRoles = new Set(['admin', 'handler', 'reviewer']);
 
@@ -26,8 +27,8 @@ function validationMessage(fields: ReturnType<typeof identityFields>, existingAc
 	if (!fields.name || !isValidEmail(fields.email) || !validRoles.has(fields.role)) return '请填写姓名、有效邮箱并选择系统角色';
 	if (fields.role === 'admin' && !fields.accountEnabled) return '管理员必须开通登录权限';
 	if (!fields.accountEnabled) return null;
-	if (!existingAccount && fields.password.length < 16) return '新账号密码不得少于 16 个字符';
-	if (fields.password && fields.password.length < 16) return '重置密码不得少于 16 个字符';
+	if (!existingAccount && fields.password.length < MIN_PASSWORD_LENGTH) return `新账号密码不得少于 ${MIN_PASSWORD_LENGTH} 个字符`;
+	if (fields.password && fields.password.length < MIN_PASSWORD_LENGTH) return `重置密码不得少于 ${MIN_PASSWORD_LENGTH} 个字符`;
 	return null;
 }
 

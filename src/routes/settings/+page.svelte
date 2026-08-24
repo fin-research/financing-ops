@@ -4,6 +4,7 @@
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { untrack } from 'svelte';
 	import { Camera, CheckCircle2, KeyRound, LoaderCircle, Save, ShieldCheck, UserRound } from '@lucide/svelte';
+	import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
 
 	let { data, form } = $props();
 	let displayedProfile = $state(untrack(() => ({ ...data.profile })));
@@ -145,12 +146,12 @@
 				</label>
 				<label>
 					<span>新密码</span>
-					<input name="newPassword" type="password" required minlength="16" autocomplete="new-password" />
-					<small>至少 16 个字符</small>
+					<input name="newPassword" type="password" required minlength={MIN_PASSWORD_LENGTH} autocomplete="new-password" />
+					<small>至少 {MIN_PASSWORD_LENGTH} 个字符</small>
 				</label>
 				<label>
 					<span>确认新密码</span>
-					<input name="confirmPassword" type="password" required minlength="16" autocomplete="new-password" />
+					<input name="confirmPassword" type="password" required minlength={MIN_PASSWORD_LENGTH} autocomplete="new-password" />
 				</label>
 				{#if visibleFeedback?.section === 'password'}
 					<p class:success={visibleFeedback.success} class="form-feedback" role={visibleFeedback.success ? 'status' : 'alert'} aria-live="polite">
