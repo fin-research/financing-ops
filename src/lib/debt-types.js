@@ -15,6 +15,27 @@ export const DEBT_TYPES = Object.freeze([
 
 export const REPORTING_DEBT_TYPES = Object.freeze(DEBT_TYPES.map((item) => item.label));
 
+export const DATA_ADMIN_DEBT_TYPES = Object.freeze([
+	{
+		type: '收益凭证',
+		label: '收益凭证',
+		filterSubtype: false,
+		fixedSubtype: null,
+		subtypeOptions: Object.freeze(DEBT_TYPES
+			.filter((item) => item.type === '收益凭证')
+			.map((item) => Object.freeze({ value: item.subtype, label: item.label })))
+	},
+	...DEBT_TYPES
+		.filter((item) => item.type !== '收益凭证')
+		.map((item) => Object.freeze({
+			type: item.type,
+			label: item.label,
+			filterSubtype: true,
+			fixedSubtype: item.subtype,
+			subtypeOptions: null
+		}))
+]);
+
 /** @param {string} label */
 export function debtTypeParts(label) {
 	const configured = DEBT_TYPES.find((item) => item.label === label);

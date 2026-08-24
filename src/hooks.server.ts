@@ -19,7 +19,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 		const isPublic = routeId === '/login' || isStaticAsset;
 		const sessionToken = isStaticAsset ? null : event.cookies.get(SESSION_COOKIE);
 		try {
-			event.locals.user = isStaticAsset ? null : await getSessionUser(event, sessionToken);
+			event.locals.user = isStaticAsset
+				? null
+				: await getSessionUser(event, sessionToken, { requireDataApiJwt: routeId === '/data/token' });
 		} catch (authError) {
 			if (authError instanceof NeonAuthApiError && authError.status === 503) {
 				throw httpError(503, '认证服务暂时不可用，请稍后重试');

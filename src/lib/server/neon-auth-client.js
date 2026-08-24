@@ -56,13 +56,17 @@ export function createNeonAuthClient({ baseUrl, origin, token = null, fetchImpl 
 	if (!baseUrl) throw new Error('NEON_AUTH_URL is unavailable');
 	if (!origin) throw new Error('Application origin is unavailable');
 
-	const request = async (route, { method = 'GET', body, sessionToken = token } = {}) => {
+	const request = async (route, { method = 'GET', body, query, sessionToken = token } = {}) => {
 		const headers = new Headers({ Accept: 'application/json', Origin: origin });
 		if (body !== undefined) headers.set('Content-Type', 'application/json');
 		if (sessionToken) headers.set('Cookie', upstreamCookie(sessionToken));
 		let response;
 		try {
-			response = await fetchImpl(authEndpoint(baseUrl, route), {
+			const endpoint = authEndpoint(baseUrl, route);
+			for (const [key, value] of Object.entries(query ?? {})) {
+				if (value !== undefined && value !== null) endpoint.searchParams.set(key, String(value));
+			}
+			response = await fetchImpl(endpoint, {
 				method,
 				headers,
 				body: body === undefined ? undefined : JSON.stringify(body),
@@ -97,9 +101,11 @@ export function createNeonAuthClient({ baseUrl, origin, token = null, fetchImpl 
 				sessionToken: null
 			});
 		},
-		async getSession() {
+		async getSession({ disableCookieCache = false } = {}) {
 			if (!token) return { data: null, token: null, maxAge: 0 };
-			return request('/get-session');
+			return request('/get-session', {
+				query: disableCookieCache ? { disableCookieCache: true } : undefined
+			});
 		},
 		async signOut() {
 			if (!token) return { data: { success: true }, token: null, maxAge: 0 };

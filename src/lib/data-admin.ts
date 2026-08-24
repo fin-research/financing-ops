@@ -1,4 +1,4 @@
-import { DEBT_TYPES } from './debt-types.js';
+import { DATA_ADMIN_DEBT_TYPES } from './debt-types.js';
 
 export type DataRow = Record<string, unknown>;
 export type FieldType = 'text' | 'textarea' | 'number' | 'date' | 'datetime' | 'select' | 'boolean' | 'json';
@@ -103,8 +103,18 @@ function debtTableName(debtType: string) {
 	}
 }
 
-const debtEntities: EntityConfig[] = DEBT_TYPES.map((item, index) => {
+const debtEntities: EntityConfig[] = DATA_ADMIN_DEBT_TYPES.map((item, index) => {
 	const tableName = debtTableName(item.type);
+	const fields = [...commonDebtFields];
+	if (item.subtypeOptions) {
+		fields.splice(2, 0, {
+			key: 'subtype',
+			label: '收益类型',
+			type: 'select',
+			required: true,
+			options: item.subtypeOptions.map((choice) => option(String(choice.value), choice.label))
+		});
+	}
 	return {
 		key: `debt-${index}`,
 		label: item.label,
@@ -112,10 +122,13 @@ const debtEntities: EntityConfig[] = DEBT_TYPES.map((item, index) => {
 		primaryKeys: ['id'],
 		searchFields: ['name', 'counterparty'],
 		defaultSort: { key: 'issue_date', direction: 'desc' },
-		fixedValues: { debt_type: item.type, subtype: item.subtype },
+		fixedValues: {
+			debt_type: item.type,
+			...(item.filterSubtype ? { subtype: item.fixedSubtype } : {})
+		},
 		canCreate: true,
 		canDelete: true,
-		fields: [...commonDebtFields, ...(debtExtraFields[tableName] ?? []), ...commonTimestamps]
+		fields: [...fields, ...(debtExtraFields[tableName] ?? []), ...commonTimestamps]
 	};
 });
 

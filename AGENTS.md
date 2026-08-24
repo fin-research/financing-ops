@@ -74,7 +74,7 @@ Cloudflare Git 当前使用 pnpm 10.11.1；`pnpm-workspace.yaml` 必须显式包
 - `src/lib/server/queries.js`：Dashboard、甘特图、额度、日历和管理页集合查询。
 - `src/lib/server/reminders.js`：提醒候选集合查询、Resend 发送和批量发送日志。
 - `src/routes/debts/[id]/`：负债通用字段、品种专属字段和统一现金流联查。
-- `src/routes/data/`：基于 TanStack Table + Neon Data API 的负债分品种行内维护；禁止出现 Excel 上传、解析、预检或导入 API。
+- `src/routes/data/`：基于 TanStack Table + Neon Data API 的负债分品种行内维护；收益凭证使用单一表格标签，不按浮动/固定拆分；禁止出现 Excel 上传、解析、预检或导入 API。
 - `src/lib/data-admin.ts`：数据后台表、字段、编辑器、主键和写入目标的唯一白名单配置。
 - `src/lib/neon-data-api.ts`：浏览器端 Neon Data API 请求、分页、搜索、乐观并发与 CRUD 适配。
 - `scripts/init-database.mjs`：本地直连 Neon 应用 DDL并初始化财务参数；不得创建本地密码账号。
@@ -125,7 +125,7 @@ Cloudflare Git 当前使用 pnpm 10.11.1；`pnpm-workspace.yaml` 必须显式包
 - Dashboard 当前业务数据为 3 次 SQL；根布局的数据日期与提醒为 1 次 SQL。
 - 账号、密码和会话只由 Neon Auth 管理；`financing` schema 禁止自建用户、密码哈希或会话表。
 - Worker 的应用 Cookie 只保存不透明 Neon 会话 token，并限制到 `/financing`；静态资源不得调用 Auth 或 Hyperdrive。
-- 数据后台从 Neon Auth `Set-Auth-Jwt` 响应头取得 15 分钟 JWT；浏览器不得取得长期会话 token。Data API 只暴露 `financing` schema，三种现有业务角色仅对负债、监管参数和负债额度获得编辑权限。
+- 数据后台从 Neon Auth `Set-Auth-Jwt` 响应头取得 15 分钟 JWT；`/data/token` 取令牌时必须绕过会话 Cookie 缓存，避免首屏缺少该响应头。浏览器不得取得长期会话 token。Data API 只暴露 `financing` schema，三种现有业务角色仅对负债、监管参数和负债额度获得编辑权限。
 - 数据后台不展示现金流、历史余额和审计记录，`authenticated` 不得通过 Data API 读取或写入这三张表。
 - Data API 可编辑表必须进入 `src/lib/data-admin.ts` 白名单并配置 PostgreSQL RLS、显式 GRANT 和 Data API 写审计触发器；禁止从 URL 接受任意 schema/table 名称。
 - 登录邮箱由管理员在人员与权限页维护，业务授权由 `people.neon_auth_user_id` 映射及 `people.role` 决定；不得重新引入 username。

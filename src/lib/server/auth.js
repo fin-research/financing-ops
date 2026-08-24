@@ -69,10 +69,10 @@ export async function authenticate(event, email, password) {
 	return user;
 }
 
-export async function getSessionUser(event, token = currentToken(event)) {
+export async function getSessionUser(event, token = currentToken(event), { requireDataApiJwt = false } = {}) {
 	if (!token) return null;
 	try {
-		const result = await client(event, token).getSession();
+		const result = await client(event, token).getSession({ disableCookieCache: requireDataApiJwt });
 		event.locals.dataApiJwt = result.jwt ?? null;
 		if (!result.data?.user) return null;
 		if (result.token && result.token !== token) setSessionCookie(event, result.token, result.maxAge);

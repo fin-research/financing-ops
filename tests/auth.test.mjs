@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { isValidEmail, normalizeEmail } from '../src/lib/email.js';
+import { DATA_ADMIN_DEBT_TYPES, DEBT_TYPES } from '../src/lib/debt-types.js';
 import { createNeonAuthClient, jwtFromResponseHeaders, NEON_SESSION_COOKIE, sessionMaxAgeFromSetCookie, sessionTokenFromSetCookie } from '../src/lib/server/neon-auth-client.js';
 import { dataApiUrlFromAuthUrl } from '../src/lib/neon-urls.js';
 import { deleteProjectWithReminders } from '../src/lib/server/project-deletion.js';
@@ -71,6 +72,41 @@ test('Neon Auth session cookie is proxied without exposing the upstream cookie',
 test('Data API JWT is read from the dedicated Neon Auth response header', () => {
 	assert.equal(jwtFromResponseHeaders(new Headers({ 'Set-Auth-Jwt': ' jwt-value ' })), 'jwt-value');
 	assert.equal(jwtFromResponseHeaders(new Headers()), null);
+});
+
+test('Data API token requests bypass the Neon Auth session cookie cache', async () => {
+	const requests = [];
+	const client = createNeonAuthClient({
+		baseUrl: 'https://example.neonauth.us-west-2.aws.neon.tech/neondb/auth',
+		origin: 'https://eastmoney.hasbai.xyz', token: 'opaque-token',
+		fetchImpl: async (url) => {
+			requests.push(String(url));
+			return new Response(JSON.stringify({ user: { id: 'auth-id' } }), {
+				status: 200,
+				headers: { 'content-type': 'application/json', 'set-auth-jwt': 'short-lived-jwt' }
+			});
+		}
+	});
+	const session = await client.getSession({ disableCookieCache: true });
+	assert.equal(session.jwt, 'short-lived-jwt');
+	assert.equal(new URL(requests[0]).searchParams.get('disableCookieCache'), 'true');
+	const hooksSource = fs.readFileSync(new URL('../src/hooks.server.ts', import.meta.url), 'utf8');
+	assert.match(hooksSource, /requireDataApiJwt:\s*routeId === '\/data\/token'/);
+});
+
+test('收益凭证在数据后台合并、在仪表盘筛选中保留浮动和固定分类', () => {
+	assert.deepEqual(
+		DEBT_TYPES.filter((item) => item.type === '收益凭证').map((item) => item.label),
+		['浮动收益凭证', '固定收益凭证']
+	);
+	const adminEntities = DATA_ADMIN_DEBT_TYPES.filter((item) => item.type === '收益凭证');
+	assert.equal(adminEntities.length, 1);
+	assert.equal(adminEntities[0].label, '收益凭证');
+	assert.equal(adminEntities[0].filterSubtype, false);
+	assert.deepEqual(adminEntities[0].subtypeOptions.map((item) => item.value), ['浮动收益凭证', '固定收益凭证']);
+	const adminSource = fs.readFileSync(new URL('../src/lib/data-admin.ts', import.meta.url), 'utf8');
+	assert.match(adminSource, /DATA_ADMIN_DEBT_TYPES\.map/);
+	assert.match(adminSource, /item\.filterSubtype \? \{ subtype: item\.fixedSubtype \} : \{\}/);
 });
 
 test('Data API URL is derived from the branch-scoped Neon Auth URL', () => {
