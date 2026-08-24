@@ -8,6 +8,15 @@ const PROJECT_STATUSES = new Set(['planning', 'in_progress', 'at_risk', 'complet
 const TASK_STATUSES = new Set(['not_started', 'in_progress', 'blocked', 'completed']);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+function actionAudit(event: Parameters<typeof auditRequestMeta>[0], action: string, detail: string) {
+	return {
+		action,
+		detail,
+		actor: event.locals.user?.email ?? '系统',
+		createdAt: new Date().toISOString()
+	};
+}
+
 async function resolveProjectId(rawId: string) {
 	const db = getDatabase();
 	const exact = await db.prepare('SELECT id FROM projects WHERE id = ?').get(rawId) as { id: string } | undefined;
@@ -124,28 +133,34 @@ export const actions: Actions = {
 		if (ownerId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = TRUE').get(ownerId)) {
 			return fail(400, { message: '负责人不存在或已停用' });
 		}
-		const selectState = db.prepare('SELECT status, owner_id AS ownerId, notes FROM projects WHERE id = ?');
-		const before = await selectState.get(projectId);
-		await db.batch([
-			db.prepare(`
+		const before = await db.prepare('SELECT status, owner_id AS ownerId, notes FROM projects WHERE id = ?').get(projectId);
+		if (!before) return fail(404, { message: '项目不存在' });
+		let project;
+		await db.transaction(async (transaction: ReturnType<typeof getDatabase>) => {
+			project = await transaction.prepare(`
 				UPDATE projects SET status = ?, owner_id = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
-			`).bind(status, ownerId || null, notes || null, projectId),
-			prepareAudit({
-				db,
+				RETURNING status, owner_id AS ownerId, notes, updated_at AS updatedAt
+			`).get(status, ownerId || null, notes || null, projectId);
+			await prepareAudit({
+				db: transaction,
 				...auditRequestMeta(event),
 				action: 'project.update',
 				entityType: 'project',
 				entityId: projectId,
 				summary: '更新项目状态、负责人或说明',
 				before,
-				after: { status, ownerId: ownerId || null, notes: notes || null }
-			})
-		]);
+				after: project
+			}).run();
+		});
 		return {
 			success: true,
 			message: '项目状态与负责人已更新',
-			detail: await loadProject(projectId)
+			project,
+			auditLog: actionAudit(event, 'project.update', '更新项目状态、负责人或说明'),
+			refreshReminders:
+				(before as any).status !== status ||
+				((before as any).ownerId ?? null) !== (ownerId || null)
 		};
 	},
 	updateTask: async (event) => {
@@ -160,9 +175,6 @@ export const actions: Actions = {
 		if (!taskId || !TASK_STATUSES.has(status)) return fail(400, { message: '任务参数无效' });
 		if (dueDate && !ISO_DATE.test(dueDate)) return fail(400, { message: '截止日期格式无效' });
 		const db = getDatabase();
-		if (!await db.prepare('SELECT 1 FROM project_tasks WHERE id = ? AND project_id = ?').get(taskId, projectId)) {
-			return fail(404, { message: '任务节点不存在' });
-		}
 		if (assigneeId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = TRUE').get(assigneeId)) {
 			return fail(400, { message: '任务负责人不存在或已停用' });
 		}
@@ -171,8 +183,10 @@ export const actions: Actions = {
 			FROM project_tasks WHERE id = ? AND project_id = ?
 		`);
 		const before = await selectState.get(taskId, projectId) as any;
-		await db.batch([
-			db.prepare(`
+		if (!before) return fail(404, { message: '任务节点不存在' });
+		let task;
+		await db.transaction(async (transaction: ReturnType<typeof getDatabase>) => {
+			task = await transaction.prepare(`
 				UPDATE project_tasks
 				SET status = ?, assignee_id = ?, due_date = ?,
 					completed_at = CASE
@@ -181,22 +195,31 @@ export const actions: Actions = {
 					END,
 					updated_at = CURRENT_TIMESTAMP
 				WHERE id = ? AND project_id = ?
-			`).bind(status, assigneeId || null, dueDate || null, status, taskId, projectId),
-			prepareAudit({
-				db,
+				RETURNING id, name, status, assignee_id AS assigneeId,
+					planned_start_date AS plannedStartDate, due_date AS dueDate,
+					completed_at AS completedAt, sort_order AS sortOrder, notes,
+					updated_at AS updatedAt
+			`).get(status, assigneeId || null, dueDate || null, status, taskId, projectId);
+			await prepareAudit({
+				db: transaction,
 				...auditRequestMeta(event),
 				action: 'project.task.update',
 				entityType: 'project',
 				entityId: projectId,
 				summary: `更新任务节点：${before.name}`,
 				before,
-				after: { ...before, status, assigneeId: assigneeId || null, dueDate: dueDate || null }
-			})
-		]);
+				after: task
+			}).run();
+		});
 		return {
 			success: true,
 			message: '任务节点已更新',
-			detail: await loadProject(projectId)
+			task,
+			auditLog: actionAudit(event, 'project.task.update', `更新任务节点：${before.name}`),
+			refreshReminders:
+				before.status !== status ||
+				(before.assigneeId ?? null) !== (assigneeId || null) ||
+				(before.dueDate ?? null) !== (dueDate || null)
 		};
 	},
 	addTask: async (event) => {
@@ -237,7 +260,20 @@ export const actions: Actions = {
 		return {
 			success: true,
 			message: '任务节点已添加',
-			detail: await loadProject(projectId)
+			task: {
+				id: taskId,
+				name,
+				status: 'not_started',
+				assigneeId: assigneeId || null,
+				assigneeName: null,
+				plannedStartDate: null,
+				dueDate: dueDate || null,
+				completedAt: null,
+				sortOrder: nextOrder,
+				notes: null
+			},
+			auditLog: actionAudit(event, 'project.task.create', `添加任务节点：${name}`),
+			refreshReminders: true
 		};
 	}
 };

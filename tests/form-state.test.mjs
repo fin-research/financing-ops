@@ -11,34 +11,34 @@ const mutationPages = [
 	'src/routes/sop/[id]/+page.svelte'
 ];
 
-const snapshotContracts = [
+const incrementalContracts = [
 	{
 		name: 'people',
 		server: 'src/routes/people/+page.server.ts',
 		client: 'src/routes/people/+page.svelte',
-		response: /peopleAccess:\s*await getPeopleAccessData\(\)/,
-		apply: /result\.data\?\.peopleAccess\?\.people/
+		response: /person:\s*personId \? await getPersonAccessData\(personId\) : undefined/,
+		apply: /result\.data\?\.person/
 	},
 	{
 		name: 'projects',
 		server: 'src/routes/projects/+page.server.ts',
 		client: 'src/routes/projects/+page.svelte',
-		response: /const refreshed = await getProjectPageData/,
-		apply: /result\.data\?\.projects/
+		response: /project:\s*await getProjectSource\(projectId\)/,
+		apply: /result\.data\?\.project/
 	},
 	{
 		name: 'project detail',
 		server: 'src/routes/projects/[id]/+page.server.ts',
 		client: 'src/routes/projects/[id]/+page.svelte',
-		response: /detail:\s*await loadProject/,
-		apply: /result\.data\?\.detail/
+		response: /auditLog:\s*actionAudit/,
+		apply: /applyActionDelta\(result\.data\)/
 	},
 	{
 		name: 'SOP management',
 		server: 'src/routes/sop/+page.server.ts',
 		client: 'src/routes/sop/+page.svelte',
-		response: /settings:\s*await getWorkflowSettingsData\(\)/,
-		apply: /result\.data\?\.settings/
+		response: /sopTemplate:\s*\{/,
+		apply: /result\.data\?\.sopTemplate/
 	},
 	{
 		name: 'profile settings',
@@ -81,23 +81,44 @@ test('mutation pages explicitly choose form reset and invalidation behavior', as
 	}
 });
 
-test('aggregate mutation pages return and apply server-confirmed view data', async () => {
-	for (const contract of snapshotContracts) {
+test('mutation pages return and apply server-confirmed entity deltas', async () => {
+	for (const contract of incrementalContracts) {
 		const [serverSource, clientSource] = await Promise.all([
 			readFile(new URL(`../${contract.server}`, import.meta.url), 'utf8'),
 			readFile(new URL(`../${contract.client}`, import.meta.url), 'utf8')
 		]);
-		assert.match(serverSource, contract.response, `${contract.name} action must return refreshed view data`);
+		assert.match(serverSource, contract.response, `${contract.name} action must return a confirmed entity delta`);
 		assert.match(clientSource, contract.apply, `${contract.name} page must apply action response data immediately`);
 	}
 });
 
-test('granular mutation pages merge confirmed entities around global invalidation', async () => {
-	const source = await readFile(new URL('../src/routes/sop/[id]/+page.svelte', import.meta.url), 'utf8');
-	assert.match(
-		source,
-		/if \(responseIsCurrent\) applyActionData\(result\.data\);\s*await update\(\{ reset: false, invalidateAll: responseIsCurrent \}\);\s*if \(responseIsCurrent\) applyActionData\(result\.data\);/
-	);
+test('mutation pages do not invalidate and refetch their full page data', async () => {
+	for (const file of mutationPages) {
+		const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+		assert.doesNotMatch(
+			source,
+			/invalidateAll:\s*(?:true|responseIsCurrent|result\.type)/,
+			`${file} must keep successful mutations incremental`
+		);
+	}
+
+	const sopDetail = await readFile(new URL('../src/routes/sop/[id]/+page.svelte', import.meta.url), 'utf8');
+	assert.match(sopDetail, /if \(responseIsCurrent\) applyActionData\(result\.data\);\s*await update\(\{ reset: false, invalidateAll: false \}\);/);
+});
+
+test('only global identity or reminder data is invalidated after relevant deltas', async () => {
+	const [layout, projects, projectDetail, people, settings] = await Promise.all([
+		readFile(new URL('../src/routes/+layout.server.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/projects/+page.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/projects/[id]/+page.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/people/+page.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/settings/+page.svelte', import.meta.url), 'utf8')
+	]);
+	assert.match(layout, /depends\('financing:identity', 'financing:reminders'\)/);
+	assert.match(projects, /invalidate\('financing:reminders'\)/);
+	assert.match(projectDetail, /invalidate\('financing:reminders'\)/);
+	assert.match(people, /invalidate\('financing:identity'\)/);
+	assert.match(settings, /invalidate\('financing:identity'\)/);
 });
 
 test('project and SOP edit forms auto-save without per-item save buttons', async () => {

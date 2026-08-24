@@ -6,6 +6,6 @@ export const load: PageServerLoad = async ({ url }) => {
 	const query = url.searchParams.get('query')?.trim() ?? '';
 	return {
 		filters: { status, query },
-		history: await getReminderHistory({ status, query, limit: 200 })
+		history: await getReminderHistory({ status, query, limit: 50 })
 	};
 };

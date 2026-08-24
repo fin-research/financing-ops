@@ -1,19 +1,21 @@
 <script lang="ts">
 	import './profile.css';
 	import { enhance } from '$app/forms';
+	import { invalidate } from '$app/navigation';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { untrack } from 'svelte';
 	import { Camera, CheckCircle2, KeyRound, LoaderCircle, Save, ShieldCheck, UserRound } from '@lucide/svelte';
 	import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
+	import { withBase } from '$lib/app-paths';
 
 	let { data, form } = $props();
 	let displayedProfile = $state(untrack(() => ({ ...data.profile })));
-	$effect(() => {
-		displayedProfile = { ...data.profile };
-	});
 	let avatarPreview = $state<string | null>(null);
 	let avatarTouched = $state(false);
-	const displayedAvatar = $derived(avatarTouched ? avatarPreview : displayedProfile.avatarDataUrl);
+	const avatarUrl = (profile: any) => profile.hasAvatar
+		? `${withBase('/avatar')}?v=${encodeURIComponent(`${data.user?.personId ?? ''}:${profile.avatarVersion}`)}`
+		: null;
+	const displayedAvatar = $derived(avatarTouched ? avatarPreview : avatarUrl(displayedProfile));
 	let pendingSection = $state<'profile' | 'password' | null>(null);
 	let feedback = $state<{ section: string; success: boolean; message: string } | null>(null);
 	const visibleFeedback = $derived(
@@ -34,8 +36,11 @@
 			}
 			await update({
 				reset: result.type === 'success' && section === 'password',
-				invalidateAll: result.type === 'success'
+				invalidateAll: false
 			});
+			if (result.type === 'success' && result.data?.refreshIdentity) {
+				await invalidate('financing:identity');
+			}
 			if (returnedProfile) displayedProfile = { ...returnedProfile };
 			pendingSection = null;
 			if (result.type === 'success' || result.type === 'failure') {

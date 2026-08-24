@@ -263,7 +263,8 @@ export async function getProjectGanttData(filters = {}) {
 		LEFT JOIN people owner ON owner.id = p.owner_id
 		LEFT JOIN project_tasks pt ON pt.project_id = p.id
 		LEFT JOIN people assignee ON assignee.id = pt.assignee_id
-		WHERE (?::text IS NULL OR p.debt_type = ?)
+		WHERE (?::text IS NULL OR p.id = ?)
+			AND (?::text IS NULL OR p.debt_type = ?)
 			AND (?::text IS NULL OR p.owner_id = ? OR EXISTS (
 				SELECT 1 FROM project_tasks scoped
 				WHERE scoped.project_id = p.id AND scoped.assignee_id = ?
@@ -271,6 +272,7 @@ export async function getProjectGanttData(filters = {}) {
 			AND (?::text IS NULL OR p.status = ?)
 		ORDER BY COALESCE(p.planned_start_date, p.planned_issue_date), p.name, pt.sort_order, pt.due_date
 	`).all(
+		filters.projectId ?? null, filters.projectId ?? null,
 		filters.debtType ?? null, filters.debtType ?? null,
 		filters.personId ?? null, filters.personId ?? null, filters.personId ?? null,
 		filters.status ?? null, filters.status ?? null
@@ -549,6 +551,26 @@ export async function getPeopleAccessData() {
 	};
 }
 
+export async function getPersonAccessData(id, database = getDatabase()) {
+	const person = await database.prepare(`
+		SELECT p.id, p.name, p.email, p.role, p.active,
+			u.id::text AS accountId, NOT COALESCE(u.banned, FALSE) AS accountActive,
+			login.last_login_at AS lastLoginAt
+		FROM people p
+		LEFT JOIN neon_auth."user" u ON u.id = p.neon_auth_user_id
+		LEFT JOIN LATERAL (
+			SELECT MAX(s."createdAt") AS last_login_at
+			FROM neon_auth.session s WHERE s."userId" = u.id
+		) login ON TRUE
+		WHERE p.id = ?
+	`).get(id);
+	return person ? {
+		...person,
+		active: Boolean(person.active),
+		accountActive: person.accountId ? Boolean(person.accountActive) : null
+	} : null;
+}
+
 const SOP_EVENT_DEBT_TYPE_SCOPE = { 公司债: ['公司债', '小公募', '私募债', '次级债'] };
 
 async function getActiveSopEventDebtTypes(db) {
@@ -608,10 +630,44 @@ export async function getLayoutData({ today, toDate, personId = null, ownOnly = 
 	};
 }
 
-/** @param {{ status?: string | null, query?: string | null, limit?: number }} [options] */
-export async function getReminderHistory({ status, query, limit = 100 } = {}) {
-	const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
-	const result = await getDatabase().prepare(`
+function decodeReminderCursor(cursor) {
+	if (!cursor || String(cursor).length > 1000) return null;
+	try {
+		const [deliveryDate, createdAt, id] = JSON.parse(Buffer.from(String(cursor), 'base64url').toString('utf8'));
+		const parsedDate = Date.parse(`${deliveryDate}T00:00:00Z`);
+		const parsedCreatedAt = Date.parse(String(createdAt));
+		if (
+			!/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate) ||
+			!Number.isFinite(parsedDate) || new Date(parsedDate).toISOString().slice(0, 10) !== deliveryDate ||
+			!Number.isFinite(parsedCreatedAt) || !id || String(id).length > 200
+		) return null;
+		return { deliveryDate, createdAt: String(createdAt), id: String(id) };
+	} catch {
+		return null;
+	}
+}
+
+function encodeReminderCursor(row) {
+	return Buffer.from(JSON.stringify([row.deliveryDate, row.createdAt, row.id])).toString('base64url');
+}
+
+/** @param {{ status?: string | null, query?: string | null, cursor?: string | null, limit?: number, includeSummary?: boolean, database?: ReturnType<typeof getDatabase> }} [options] */
+export async function getReminderHistory({ status, query, cursor, limit = 50, includeSummary = true, database = getDatabase() } = {}) {
+	const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
+	const validStatus = status && ['pending', 'sent', 'failed'].includes(status) ? status : null;
+	const safeQuery = String(query ?? '').trim().slice(0, 160);
+	const decodedCursor = decodeReminderCursor(cursor);
+	const summaryCte = includeSummary ? `,
+		summary AS (
+			SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'sent') AS sent,
+				COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+				COUNT(*) FILTER (WHERE status = 'failed') AS failed
+			FROM reminder_deliveries
+		)` : '';
+	const summarySelect = includeSummary
+		? ', to_jsonb(summary) AS summary FROM summary'
+		: ', NULL::jsonb AS summary';
+	const result = await database.prepare(`
 		WITH filtered AS (
 			SELECT rd.id, rd.delivery_date AS deliveryDate, rd.target_type AS targetType,
 				rd.target_id AS targetId, rd.recipients, rd.status,
@@ -621,31 +677,33 @@ export async function getReminderHistory({ status, query, limit = 100 } = {}) {
 			WHERE (?::text IS NULL OR rd.status = ?)
 				AND (?::text IS NULL OR rr.name ILIKE ? OR rd.target_id ILIKE ?
 					OR rd.recipients::text ILIKE ? OR COALESCE(rd.error_message, '') ILIKE ?)
-			ORDER BY rd.delivery_date DESC, rd.created_at DESC LIMIT ?
-		), summary AS (
-			SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'sent') AS sent,
-				COUNT(*) FILTER (WHERE status = 'pending') AS pending,
-				COUNT(*) FILTER (WHERE status = 'failed') AS failed
-			FROM reminder_deliveries
-		)
+				AND (?::date IS NULL OR (rd.delivery_date, rd.created_at, rd.id) < (?::date, ?::timestamptz, ?::text))
+			ORDER BY rd.delivery_date DESC, rd.created_at DESC, rd.id DESC LIMIT ?
+		)${summaryCte}
 		SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object(
 			'id', id, 'deliveryDate', deliverydate, 'targetType', targettype,
 			'targetId', targetid, 'recipients', recipients, 'status', status,
 			'providerMessageId', providermessageid, 'errorMessage', errormessage,
 			'createdAt', createdat, 'sentAt', sentat, 'ruleName', rulename
-		) ORDER BY deliverydate DESC, createdat DESC) FROM filtered), '[]'::jsonb) AS rows,
-			to_jsonb(summary) AS summary FROM summary
+		) ORDER BY deliverydate DESC, createdat DESC, id DESC) FROM filtered), '[]'::jsonb) AS rows
+			${summarySelect}
 	`).get(
-		status && ['pending', 'sent', 'failed'].includes(status) ? status : null,
-		status && ['pending', 'sent', 'failed'].includes(status) ? status : null,
-		query || null, query ? `%${query}%` : null, query ? `%${query}%` : null,
-		query ? `%${query}%` : null, query ? `%${query}%` : null, safeLimit
+		validStatus, validStatus,
+		safeQuery || null, safeQuery ? `%${safeQuery}%` : null, safeQuery ? `%${safeQuery}%` : null,
+		safeQuery ? `%${safeQuery}%` : null, safeQuery ? `%${safeQuery}%` : null,
+		decodedCursor?.deliveryDate ?? null, decodedCursor?.deliveryDate ?? null,
+		decodedCursor?.createdAt ?? null, decodedCursor?.id ?? null, safeLimit + 1
 	);
+	const fetchedRows = result.rows ?? [];
+	const hasMore = fetchedRows.length > safeLimit;
+	const pageRows = fetchedRows.slice(0, safeLimit);
 	return {
-		rows: (result.rows ?? []).map((row) => ({
+		rows: pageRows.map((row) => ({
 			...row,
 			recipients: Array.isArray(row.recipients) ? row.recipients : []
 		})),
+		hasMore,
+		nextCursor: hasMore && pageRows.length ? encodeReminderCursor(pageRows.at(-1)) : null,
 		summary: {
 			total: number(result.summary?.total), sent: number(result.summary?.sent),
 			pending: number(result.summary?.pending), failed: number(result.summary?.failed)

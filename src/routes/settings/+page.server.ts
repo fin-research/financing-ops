@@ -15,7 +15,8 @@ const maxAvatarBytes = 512 * 1024;
 async function currentProfile(personId: string) {
 	return await getDatabase().prepare(`
 		SELECT id AS personId, neon_auth_user_id::text AS neonAuthUserId,
-			name, email, role, avatar_data_url AS avatarDataUrl
+			name, email, role, avatar_data_url IS NOT NULL AS hasAvatar,
+			to_char(updated_at, 'YYYYMMDDHH24MISSUS') AS avatarVersion
 		FROM people
 		WHERE id = ?
 	`).get(personId) as
@@ -25,14 +26,16 @@ async function currentProfile(personId: string) {
 				name: string;
 				email: string | null;
 				role: string;
-				avatarDataUrl: string | null;
+				hasAvatar: boolean;
+				avatarVersion: string;
 		  }
 		| undefined;
 }
 
 function publicProfile(profile: NonNullable<Awaited<ReturnType<typeof currentProfile>>>) {
 	return {
-		avatarDataUrl: profile.avatarDataUrl,
+		hasAvatar: Boolean(profile.hasAvatar),
+		avatarVersion: profile.avatarVersion,
 		name: profile.name,
 		email: profile.email,
 		role: profile.role
@@ -75,7 +78,8 @@ export const actions: Actions = {
 			return fail(400, { section: 'profile', message: '显示姓名不能为空且不得超过 50 个字符' });
 		}
 
-		let avatarDataUrl = removeAvatar ? null : before.avatarDataUrl;
+		let avatarMode: 'keep' | 'remove' | 'replace' = removeAvatar ? 'remove' : 'keep';
+		let avatarDataUrl: string | null = null;
 		if (avatar instanceof File && avatar.size > 0) {
 			if (!avatarTypes.has(avatar.type)) {
 				return fail(400, { section: 'profile', message: '头像仅支持 JPG、PNG 或 WebP 图片' });
@@ -84,6 +88,7 @@ export const actions: Actions = {
 				return fail(400, { section: 'profile', message: '头像文件不得超过 512KB' });
 			}
 			avatarDataUrl = `data:${avatar.type};base64,${Buffer.from(await avatar.arrayBuffer()).toString('base64')}`;
+			avatarMode = 'replace';
 		}
 
 		try {
@@ -100,26 +105,39 @@ export const actions: Actions = {
 
 		const db = getDatabase();
 		try {
-			await db.batch([
-				db.prepare(`
-					UPDATE people SET name = ?, avatar_data_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-				`).bind(name, avatarDataUrl, before.personId),
-				prepareAudit({
+			let storedProfile: { hasAvatar: boolean; avatarVersion: string } | undefined;
+			await db.transaction(async (transaction: ReturnType<typeof getDatabase>) => {
+				storedProfile = await transaction.prepare(`
+					UPDATE people
+					SET name = ?,
+						avatar_data_url = CASE WHEN ? = 'keep' THEN avatar_data_url ELSE ? END,
+						updated_at = CURRENT_TIMESTAMP
+					WHERE id = ?
+					RETURNING avatar_data_url IS NOT NULL AS hasAvatar,
+						to_char(updated_at, 'YYYYMMDDHH24MISSUS') AS avatarVersion
+				`).get(name, avatarMode, avatarDataUrl, before.personId) as typeof storedProfile;
+				await prepareAudit({
 					...auditRequestMeta(event),
-					db,
+					db: transaction,
 					action: 'profile.update',
 					entityType: 'auth',
 					entityId: before.neonAuthUserId,
 					summary: `${before.email ?? before.name} 更新个人资料`,
-					before: { name: before.name, hasAvatar: Boolean(before.avatarDataUrl) },
-					after: { name, hasAvatar: Boolean(avatarDataUrl) }
-				})
-			]);
+					before: { name: before.name, hasAvatar: before.hasAvatar },
+					after: { name, hasAvatar: Boolean(storedProfile?.hasAvatar) }
+				}).run();
+			});
 			return {
 				section: 'profile',
 				success: true,
 				message: '个人资料已更新',
-				profile: publicProfile({ ...before, name, avatarDataUrl })
+				profile: publicProfile({
+					...before,
+					name,
+					hasAvatar: Boolean(storedProfile?.hasAvatar),
+					avatarVersion: storedProfile?.avatarVersion ?? before.avatarVersion
+				}),
+				refreshIdentity: true
 			};
 		} catch (databaseError) {
 			await updateCurrentAuthProfile(event, { name: before.name }).catch(() => null);

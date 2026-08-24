@@ -34,6 +34,8 @@
 		if (href === '/') return pathname === '/' || pathname.startsWith('/debts/');
 		return pathname === href || pathname.startsWith(`${href}/`);
 	};
+	const avatarUrl = (user: NonNullable<typeof data.user>) =>
+		`${withBase('/avatar')}?v=${encodeURIComponent(`${user.personId}:${user.avatarVersion}`)}`;
 
 	const currentPageTitle = () => {
 		const pathname = withoutBase(page.url.pathname);
@@ -105,8 +107,8 @@
 			</div>
 			<div class="top-actions">
 				<a class="profile-button" href={withBase('/settings')} aria-label="打开个人设置">
-					{#if data.user.avatarDataUrl}
-						<img class="avatar" src={data.user.avatarDataUrl} alt="" />
+					{#if data.user.hasAvatar}
+						<img class="avatar" src={avatarUrl(data.user)} alt="" />
 					{:else}
 						<span class="avatar">{data.user.personName.slice(0, 1).toUpperCase()}</span>
 					{/if}

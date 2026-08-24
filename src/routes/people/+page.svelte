@@ -1,6 +1,8 @@
 <script lang="ts">
 	import '../management.css';
 	import { enhance } from '$app/forms';
+	import { invalidate } from '$app/navigation';
+	import { untrack } from 'svelte';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import {
 		BadgeCheck,
@@ -31,10 +33,7 @@
 	}>({ key: '', status: 'idle', message: '' });
 
 	const fallback = { people: [] };
-	let displayedPeople = $state<any[]>([]);
-	$effect(() => {
-		displayedPeople = [...(data?.peopleAccess?.people ?? fallback.people)];
-	});
+	let displayedPeople = $state<any[]>(untrack(() => [...(data?.peopleAccess?.people ?? fallback.people)]));
 	const peopleAccess = $derived({ people: displayedPeople });
 	const roleCount = (role: string) =>
 		displayedPeople.filter((person: any) => person.role === role).length;
@@ -45,19 +44,22 @@
 			actionState = { key, status: 'pending', message: '正在保存，请稍候…' };
 			return async ({ result, update }) => {
 				if (result.type === 'success') {
-					const returnedPeople = Array.isArray(result.data?.peopleAccess?.people)
-						? result.data.peopleAccess.people
-						: null;
-					if (returnedPeople) displayedPeople = [...returnedPeople];
+					const returnedPerson = result.data?.person ?? null;
+					if (returnedPerson) {
+						const exists = displayedPeople.some((person: any) => person.id === returnedPerson.id);
+						displayedPeople = exists
+							? displayedPeople.map((person: any) => person.id === returnedPerson.id ? returnedPerson : person)
+							: [...displayedPeople, returnedPerson];
+					}
 					const deletedPersonId = String(result.data?.deletedPersonId ?? '');
 					if (deletedPersonId) {
 						displayedPeople = displayedPeople.filter((person: any) => person.id !== deletedPersonId);
 					}
-					await update({ reset: false, invalidateAll: true });
-					if (returnedPeople) displayedPeople = [...returnedPeople];
-					if (deletedPersonId) {
-						displayedPeople = displayedPeople.filter((person: any) => person.id !== deletedPersonId);
+					await update({ reset: false, invalidateAll: false });
+					if (result.data?.refreshIdentity) {
+						await invalidate('financing:identity');
 					}
+					if (returnedPerson && editingPerson?.id === returnedPerson.id) editingPerson = returnedPerson;
 					actionState = {
 						key,
 						status: 'success',

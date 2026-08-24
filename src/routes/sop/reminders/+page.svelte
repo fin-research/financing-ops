@@ -3,13 +3,57 @@
 		ArrowLeft,
 		CheckCircle2,
 		Clock3,
+		LoaderCircle,
 		Mail,
 		Search,
 		TriangleAlert
 	} from '@lucide/svelte';
 	import { withBase } from '$lib/app-paths';
+	import { untrack } from 'svelte';
 
 	let { data } = $props();
+	const initialHistory = untrack(() => data.history);
+	const initialFilters = untrack(() => data.filters);
+	let loadedFilterKey = `${initialFilters.status}\0${initialFilters.query}`;
+	let historyRows = $state<any[]>([...initialHistory.rows]);
+	let nextCursor = $state<string | null>(initialHistory.nextCursor);
+	let hasMore = $state(Boolean(initialHistory.hasMore));
+	let loadingMore = $state(false);
+	let loadError = $state('');
+
+	$effect(() => {
+		const key = `${data.filters.status}\0${data.filters.query}`;
+		if (key === loadedFilterKey) return;
+		loadedFilterKey = key;
+		historyRows = [...data.history.rows];
+		nextCursor = data.history.nextCursor;
+		hasMore = Boolean(data.history.hasMore);
+		loadError = '';
+	});
+
+	async function loadMore() {
+		if (!hasMore || !nextCursor || loadingMore) return;
+		loadingMore = true;
+		loadError = '';
+		const search = new URLSearchParams({
+			status: data.filters.status,
+			query: data.filters.query,
+			cursor: nextCursor
+		});
+		try {
+			const response = await fetch(`${withBase('/sop/reminders/more')}?${search}`);
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			const page = await response.json();
+			const knownIds = new Set(historyRows.map((row) => row.id));
+			historyRows = [...historyRows, ...page.rows.filter((row: any) => !knownIds.has(row.id))];
+			nextCursor = page.nextCursor;
+			hasMore = Boolean(page.hasMore);
+		} catch {
+			loadError = '加载更多记录失败，请稍后重试';
+		} finally {
+			loadingMore = false;
+		}
+	}
 
 	const statusLabel: Record<string, string> = {
 		sent: '已发送',
@@ -77,9 +121,9 @@
 		<span>收件人</span>
 		<span>结果</span>
 	</div>
-	{#if data.history.rows.length}
+	{#if historyRows.length}
 		<div class="history-list">
-			{#each data.history.rows as row}
+			{#each historyRows as row (row.id)}
 				<article class="history-row">
 					<div>
 						<span class={`status-pill ${row.status}`}>{statusLabel[row.status] ?? row.status}</span>
@@ -110,6 +154,15 @@
 				</article>
 			{/each}
 		</div>
+		{#if hasMore}
+			<div class="load-more-row">
+				<button type="button" onclick={loadMore} disabled={loadingMore}>
+					{#if loadingMore}<LoaderCircle class="spin" size={16} />{/if}
+					{loadingMore ? '加载中…' : '加载更多'}
+				</button>
+			</div>
+		{/if}
+		{#if loadError}<p class="load-error" role="alert">{loadError}</p>{/if}
 	{:else}
 		<div class="empty-state">
 			<Mail size={24} />
@@ -295,6 +348,34 @@
 
 	.history-row:last-child {
 		border-bottom: 0;
+	}
+
+	.load-more-row {
+		display: flex;
+		justify-content: center;
+		padding: 1rem;
+		border-top: 1px solid #eaecf0;
+	}
+
+	.load-more-row button {
+		display: inline-flex;
+		min-height: 2.75rem;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		padding-inline: 1.25rem;
+		border: 1px solid #d0d5dd;
+		border-radius: 0.5rem;
+		font-size: 1rem;
+		font-weight: 650;
+		background: #fff;
+	}
+
+	.load-error {
+		padding: 0 1rem 1rem;
+		font-size: 1rem;
+		text-align: center;
+		color: #b42318;
 	}
 
 	.history-row > div {

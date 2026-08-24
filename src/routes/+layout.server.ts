@@ -1,7 +1,8 @@
 import type { LayoutServerLoad } from './$types';
 import { getLayoutData } from '$lib/server/queries.js';
 
-export const load: LayoutServerLoad = async ({ locals }) => {
+export const load: LayoutServerLoad = async ({ locals, depends }) => {
+	depends('financing:identity', 'financing:reminders');
 	const todayIso = new Intl.DateTimeFormat('en-CA', {
 		timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
 	}).format(new Date());

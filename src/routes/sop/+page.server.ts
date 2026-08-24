@@ -58,7 +58,19 @@ export const actions: Actions = {
 		return {
 			success: true,
 			message: '提醒规则已保存',
-			settings: await getWorkflowSettingsData()
+			reminderRule: {
+				id,
+				name,
+				targetType: 'project_task',
+				debtType: String(data.get('debtType') ?? '').trim() || null,
+				triggerField,
+				offsetDays,
+				frequency,
+				channel: 'email',
+				recipientMode,
+				recipients: recipientMode === 'custom' ? customRecipients : null,
+				isActive: true
+			}
 		};
 	},
 	createSop: async (event) => {
@@ -88,7 +100,14 @@ export const actions: Actions = {
 			success: true,
 			message: 'SOP 模板已创建',
 			sopId: id,
-			settings: await getWorkflowSettingsData()
+			sopTemplate: {
+				id,
+				name,
+				debtType,
+				description: description || null,
+				isActive: true,
+				nodeCount: 0
+			}
 		};
 	}
 };

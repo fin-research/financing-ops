@@ -6,7 +6,7 @@ import {
 	banManagedUser, createManagedUser, NeonAuthApiError, removeManagedUser,
 	setManagedUserPassword, setManagedUserRole, unbanManagedUser, updateManagedUser
 } from '$lib/server/auth.js';
-import { getPeopleAccessData } from '$lib/server/queries.js';
+import { getPeopleAccessData, getPersonAccessData } from '$lib/server/queries.js';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 import { isValidEmail, normalizeEmail } from '$lib/email.js';
 import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
@@ -71,12 +71,15 @@ async function duplicatePerson(db: ReturnType<typeof getDatabase>, name: string,
 
 export const load: PageServerLoad = async () => ({ peopleAccess: await getPeopleAccessData() });
 
-async function peopleSuccess(message: string, extra: Record<string, unknown> = {}) {
+async function peopleSuccess(
+	message: string,
+	{ personId, ...extra }: { personId?: string; [key: string]: unknown } = {}
+) {
 	return {
 		success: true,
 		message,
 		...extra,
-		peopleAccess: await getPeopleAccessData()
+		person: personId ? await getPersonAccessData(personId) : undefined
 	};
 }
 
@@ -103,7 +106,10 @@ export const actions: Actions = {
 			if (accountId) await removeManagedUser(event, accountId).catch(() => null);
 			return fail(409, { message: constraintMessage(error) });
 		}
-		return await peopleSuccess(`已添加 ${fields.name}${fields.accountEnabled ? ' 并开通 Neon Auth 登录' : ''}`);
+		return await peopleSuccess(
+			`已添加 ${fields.name}${fields.accountEnabled ? ' 并开通 Neon Auth 登录' : ''}`,
+			{ personId }
+		);
 	},
 
 	updatePerson: async (event) => {
@@ -143,7 +149,10 @@ export const actions: Actions = {
 			if (created && accountId) await removeManagedUser(event, accountId).catch(() => null);
 			return fail(409, { message: constraintMessage(error) });
 		}
-		return await peopleSuccess(`已更新 ${fields.name} 的人员、角色与 Neon Auth 账号关联`);
+		return await peopleSuccess(
+			`已更新 ${fields.name} 的人员、角色与 Neon Auth 账号关联`,
+			{ personId: id, refreshIdentity: event.locals.user?.personId === id }
+		);
 	},
 
 	togglePerson: async (event) => {
@@ -164,7 +173,10 @@ export const actions: Actions = {
 		} catch (error) {
 			return fail(409, { message: constraintMessage(error) });
 		}
-		return await peopleSuccess(active ? '人员与 Neon Auth 登录已启用' : '人员与 Neon Auth 登录已停用');
+		return await peopleSuccess(
+			active ? '人员与 Neon Auth 登录已启用' : '人员与 Neon Auth 登录已停用',
+			{ personId: id }
+		);
 	},
 
 	deletePerson: async (event) => {

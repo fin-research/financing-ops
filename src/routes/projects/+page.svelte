@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { invalidate } from '$app/navigation';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import { untrack } from 'svelte';
 	import {
 		ArrowRight,
 		CalendarDays,
@@ -21,6 +23,7 @@
 	import MultiSelectFilter from '$lib/MultiSelectFilter.svelte';
 	import { autoSave, completeAutoSave, getAutoSaveRevision } from '$lib/auto-save';
 	import { withBase } from '$lib/app-paths';
+	import { buildProjectPageData } from '$lib/project-page.js';
 
 	let { data } = $props();
 	let selectedTypes = $state<string[]>([]);
@@ -36,17 +39,10 @@
 	let editProjectDialog: HTMLDialogElement;
 	let editingProject = $state<any>(null);
 	let newProjectBookbuildingDate = $state('');
-	let displayedProjects = $state<any[]>([]);
-	let activeTimeline = $state<any>(null);
-	let deletedProjectIds = $state<string[]>([]);
+	const initialProjectSources = untrack(() => data?.projectSources ?? []);
+	let projectSources = $state<any[]>([...initialProjectSources]);
 	let actionState = $state<{ key: string; status: 'idle' | 'pending' | 'success' | 'error'; message: string }>({
 		key: '', status: 'idle', message: ''
-	});
-	$effect(() => {
-		displayedProjects = (data?.projects ?? []).filter(
-			(project: any) => !deletedProjectIds.includes(String(project.id))
-		);
-		activeTimeline = data?.timeline;
 	});
 	const canManage = $derived(data?.user?.role === 'admin');
 
@@ -69,27 +65,25 @@
 		return async ({ result, update }) => {
 			const responseIsCurrent = !isAutoSave || submittedRevision === getAutoSaveRevision(formElement);
 			if (result.type === 'success') {
-				const returnedProjects = Array.isArray(result.data?.projects) ? result.data.projects : null;
-				const returnedTimeline = result.data?.timeline ?? null;
-				if (responseIsCurrent && returnedProjects) displayedProjects = returnedProjects;
-				if (responseIsCurrent && returnedTimeline) activeTimeline = returnedTimeline;
+				const returnedProject = result.data?.project ?? null;
+				if (responseIsCurrent && returnedProject) {
+					const existingIndex = projectSources.findIndex((project: any) => project.id === returnedProject.id);
+					projectSources = existingIndex >= 0
+						? projectSources.map((project: any) => project.id === returnedProject.id ? returnedProject : project)
+						: [...projectSources, returnedProject];
+				}
 				const deletedProjectId = String(result.data?.deletedProjectId ?? '');
 				if (deletedProjectId) {
-					if (!deletedProjectIds.includes(deletedProjectId)) {
-						deletedProjectIds = [...deletedProjectIds, deletedProjectId];
-					}
-					displayedProjects = displayedProjects.filter((project: any) => project.id !== deletedProjectId);
+					projectSources = projectSources.filter((project: any) => project.id !== deletedProjectId);
 					if (String(expandedProject ?? '') === deletedProjectId) expandedProject = null;
 				}
-				await update({ reset: false, invalidateAll: responseIsCurrent });
-				if (responseIsCurrent && returnedProjects) displayedProjects = returnedProjects;
-				if (responseIsCurrent && returnedTimeline) activeTimeline = returnedTimeline;
-				if (deletedProjectId) {
-					displayedProjects = displayedProjects.filter((project: any) => project.id !== deletedProjectId);
+				await update({ reset: false, invalidateAll: false });
+				if (responseIsCurrent && result.data?.refreshReminders) {
+					await invalidate('financing:reminders');
 				}
 				if (isAutoSave) {
 					if (responseIsCurrent) {
-						const confirmed = returnedProjects?.find((project: any) => String(project.id) === String(editingProject?.id));
+						const confirmed = projects.find((project: any) => String(project.id) === String(editingProject?.id));
 						if (confirmed) editingProject = confirmed;
 						showAutoSaved('已保存');
 					} else {
@@ -129,7 +123,9 @@
 		editProjectDialog.showModal();
 	}
 
-	const projects = $derived(displayedProjects);
+	const projectPage = $derived(buildProjectPageData(projectSources, data.today));
+	const projects = $derived(projectPage.projects);
+	const activeTimeline = $derived(projectPage.timeline);
 	const visibleProjects = $derived(
 		projects.filter(
 			(project: any) =>

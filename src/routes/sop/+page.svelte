@@ -45,10 +45,21 @@
 			actionState = { key, status: 'pending', message: '正在提交，请稍候…' };
 			return async ({ result, update }) => {
 				if (result.type === 'success') {
-					const returnedSettings = result.data?.settings ?? null;
-					if (returnedSettings) displayedSettings = returnedSettings;
-					await update({ reset: false, invalidateAll: true });
-					if (returnedSettings) displayedSettings = returnedSettings;
+					if (result.data?.sopTemplate) {
+						displayedSettings = {
+							...displayedSettings,
+							sopTemplates: [...displayedSettings.sopTemplates, result.data.sopTemplate]
+								.sort((left: any, right: any) => `${left.debtType}\0${left.name}`.localeCompare(`${right.debtType}\0${right.name}`, 'zh-CN'))
+						};
+					}
+					if (result.data?.reminderRule) {
+						displayedSettings = {
+							...displayedSettings,
+							reminderRules: [...displayedSettings.reminderRules, result.data.reminderRule]
+								.sort((left: any, right: any) => Number(right.isActive) - Number(left.isActive) || left.name.localeCompare(right.name, 'zh-CN'))
+						};
+					}
+					await update({ reset: false, invalidateAll: false });
 					actionState = {
 						key,
 						status: 'success',

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../../management.css';
 	import { enhance } from '$app/forms';
+	import { invalidate } from '$app/navigation';
 	import { tick, untrack } from 'svelte';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import {
@@ -132,8 +133,10 @@
 				if (result.type === 'success') {
 					const responseIsCurrent = !options.autoSave || submittedRevision === getAutoSaveRevision(formElement);
 					if (responseIsCurrent) applyActionData(result.data);
-					await update({ reset: false, invalidateAll: responseIsCurrent });
-					if (responseIsCurrent) applyActionData(result.data);
+					await update({ reset: false, invalidateAll: false });
+					if (responseIsCurrent && result.data?.refreshReminders) {
+						await invalidate('financing:reminders');
+					}
 					if (options.autoSave) {
 						if (responseIsCurrent) {
 							feedback = { status: 'success', message: '已保存', automatic: true };

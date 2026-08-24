@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { invalidate } from '$app/navigation';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import { untrack } from 'svelte';
 	import {
 		ArrowLeft,
 		CalendarDays,
@@ -16,7 +18,15 @@
 	import { roleLabel } from '$lib/roles';
 	import { withBase } from '$lib/app-paths';
 
-	let { data, form } = $props();
+	let { data: routeData, form } = $props();
+	const initialRouteData = untrack(() => routeData);
+	let data = $state(initialRouteData);
+	let loadedProjectId = $state(String(initialRouteData.project.id));
+	$effect(() => {
+		if (String(routeData.project.id) === loadedProjectId) return;
+		loadedProjectId = String(routeData.project.id);
+		data = routeData;
+	});
 	let pendingActions = $state<string[]>([]);
 	let pageEditRevision = $state(0);
 	let suppressFormFeedback = $state(false);
@@ -44,6 +54,50 @@
 			? Math.round((data.tasks.filter((task: any) => task.status === 'completed').length / data.tasks.length) * 100)
 			: 0
 	);
+
+	function membersFor(project: any, tasks: any[], people: any[]) {
+		const members = new Map<string, any>();
+		if (project.ownerId) {
+			const owner = people.find((person: any) => person.id === project.ownerId);
+			if (owner) members.set(owner.id, { ...owner, responsibility: '项目负责人' });
+		}
+		for (const task of tasks) {
+			if (!task.assigneeId || members.has(task.assigneeId)) continue;
+			const person = people.find((candidate: any) => candidate.id === task.assigneeId);
+			if (person) members.set(person.id, { ...person, responsibility: '任务执行人' });
+		}
+		return [...members.values()];
+	}
+
+	function applyActionDelta(resultData: any) {
+		let project = data.project;
+		let tasks = data.tasks;
+		if (resultData?.project) {
+			project = { ...project, ...resultData.project };
+			project.ownerName = data.people.find((person: any) => person.id === project.ownerId)?.name ?? null;
+		}
+		if (resultData?.task) {
+			const task = {
+				...resultData.task,
+				assigneeName: data.people.find((person: any) => person.id === resultData.task.assigneeId)?.name ?? null
+			};
+			const exists = tasks.some((item: any) => item.id === task.id);
+			tasks = (exists
+				? tasks.map((item: any) => item.id === task.id ? { ...item, ...task } : item)
+				: [...tasks, task]
+			).sort((left: any, right: any) => Number(left.sortOrder) - Number(right.sortOrder));
+		}
+		const auditLogs = resultData?.auditLog
+			? [resultData.auditLog, ...data.auditLogs].slice(0, 30)
+			: data.auditLogs;
+		data = {
+			...data,
+			project,
+			tasks,
+			members: membersFor(project, tasks, data.people),
+			auditLogs
+		};
+	}
 
 	function markPageDirty() {
 		pageEditRevision += 1;
@@ -79,9 +133,11 @@
 							submittedRevision === getAutoSaveRevision(formElement) &&
 							submittedPageRevision === pageEditRevision
 						);
-						if (responseIsCurrent && result.data?.detail) data = result.data.detail;
-						await update({ reset: false, invalidateAll: responseIsCurrent });
-						if (responseIsCurrent && result.data?.detail) data = result.data.detail;
+						if (responseIsCurrent) applyActionDelta(result.data);
+						await update({ reset: false, invalidateAll: false });
+						if (responseIsCurrent && result.data?.refreshReminders) {
+							await invalidate('financing:reminders');
+						}
 						if (options.resetOnSuccess) formElement.reset();
 						if (options.autoSave) {
 							if (responseIsCurrent) showAutoSaved();

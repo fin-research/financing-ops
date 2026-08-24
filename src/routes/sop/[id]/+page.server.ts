@@ -134,7 +134,8 @@ export const actions: Actions = {
 		return {
 			success: true,
 			message: 'SOP 启停状态已更新',
-			isActive: Boolean(after.isActive)
+			isActive: Boolean(after.isActive),
+			refreshReminders: true
 		};
 	},
 	addNode: async (event) => {

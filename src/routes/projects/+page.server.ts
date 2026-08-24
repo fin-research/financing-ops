@@ -3,7 +3,6 @@ import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getDatabase } from '$lib/server/db.js';
 import { getActiveProjectSopOptions, getProjectGanttData } from '$lib/server/queries.js';
-import { buildProjectTimeline, positionInTimeline, widthInTimeline } from '$lib/project-timeline.js';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 import { deleteProjectWithReminders } from '$lib/server/project-deletion.js';
 
@@ -16,76 +15,8 @@ function dateInShanghai() {
 	}).format(new Date());
 }
 
-function statusMeta(status: string) {
-	if (status === 'completed') return { label: '已完成', tone: 'gray' };
-	if (status === 'at_risk') return { label: '延期风险', tone: 'orange' };
-	if (status === 'in_progress') return { label: '执行中', tone: 'blue' };
-	if (status === 'cancelled') return { label: '已取消', tone: 'gray' };
-	return { label: '需求确认', tone: 'teal' };
-}
-
-function dueText(date: string | null | undefined, today: string) {
-	if (!date) return '待安排';
-	const days = Math.ceil((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
-	if (days === 0) return '今天';
-	if (days === 1) return '明天';
-	if (days > 1 && days <= 7) return `${days}天后`;
-	return date.slice(5).replace('-', '月') + '日';
-}
-
-async function getProjectPageData(today: string) {
-	const source = await getProjectGanttData();
-	const timeline = buildProjectTimeline(source.projects, today);
-	const projects = source.projects.map((project: any) => {
-		const tasks = project.tasks;
-		const completed = tasks.filter((task: any) => task.status === 'completed').length;
-		const progress = tasks.length
-			? Math.round((completed / tasks.length) * 100)
-			: project.status === 'completed' ? 100 : 0;
-		const start = project.plannedStartDate ?? project.plannedIssueDate ?? today;
-		const end = project.plannedIssueDate ?? project.plannedMaturityDate ?? start;
-		const startPct = positionInTimeline(start, timeline);
-		const nextTask = tasks.find((task: any) => task.status !== 'completed');
-		const meta = statusMeta(project.status);
-		const members = [...new Set([project.ownerName, ...tasks.map((task: any) => task.assigneeName)]
-			.filter((name: unknown): name is string => typeof name === 'string' && name.length > 0)
-			.map((name) => name.slice(0, 1)))];
-
-		return {
-			id: project.id,
-			code: project.code,
-			name: project.name,
-			type: project.debtType,
-			rawStatus: project.status,
-			owner: project.ownerName ?? '待分配',
-			ownerId: project.ownerId ?? null,
-			amount: project.amount ?? null,
-			notes: project.notes ?? '',
-			plannedBookbuildingDate: project.plannedIssueDate ?? '',
-			status: meta.label,
-			progress,
-			start,
-			end,
-			startPct,
-			widthPct: widthInTimeline(start, end, timeline, 1.5),
-			tone: meta.tone,
-			nextNode: nextTask?.name ?? '项目归档',
-			dueText: dueText(nextTask?.dueDate ?? end, today),
-			members: members.length ? members : ['待'],
-			tasks: tasks.map((task: any) => {
-				const taskStartDate = task.plannedStartDate ?? start;
-				const taskEndDate = task.dueDate ?? taskStartDate;
-				const taskStart = positionInTimeline(taskStartDate, timeline);
-				return {
-					name: task.name,
-					status: task.status === 'completed' ? 'done' : task.status === 'in_progress' ? 'doing' : 'waiting',
-					startPct: taskStart,
-					widthPct: widthInTimeline(taskStartDate, taskEndDate, timeline, 1)
-				};
-			})
-		};
-	});
-	return { projects, timeline };
+async function getProjectSource(projectId: string) {
+	return (await getProjectGanttData({ projectId })).projects[0] ?? null;
 }
 
 function projectBookbuildingDate(data: FormData) {
@@ -107,12 +38,12 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const db = getDatabase();
 	const today = dateInShanghai();
 	const [projectData, people, projectSops] = await Promise.all([
-		getProjectPageData(today),
+		getProjectGanttData(),
 		db.prepare('SELECT id, name, role FROM people WHERE active = TRUE ORDER BY name').all(),
 		getActiveProjectSopOptions()
 	]);
 	return {
-		...projectData,
+		projectSources: projectData.projects,
 		people,
 		projectSops,
 		today,
@@ -205,8 +136,13 @@ export const actions: Actions = {
 				}
 			}).run();
 		});
-		const refreshed = await getProjectPageData(dateInShanghai());
-		return { success: true, projectId, ...refreshed, message: '项目已创建，并已套用对应 SOP 节点。' };
+		return {
+			success: true,
+			projectId,
+			project: await getProjectSource(projectId),
+			refreshReminders: true,
+			message: '项目已创建，并已套用对应 SOP 节点。'
+		};
 	},
 
 	updateProject: async (event) => {
@@ -278,8 +214,16 @@ export const actions: Actions = {
 				summary: `更新项目：${name}`, before, after
 			}).run();
 		});
-		const refreshed = await getProjectPageData(dateInShanghai());
-		return { success: true, updatedProjectId: projectId, ...refreshed, message: `已更新项目 ${name}` };
+		return {
+			success: true,
+			updatedProjectId: projectId,
+			project: await getProjectSource(projectId),
+			refreshReminders:
+				before.name !== name || before.status !== status ||
+				(before.ownerId ?? null) !== (ownerId || null) ||
+				before.plannedIssueDate !== plannedBookbuildingDate,
+			message: `已更新项目 ${name}`
+		};
 	},
 
 	deleteProject: async (event) => {
@@ -298,12 +242,14 @@ export const actions: Actions = {
 			return {
 				success: true,
 				deletedProjectId: projectId,
+				refreshReminders: true,
 				message: '该项目已经删除，页面数据已同步'
 			};
 		}
 		return {
 			success: true,
 			deletedProjectId: projectId,
+			refreshReminders: true,
 			message: `已删除项目 ${before.name}；项目节点和关联提醒已清理`
 		};
 	}

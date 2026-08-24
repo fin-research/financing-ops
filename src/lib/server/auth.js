@@ -28,7 +28,9 @@ function currentToken(event) {
 async function localIdentity(authUser) {
 	if (!authUser?.id) return null;
 	const person = await getDatabase().prepare(`
-		SELECT id AS personId, name AS personName, email, role, avatar_data_url AS avatarDataUrl
+		SELECT id AS personId, name AS personName, email, role,
+			avatar_data_url IS NOT NULL AS hasAvatar,
+			to_char(updated_at, 'YYYYMMDDHH24MISSUS') AS avatarVersion
 		FROM people
 		WHERE neon_auth_user_id = ?::uuid AND active = TRUE
 		LIMIT 1
@@ -40,7 +42,8 @@ async function localIdentity(authUser) {
 		role: person.role,
 		personId: person.personId,
 		personName: person.personName,
-		avatarDataUrl: person.avatarDataUrl ?? null
+		hasAvatar: Boolean(person.hasAvatar),
+		avatarVersion: person.avatarVersion ?? '0'
 	};
 }
 
