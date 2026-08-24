@@ -9,15 +9,22 @@
 		ClipboardList,
 		Clock3,
 		Plus,
-		Save,
 		UserRound,
 		UsersRound
 	} from '@lucide/svelte';
+	import { autoSave, completeAutoSave, getAutoSaveRevision } from '$lib/auto-save';
 	import { roleLabel } from '$lib/roles';
 	import { withBase } from '$lib/app-paths';
 
 	let { data, form } = $props();
-	let pendingAction = $state('');
+	let pendingActions = $state<string[]>([]);
+	let pageEditRevision = $state(0);
+	let suppressFormFeedback = $state(false);
+	let autoSaveFeedback = $state<{ status: 'idle' | 'pending' | 'success' | 'error'; message: string }>({
+		status: 'idle', message: ''
+	});
+	let savedFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+	const pendingAction = $derived(pendingActions.at(-1) ?? '');
 
 	const statusLabels: Record<string, string> = {
 		planning: '规划中',
@@ -38,21 +45,60 @@
 			: 0
 	);
 
-	function enhanceForm(label: string, resetOnSuccess = false): SubmitFunction {
+	function markPageDirty() {
+		pageEditRevision += 1;
+		autoSaveFeedback = { status: 'pending', message: '正在保存…' };
+	}
+
+	function showAutoSaved() {
+		autoSaveFeedback = { status: 'success', message: '已保存' };
+		if (savedFeedbackTimer) clearTimeout(savedFeedbackTimer);
+		savedFeedbackTimer = setTimeout(() => {
+			if (autoSaveFeedback.status === 'success') autoSaveFeedback = { status: 'idle', message: '' };
+		}, 1800);
+	}
+
+	function enhanceForm(
+		label: string,
+		options: { resetOnSuccess?: boolean; autoSave?: boolean } = {}
+	): SubmitFunction {
 		return ({ formElement }) => {
-			pendingAction = label;
+			pendingActions = [...pendingActions.filter((item) => item !== label), label];
+			const submittedRevision = getAutoSaveRevision(formElement);
+			const submittedPageRevision = pageEditRevision;
+			if (options.autoSave) {
+				suppressFormFeedback = true;
+				autoSaveFeedback = { status: 'pending', message: '正在保存…' };
+			} else {
+				suppressFormFeedback = false;
+			}
 			return async ({ result, update }) => {
 				try {
 					if (result.type === 'success') {
-						if (result.data?.detail) data = result.data.detail;
-						await update({ reset: false, invalidateAll: true });
-						if (result.data?.detail) data = result.data.detail;
-						if (resetOnSuccess) formElement.reset();
+						const responseIsCurrent = !options.autoSave || (
+							submittedRevision === getAutoSaveRevision(formElement) &&
+							submittedPageRevision === pageEditRevision
+						);
+						if (responseIsCurrent && result.data?.detail) data = result.data.detail;
+						await update({ reset: false, invalidateAll: responseIsCurrent });
+						if (responseIsCurrent && result.data?.detail) data = result.data.detail;
+						if (options.resetOnSuccess) formElement.reset();
+						if (options.autoSave) {
+							if (responseIsCurrent) showAutoSaved();
+							completeAutoSave(formElement, true);
+						}
 						return;
 					}
 					await update({ reset: false, invalidateAll: false });
+					if (options.autoSave) {
+						autoSaveFeedback = {
+							status: 'error',
+							message: String(result.type === 'failure' ? result.data?.message ?? '保存失败，请修改后重试' : '保存失败，请稍后重试')
+						};
+						completeAutoSave(formElement, false);
+					}
 				} finally {
-					pendingAction = '';
+					pendingActions = pendingActions.filter((item) => item !== label);
 				}
 			};
 		};
@@ -79,7 +125,12 @@
 	<span class={`project-state ${data.project.status}`}>{statusLabels[data.project.status] ?? data.project.status}</span>
 </div>
 
-{#if form?.message}
+{#if autoSaveFeedback.status !== 'idle'}
+	<div class:success={autoSaveFeedback.status === 'success'} class:error={autoSaveFeedback.status === 'error'} class="feedback auto-save-feedback" role={autoSaveFeedback.status === 'error' ? 'alert' : 'status'} aria-live="polite">
+		{#if autoSaveFeedback.status === 'success'}<CheckCircle2 size={18} />{:else if autoSaveFeedback.status === 'error'}<CircleAlert size={18} />{/if}
+		{autoSaveFeedback.message}
+	</div>
+{:else if form?.message && !suppressFormFeedback}
 	<div class:success={form.success} class="feedback" role={form.success ? 'status' : 'alert'} aria-live="polite">
 		{#if form.success}<CheckCircle2 size={18} />{:else}<CircleAlert size={18} />{/if}
 		{form.message}
@@ -93,9 +144,9 @@
 		<div class="progress-track"><i style:width={`${progress}%`}></i></div>
 	</article>
 	<article>
-		<span><CalendarDays size={18} /> 计划发行日</span>
+		<span><CalendarDays size={18} /> 计划簿记</span>
 		<strong>{data.project.plannedIssueDate ?? '待安排'}</strong>
-		<small>{data.project.plannedStartDate ?? '未设置开始日'} 起</small>
+		<small>与 SOP 的计划发行当日一致</small>
 	</article>
 	<article>
 		<span><UserRound size={18} /> 项目负责人</span>
@@ -115,12 +166,18 @@
 			<header>
 				<div>
 					<h2>任务节点</h2>
-					<p>更新执行状态、负责人和截止日期</p>
+					<p>修改后自动保存</p>
 				</div>
 			</header>
 			<div class="task-list">
 				{#each data.tasks as task, index}
-					<form method="post" action="?/updateTask" use:enhance={enhanceForm(`task-${task.id}`)} class="task-item">
+					<form
+						method="post"
+						action="?/updateTask"
+						use:autoSave={{ onDirty: markPageDirty }}
+						use:enhance={enhanceForm(`task-${task.id}`, { autoSave: true })}
+						class="task-item"
+					>
 						<input type="hidden" name="taskId" value={task.id} />
 						<span class={`task-index ${task.status}`}>{index + 1}</span>
 						<div class="task-copy">
@@ -148,16 +205,12 @@
 							<span>截止日</span>
 							<input name="dueDate" type="date" value={task.dueDate ?? ''} aria-label={`${task.name}截止日`} />
 						</label>
-						<button type="submit" disabled={pendingAction !== ''}>
-							<Save size={16} />
-							{pendingAction === `task-${task.id}` ? '保存中…' : '保存'}
-						</button>
 					</form>
 				{:else}
 					<p class="empty-state">尚无任务节点，可在下方添加第一个任务。</p>
 				{/each}
 			</div>
-			<form method="post" action="?/addTask" use:enhance={enhanceForm('add-task', true)} class="add-task">
+			<form method="post" action="?/addTask" use:enhance={enhanceForm('add-task', { resetOnSuccess: true })} class="add-task">
 				<label>
 					<span>任务名称</span>
 					<input name="name" maxlength="120" required placeholder="例如：发行方案内部确认" />
@@ -209,10 +262,16 @@
 			<header>
 				<div>
 					<h2>基本信息</h2>
-					<p>维护项目状态和负责人</p>
+					<p>修改后自动保存</p>
 				</div>
 			</header>
-			<form method="post" action="?/updateProject" use:enhance={enhanceForm('project')} class="project-form">
+			<form
+				method="post"
+				action="?/updateProject"
+				use:autoSave={{ onDirty: markPageDirty }}
+				use:enhance={enhanceForm('project', { autoSave: true })}
+				class="project-form"
+			>
 				<label>
 					<span>项目状态</span>
 					<select name="status" value={data.project.status}>
@@ -234,10 +293,6 @@
 					<span>项目说明</span>
 					<textarea name="notes" rows="5" placeholder="补充项目背景、风险或执行说明">{data.project.notes ?? ''}</textarea>
 				</label>
-				<button type="submit" disabled={pendingAction !== ''}>
-					<Save size={16} />
-					{pendingAction === 'project' ? '保存中…' : '保存基本信息'}
-				</button>
 			</form>
 			<dl class="metadata">
 				<div><dt>融资规模</dt><dd>{data.project.amount ? `${(data.project.amount / 100000000).toFixed(2)} 亿元` : '暂未登记'}</dd></div>
@@ -328,6 +383,13 @@
 		color: #067647;
 		background: #ecfdf3;
 	}
+	.feedback.auto-save-feedback:not(.error) {
+		width: fit-content;
+		margin-left: auto;
+		padding: 0.35rem 0.65rem;
+		border-color: transparent;
+		background: transparent;
+	}
 	.summary-grid {
 		display: grid;
 		grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -411,7 +473,7 @@
 	}
 	.task-item {
 		display: grid;
-		grid-template-columns: auto minmax(12rem, 1.4fr) repeat(3, minmax(8.5rem, 0.7fr)) auto;
+		grid-template-columns: auto minmax(12rem, 1.4fr) repeat(3, minmax(8.5rem, 0.7fr));
 		align-items: end;
 		gap: 0.75rem;
 		padding: 0.875rem 1rem;
@@ -510,8 +572,7 @@
 		padding: 1rem;
 		background: #f8fafc;
 	}
-	.add-task button,
-	.project-form button {
+	.add-task button {
 		border-color: var(--blue);
 		color: #fff;
 		background: var(--blue);
@@ -640,7 +701,7 @@
 			grid-template-columns: 1fr;
 		}
 		.task-item {
-			grid-template-columns: auto minmax(11rem, 1fr) repeat(3, minmax(8rem, 0.7fr)) auto;
+			grid-template-columns: auto minmax(11rem, 1fr) repeat(3, minmax(8rem, 0.7fr));
 			overflow-x: auto;
 		}
 	}

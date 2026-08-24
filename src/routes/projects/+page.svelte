@@ -14,12 +14,12 @@
 		LoaderCircle,
 		Pencil,
 		Plus,
-		Save,
 		Search,
 		Trash2,
 		Users
 	} from '@lucide/svelte';
 	import MultiSelectFilter from '$lib/MultiSelectFilter.svelte';
+	import { autoSave, completeAutoSave, getAutoSaveRevision } from '$lib/auto-save';
 	import { withBase } from '$lib/app-paths';
 
 	let { data } = $props();
@@ -35,7 +35,7 @@
 	let newProjectDialog: HTMLDialogElement;
 	let editProjectDialog: HTMLDialogElement;
 	let editingProject = $state<any>(null);
-	let newProjectEndDate = $state('');
+	let newProjectBookbuildingDate = $state('');
 	let displayedProjects = $state<any[]>([]);
 	let activeTimeline = $state<any>(null);
 	let deletedProjectIds = $state<string[]>([]);
@@ -50,14 +50,29 @@
 	});
 	const canManage = $derived(data?.user?.role === 'admin');
 
-	const enhanceProjectAction = (key: string, dialog?: 'create' | 'edit'): SubmitFunction => () => {
+	let savedFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function showAutoSaved(message: string) {
+		actionState = { key: 'edit', status: 'success', message };
+		if (savedFeedbackTimer) clearTimeout(savedFeedbackTimer);
+		savedFeedbackTimer = setTimeout(() => {
+			if (actionState.key === 'edit' && actionState.status === 'success') {
+				actionState = { key: '', status: 'idle', message: '' };
+			}
+		}, 1800);
+	}
+
+	const enhanceProjectAction = (key: string, dialog?: 'create'): SubmitFunction => ({ formElement }) => {
+		const isAutoSave = key === 'edit';
+		const submittedRevision = isAutoSave ? getAutoSaveRevision(formElement) : 0;
 		actionState = { key, status: 'pending', message: '正在保存，请稍候…' };
 		return async ({ result, update }) => {
+			const responseIsCurrent = !isAutoSave || submittedRevision === getAutoSaveRevision(formElement);
 			if (result.type === 'success') {
 				const returnedProjects = Array.isArray(result.data?.projects) ? result.data.projects : null;
 				const returnedTimeline = result.data?.timeline ?? null;
-				if (returnedProjects) displayedProjects = returnedProjects;
-				if (returnedTimeline) activeTimeline = returnedTimeline;
+				if (responseIsCurrent && returnedProjects) displayedProjects = returnedProjects;
+				if (responseIsCurrent && returnedTimeline) activeTimeline = returnedTimeline;
 				const deletedProjectId = String(result.data?.deletedProjectId ?? '');
 				if (deletedProjectId) {
 					if (!deletedProjectIds.includes(deletedProjectId)) {
@@ -66,17 +81,27 @@
 					displayedProjects = displayedProjects.filter((project: any) => project.id !== deletedProjectId);
 					if (String(expandedProject ?? '') === deletedProjectId) expandedProject = null;
 				}
-				await update({ reset: false, invalidateAll: true });
-				if (returnedProjects) displayedProjects = returnedProjects;
-				if (returnedTimeline) activeTimeline = returnedTimeline;
+				await update({ reset: false, invalidateAll: responseIsCurrent });
+				if (responseIsCurrent && returnedProjects) displayedProjects = returnedProjects;
+				if (responseIsCurrent && returnedTimeline) activeTimeline = returnedTimeline;
 				if (deletedProjectId) {
 					displayedProjects = displayedProjects.filter((project: any) => project.id !== deletedProjectId);
 				}
-				actionState = {
-					key, status: 'success', message: String(result.data?.message ?? '项目已保存')
-				};
+				if (isAutoSave) {
+					if (responseIsCurrent) {
+						const confirmed = returnedProjects?.find((project: any) => String(project.id) === String(editingProject?.id));
+						if (confirmed) editingProject = confirmed;
+						showAutoSaved('已保存');
+					} else {
+						actionState = { key, status: 'pending', message: '正在保存，请稍候…' };
+					}
+				} else {
+					actionState = {
+						key, status: 'success', message: String(result.data?.message ?? '项目已保存')
+					};
+				}
 				if (dialog === 'create') newProjectDialog?.close();
-				if (dialog === 'edit') editProjectDialog?.close();
+				if (isAutoSave) completeAutoSave(formElement, true);
 				return;
 			}
 			await update({ reset: false, invalidateAll: false });
@@ -90,11 +115,12 @@
 							? result.error.message
 							: '保存失败，请稍后重试。'
 			};
+			if (isAutoSave) completeAutoSave(formElement, false);
 		};
 	};
 
 	function openNewProject() {
-		newProjectEndDate = data.today;
+		newProjectBookbuildingDate = data.today;
 		newProjectDialog.showModal();
 	}
 
@@ -147,7 +173,7 @@
 	<title>项目进度 · 融资工作台</title>
 </svelte:head>
 
-{#if actionState.status !== 'idle'}
+{#if actionState.status !== 'idle' && actionState.key !== 'edit'}
 	<p
 		class:success={actionState.status === 'success'}
 		class="action-feedback"
@@ -388,10 +414,6 @@
 				</select>
 			</label>
 			<label>
-				<span>融资主体</span>
-				<input name="borrower" maxlength="160" />
-			</label>
-			<label>
 				<span>项目规模（亿元）</span>
 				<input name="amountYi" type="number" min="0" step="0.01" inputmode="decimal" />
 			</label>
@@ -405,12 +427,8 @@
 				</select>
 			</label>
 			<label>
-				<span>计划开始</span>
-				<input name="startDate" type="date" value={data.today} required />
-			</label>
-			<label>
-				<span>计划完成</span>
-				<input name="endDate" type="date" bind:value={newProjectEndDate} required />
+				<span>计划簿记</span>
+				<input name="plannedBookbuildingDate" type="date" bind:value={newProjectBookbuildingDate} required />
 			</label>
 			<label class="wide">
 				<span>项目说明</span>
@@ -443,12 +461,12 @@
 
 <dialog class="new-project-modal" bind:this={editProjectDialog}>
 	{#if editingProject}
-		<form method="post" action="?/updateProject" use:enhance={enhanceProjectAction('edit', 'edit')}>
+		<form method="post" action="?/updateProject" use:autoSave use:enhance={enhanceProjectAction('edit')}>
 			<div class="modal-header">
 				<div>
 					<p class="eyebrow">EDIT PROJECT</p>
 					<h2>修改融资项目</h2>
-					<p>调整项目名称、状态、负责人和计划日期。</p>
+					<p>修改后会自动保存，不再需要逐项确认。</p>
 				</div>
 				<button type="button" aria-label="关闭" onclick={() => editProjectDialog.close()}>×</button>
 			</div>
@@ -482,12 +500,8 @@
 					</select>
 				</label>
 				<label>
-					<span>计划开始</span>
-					<input name="startDate" type="date" value={editingProject.start} required />
-				</label>
-				<label>
-					<span>计划完成</span>
-					<input name="endDate" type="date" value={editingProject.end} required />
+					<span>计划簿记</span>
+					<input name="plannedBookbuildingDate" type="date" value={editingProject.plannedBookbuildingDate} required />
 				</label>
 				<label class="wide">
 					<span>项目说明</span>
@@ -495,11 +509,15 @@
 				</label>
 			</div>
 			<div class="modal-actions">
-				<button type="button" disabled={actionState.status === 'pending'} onclick={() => editProjectDialog.close()}>取消</button>
-				<button class="primary-action" type="submit" disabled={actionState.status === 'pending'}>
-					<Save size={16} />
-					{actionState.status === 'pending' && actionState.key === 'edit' ? '保存中…' : '保存修改'}
-				</button>
+				<p
+					class:error={actionState.status === 'error'}
+					class="auto-save-status"
+					role={actionState.status === 'error' ? 'alert' : 'status'}
+					aria-live="polite"
+				>
+					{actionState.key === 'edit' && actionState.status !== 'idle' ? actionState.message : '修改后自动保存'}
+				</p>
+				<button type="button" onclick={() => editProjectDialog.close()}>关闭</button>
 			</div>
 		</form>
 	{/if}
@@ -1254,12 +1272,13 @@
 
 	.modal-actions {
 		display: flex;
+		align-items: center;
 		justify-content: flex-end;
 		gap: 0.5rem;
 		padding-top: 1rem;
 	}
 
-	.modal-actions > button:first-child {
+	.modal-actions > button:not(.primary-action) {
 		min-height: 2.75rem;
 		padding: 0 0.8125rem;
 		border: 1px solid #d0d5dd;
@@ -1268,6 +1287,16 @@
 		color: #475467;
 		background: #fff;
 		cursor: pointer;
+	}
+
+	.auto-save-status {
+		margin: 0 auto 0 0;
+		font-size: 0.75rem;
+		color: #067647;
+	}
+
+	.auto-save-status.error {
+		color: #b42318;
 	}
 
 	@media (max-width: 75rem) {

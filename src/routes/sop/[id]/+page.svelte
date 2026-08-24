@@ -11,10 +11,10 @@
 		GripVertical,
 		LoaderCircle,
 		Plus,
-		Save,
 		Trash2,
 		X
 	} from '@lucide/svelte';
+	import { autoSave, completeAutoSave, getAutoSaveRevision } from '$lib/auto-save';
 	import { withBase } from '$lib/app-paths';
 	import { hasSameOrder, reorderByOffset, reorderRelative } from '$lib/reorder-items.js';
 
@@ -36,14 +36,18 @@
 	});
 	let nodes = $state<SopNode[]>(initialData.nodes.map(normaliseNode));
 	let loadedTemplateId = $state(String(initialData.template.id));
-	let pendingAction = $state('');
+	let pendingActions = $state<string[]>([]);
+	const pendingAction = $derived(pendingActions.at(-1) ?? '');
 	let feedback = $state<{
 		status: 'idle' | 'pending' | 'success' | 'error';
 		message: string;
+		automatic: boolean;
 	}>({
 		status: initialForm?.message ? (initialForm.success ? 'success' : 'error') : 'idle',
-		message: String(initialForm?.message ?? '')
+		message: String(initialForm?.message ?? ''),
+		automatic: false
 	});
+	let savedFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
 	let addNodeDialog: HTMLDialogElement;
 	let addNodeNameInput: HTMLInputElement;
 	let reorderForm: HTMLFormElement;
@@ -114,20 +118,40 @@
 
 	const enhanceForm = (
 		label: string,
-		options: { resetOnSuccess?: boolean; closeOnSuccess?: boolean; rollbackOrderOnFailure?: boolean } = {}
+		options: { resetOnSuccess?: boolean; closeOnSuccess?: boolean; rollbackOrderOnFailure?: boolean; autoSave?: boolean } = {}
 	): SubmitFunction => ({ formElement }) => {
-		pendingAction = label;
-		feedback = { status: 'pending', message: '正在保存，请稍候…' };
+		pendingActions = [...pendingActions.filter((item) => item !== label), label];
+		const submittedRevision = getAutoSaveRevision(formElement);
+		feedback = {
+			status: 'pending',
+			message: options.autoSave ? '正在保存…' : '正在保存，请稍候…',
+			automatic: Boolean(options.autoSave)
+		};
 		return async ({ result, update }) => {
 			try {
 				if (result.type === 'success') {
-					applyActionData(result.data);
-					await update({ reset: false, invalidateAll: true });
-					applyActionData(result.data);
-					feedback = {
-						status: 'success',
-						message: String(result.data?.message ?? '保存成功')
-					};
+					const responseIsCurrent = !options.autoSave || submittedRevision === getAutoSaveRevision(formElement);
+					if (responseIsCurrent) applyActionData(result.data);
+					await update({ reset: false, invalidateAll: responseIsCurrent });
+					if (responseIsCurrent) applyActionData(result.data);
+					if (options.autoSave) {
+						if (responseIsCurrent) {
+							feedback = { status: 'success', message: '已保存', automatic: true };
+							if (savedFeedbackTimer) clearTimeout(savedFeedbackTimer);
+							savedFeedbackTimer = setTimeout(() => {
+								if (feedback.status === 'success' && feedback.automatic) {
+									feedback = { status: 'idle', message: '', automatic: false };
+								}
+							}, 1800);
+						}
+						completeAutoSave(formElement, true);
+					} else {
+						feedback = {
+							status: 'success',
+							message: String(result.data?.message ?? '保存成功'),
+							automatic: false
+						};
+					}
 					if (options.resetOnSuccess) formElement.reset();
 					if (options.closeOnSuccess) addNodeDialog?.close();
 					return;
@@ -136,6 +160,7 @@
 				await update({ reset: false, invalidateAll: false });
 				feedback = {
 					status: 'error',
+					automatic: Boolean(options.autoSave),
 					message:
 						result.type === 'failure'
 							? String(result.data?.message ?? '保存失败，请检查填写内容后重试')
@@ -143,8 +168,9 @@
 								? result.error.message
 								: '保存失败，请稍后重试'
 				};
+				if (options.autoSave) completeAutoSave(formElement, false);
 			} finally {
-				pendingAction = '';
+				pendingActions = pendingActions.filter((item) => item !== label);
 			}
 		};
 	};
@@ -265,6 +291,8 @@
 		<div
 			class:success={feedback.status === 'success'}
 			class:pending={feedback.status === 'pending'}
+			class:automatic={feedback.automatic}
+			class:error={feedback.status === 'error'}
 			class="feedback"
 			role={feedback.status === 'error' ? 'alert' : 'status'}
 			aria-live="polite"
@@ -291,7 +319,7 @@
 				<header>
 					<div>
 						<h2>流程节点</h2>
-						<p>拖拽节点左侧手柄调整顺序，节点顺序会用于新建项目</p>
+						<p>修改自动保存；拖拽节点左侧手柄调整顺序</p>
 					</div>
 					<GitBranch size={20} />
 				</header>
@@ -317,7 +345,13 @@
 									<GripVertical size={18} />
 								</button>
 							</div>
-							<form method="post" action="?/updateNode" use:enhance={enhanceForm(`node-${node.id}`)} class="node-form">
+							<form
+								method="post"
+								action="?/updateNode"
+								use:autoSave
+								use:enhance={enhanceForm(`node-${node.id}`, { autoSave: true })}
+								class="node-form"
+							>
 								<input type="hidden" name="nodeId" value={node.id} />
 								<label class="node-name">
 									<span>节点名称</span>
@@ -341,10 +375,6 @@
 									<span>节点说明</span>
 									<input name="description" bind:value={node.description} placeholder="可选：说明交付物或控制要求" />
 								</label>
-								<button class="save-button" type="submit" disabled={pendingAction !== ''}>
-									<Save size={16} />
-									{pendingAction === `node-${node.id}` ? '保存中…' : '保存'}
-								</button>
 							</form>
 							<form
 								method="post"
@@ -373,10 +403,10 @@
 				<header>
 					<div>
 						<h2>模板信息</h2>
-						<p>适用范围和用途说明</p>
+						<p>修改后自动保存</p>
 					</div>
 				</header>
-				<form method="post" action="?/updateTemplate" use:enhance={enhanceForm('template')} class="template-form">
+				<form method="post" action="?/updateTemplate" use:autoSave use:enhance={enhanceForm('template', { autoSave: true })} class="template-form">
 					<label>
 						<span>SOP 名称</span>
 						<input name="name" maxlength="120" required bind:value={template.name} />
@@ -389,10 +419,6 @@
 						<span>模板说明</span>
 						<textarea name="description" rows="6" placeholder="说明适用范围和关键控制要求" bind:value={template.description}></textarea>
 					</label>
-					<button type="submit" disabled={pendingAction !== ''}>
-						<Save size={16} />
-						{pendingAction === 'template' ? '保存中…' : '保存模板信息'}
-					</button>
 				</form>
 			</section>
 
@@ -462,6 +488,7 @@
 	.feedback { display: flex; min-height: 2.75rem; align-items: center; gap: 0.5rem; margin-bottom: 1rem; padding: 0.75rem 1rem; border: 1px solid #fda29b; border-radius: 0.625rem; font-size: 1rem; color: #b42318; background: #fef3f2; }
 	.feedback.success { border-color: #a6f4c5; color: #067647; background: #ecfdf3; }
 	.feedback.pending { border-color: #b2ccff; color: #175cd3; background: #eff4ff; }
+	.feedback.automatic:not(.error) { width: fit-content; min-height: auto; margin-left: auto; padding: 0.35rem 0.65rem; border-color: transparent; background: transparent; }
 	.spin { animation: spin 900ms linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
 	.editor-grid { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(18rem, 0.65fr); gap: 1rem; align-items: start; }
@@ -478,8 +505,8 @@
 	.drag-handle { display: grid; width: 2.75rem; height: 2.75rem; place-items: center; border: 1px solid #d0d5dd; border-radius: 0.5rem; color: #667085; background: #fff; cursor: grab; touch-action: none; }
 	.drag-handle:active, .drag-handle.grabbed { color: #175cd3; background: #eff4ff; cursor: grabbing; }
 	.drag-handle:focus-visible { outline: 0.1875rem solid rgb(59 130 246 / 35%); outline-offset: 0.125rem; }
-	.node-form { display: grid; grid-template-columns: minmax(12rem, 1.3fr) minmax(8rem, 0.55fr) minmax(10rem, 0.75fr) auto; gap: 0.75rem; align-items: end; }
-	.node-description { grid-column: 1 / -2; }
+	.node-form { display: grid; grid-template-columns: minmax(12rem, 1.3fr) minmax(8rem, 0.55fr) minmax(10rem, 0.75fr); gap: 0.75rem; align-items: end; }
+	.node-description { grid-column: 1 / -1; }
 	label { display: grid; gap: 0.3rem; }
 	label span { font-size: 0.75rem; font-weight: 650; color: var(--muted); }
 	input, select, textarea { width: 100%; min-height: 2.75rem; padding: 0.55rem 0.7rem; border: 1px solid #d0d5dd; border-radius: 0.5rem; font-size: 1rem; color: #344054; background: #fff; }
@@ -487,7 +514,6 @@
 	.offset-input { position: relative; }
 	.offset-input input { padding-right: 2.5rem; }
 	.offset-input small { position: absolute; top: 50%; right: 0.75rem; font-size: 0.75rem; color: var(--subtle); transform: translateY(-50%); }
-	.save-button, .template-form button { display: inline-flex; min-height: 2.75rem; align-items: center; justify-content: center; gap: 0.4rem; padding: 0 0.75rem; border: 1px solid var(--blue); border-radius: 0.5rem; font-size: 1rem; font-weight: 650; color: #fff; background: var(--blue); }
 	button:disabled { cursor: wait; opacity: 0.6; }
 	.delete-form { align-self: end; margin-bottom: 0.1rem; }
 	.delete-form button { display: grid; width: 2.75rem; height: 2.75rem; place-items: center; border: 1px solid #d0d5dd; border-radius: 0.5rem; color: #b42318; background: #fff; }

@@ -96,8 +96,42 @@ test('granular mutation pages merge confirmed entities around global invalidatio
 	const source = await readFile(new URL('../src/routes/sop/[id]/+page.svelte', import.meta.url), 'utf8');
 	assert.match(
 		source,
-		/applyActionData\(result\.data\);\s*await update\(\{ reset: false, invalidateAll: true \}\);\s*applyActionData\(result\.data\);/
+		/if \(responseIsCurrent\) applyActionData\(result\.data\);\s*await update\(\{ reset: false, invalidateAll: responseIsCurrent \}\);\s*if \(responseIsCurrent\) applyActionData\(result\.data\);/
 	);
+});
+
+test('project and SOP edit forms auto-save without per-item save buttons', async () => {
+	const [projects, projectDetail, sopDetail, autoSave] = await Promise.all([
+		readFile(new URL('../src/routes/projects/+page.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/projects/[id]/+page.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/sop/[id]/+page.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/lib/auto-save.ts', import.meta.url), 'utf8')
+	]);
+
+	assert.match(projects, /action="\?\/updateProject" use:autoSave use:enhance=/);
+	assert.match(projectDetail, /action="\?\/updateTask"[\s\S]*?use:autoSave=/);
+	assert.match(projectDetail, /action="\?\/updateProject"[\s\S]*?use:autoSave=/);
+	assert.match(sopDetail, /action="\?\/updateNode"[\s\S]*?use:autoSave/);
+	assert.match(sopDetail, /action="\?\/updateTemplate" use:autoSave use:enhance=/);
+	assert.doesNotMatch(projectDetail, /保存基本信息|>保存</);
+	assert.doesNotMatch(sopDetail, /保存模板信息|class="save-button"/);
+	assert.match(autoSave, /let inFlight = false/);
+	assert.match(autoSave, /revisionOf\(form\) > submittedRevision/);
+	assert.match(autoSave, /form\.requestSubmit\(\)/);
+});
+
+test('new financing projects use one bookbuilding date anchored to SOP issue day', async () => {
+	const [page, server] = await Promise.all([
+		readFile(new URL('../src/routes/projects/+page.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/projects/+page.server.ts', import.meta.url), 'utf8')
+	]);
+
+	assert.doesNotMatch(page, /name="borrower"|name="startDate"|name="endDate"/);
+	assert.match(page, /<span>计划簿记<\/span>\s*<input name="plannedBookbuildingDate" type="date"/);
+	assert.match(server, /const plannedBookbuildingDate = projectBookbuildingDate\(data\)/);
+	assert.match(server, /planned_start_date, planned_issue_date/);
+	assert.match(server, /offsetDate\(plannedBookbuildingDate, Number\(node\.offsetDays\)\)/);
+	assert.match(server, /default_offset_days = 0/);
 });
 
 test('Data API mutations request returned rows and merge them without a reload', async () => {

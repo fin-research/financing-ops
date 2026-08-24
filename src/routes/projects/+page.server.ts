@@ -61,6 +61,7 @@ async function getProjectPageData(today: string) {
 			ownerId: project.ownerId ?? null,
 			amount: project.amount ?? null,
 			notes: project.notes ?? '',
+			plannedBookbuildingDate: project.plannedIssueDate ?? '',
 			status: meta.label,
 			progress,
 			start,
@@ -87,17 +88,19 @@ async function getProjectPageData(today: string) {
 	return { projects, timeline };
 }
 
-function projectDates(data: FormData) {
-	return {
-		startDate: String(data.get('startDate') ?? '').trim(),
-		endDate: String(data.get('endDate') ?? '').trim()
-	};
+function projectBookbuildingDate(data: FormData) {
+	return String(data.get('plannedBookbuildingDate') ?? '').trim();
 }
 
-function invalidProjectDates(startDate: string, endDate: string) {
-	if (!ISO_DATE.test(startDate) || !ISO_DATE.test(endDate)) return '请填写有效的计划开始日和完成日';
-	if (endDate < startDate) return '计划完成日不能早于开始日';
-	return null;
+function offsetDate(date: string, offsetDays: number) {
+	return new Date(Date.parse(`${date}T00:00:00Z`) + offsetDays * 86_400_000).toISOString().slice(0, 10);
+}
+
+function projectStartDate(plannedBookbuildingDate: string, nodes: Array<{ offsetDays: number }>) {
+	return nodes.reduce(
+		(earliest, node) => [earliest, offsetDate(plannedBookbuildingDate, Number(node.offsetDays))].sort()[0],
+		plannedBookbuildingDate
+	);
 }
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -127,20 +130,17 @@ export const actions: Actions = {
 		const data = await event.request.formData();
 		const name = String(data.get('name') ?? '').trim();
 		const sopTemplateId = String(data.get('sopTemplateId') ?? '').trim();
-		const borrower = String(data.get('borrower') ?? '').trim();
 		const amountYi = String(data.get('amountYi') ?? '').trim();
 		const ownerId = String(data.get('ownerId') ?? '').trim();
 		const notes = String(data.get('notes') ?? '').trim();
-		const { startDate, endDate } = projectDates(data);
+		const plannedBookbuildingDate = projectBookbuildingDate(data);
 		if (!name || name.length > 160) return fail(400, { message: '项目名称须为 1–160 个字符' });
 		if (!sopTemplateId) return fail(400, { message: '请选择融资品种和对应 SOP' });
-		if (borrower.length > 160) return fail(400, { message: '融资主体不能超过 160 个字符' });
 		if (notes.length > 4000) return fail(400, { message: '项目说明不能超过 4,000 个字符' });
 		if (amountYi && (!/^\d+(?:\.\d{1,8})?$/.test(amountYi) || Number(amountYi) < 0)) {
 			return fail(400, { message: '项目规模须为有效的非负亿元数值' });
 		}
-		const dateError = invalidProjectDates(startDate, endDate);
-		if (dateError) return fail(400, { message: dateError });
+		if (!ISO_DATE.test(plannedBookbuildingDate)) return fail(400, { message: '请填写有效的计划簿记日期' });
 
 		const db = getDatabase();
 		if (ownerId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = TRUE').get(ownerId)) {
@@ -164,47 +164,46 @@ export const actions: Actions = {
 		for (const assignee of assignees as Array<{ id: string; role: string }>) {
 			if (!assigneeByRole.has(assignee.role)) assigneeByRole.set(assignee.role, assignee);
 		}
-		const issueTime = Date.parse(`${endDate}T00:00:00Z`);
+		const startDate = projectStartDate(plannedBookbuildingDate, nodes as Array<{ offsetDays: number }>);
 		await db.transaction(async (transaction: ReturnType<typeof getDatabase>) => {
+			await transaction.prepare(`
+				INSERT INTO projects (
+					id, code, name, debt_type, amount, status,
+					planned_start_date, planned_issue_date, sop_template_id, owner_id, notes
+				) VALUES (?, ?, ?, ?, ?::numeric * 100000000, 'planning', ?, ?, ?, ?, ?)
+			`).run(
+				projectId, code, name, sop.debtType, amountYi || null,
+				startDate, plannedBookbuildingDate, sop.id, ownerId || null, notes || null
+			);
+			for (const node of nodes) {
+				const dueDate = offsetDate(plannedBookbuildingDate, Number(node.offsetDays));
+				const assignee = assigneeByRole.get(node.ownerRole) ?? (ownerId ? { id: ownerId } : undefined);
 				await transaction.prepare(`
-					INSERT INTO projects (
-						id, code, name, debt_type, borrower, amount, status,
-						planned_start_date, planned_issue_date, sop_template_id, owner_id, notes
-					) VALUES (?, ?, ?, ?, ?, ?::numeric * 100000000, 'planning', ?, ?, ?, ?, ?)
-				`).run(
-					projectId, code, name, sop.debtType, borrower || null,
-					amountYi || null, startDate, endDate, sop.id, ownerId || null, notes || null
-				);
-				for (const node of nodes) {
-					const dueDate = new Date(issueTime + Number(node.offsetDays) * 86_400_000).toISOString().slice(0, 10);
-					const assignee = assigneeByRole.get(node.ownerRole) ?? (ownerId ? { id: ownerId } : undefined);
-					await transaction.prepare(`
-						INSERT INTO project_tasks (
-							id, project_id, sop_node_id, name, status, assignee_id,
-							planned_start_date, due_date, sort_order
-						) VALUES (?, ?, ?, ?, 'not_started', ?, ?, ?, ?)
-					`).run(randomUUID(), projectId, node.id, node.name, assignee?.id ?? null, startDate, dueDate, node.sortOrder);
+					INSERT INTO project_tasks (
+						id, project_id, sop_node_id, name, status, assignee_id,
+						planned_start_date, due_date, sort_order
+					) VALUES (?, ?, ?, ?, 'not_started', ?, ?, ?, ?)
+				`).run(randomUUID(), projectId, node.id, node.name, assignee?.id ?? null, startDate, dueDate, node.sortOrder);
+			}
+			await prepareAudit({
+				...auditRequestMeta(event),
+				db: transaction,
+				action: 'project.create',
+				entityType: 'project',
+				entityId: projectId,
+				summary: `创建独立融资项目：${name}`,
+				after: {
+					code,
+					name,
+					debtType: sop.debtType,
+					amountYi: amountYi || null,
+					status: 'planning',
+					plannedStartDate: startDate,
+					plannedIssueDate: plannedBookbuildingDate,
+					sopTemplateId: sop.id,
+					ownerId: ownerId || null
 				}
-				await prepareAudit({
-					...auditRequestMeta(event),
-					db: transaction,
-					action: 'project.create',
-					entityType: 'project',
-					entityId: projectId,
-					summary: `创建独立融资项目：${name}`,
-					after: {
-						code,
-						name,
-						debtType: sop.debtType,
-						borrower: borrower || null,
-						amountYi: amountYi || null,
-						status: 'planning',
-						plannedStartDate: startDate,
-						plannedIssueDate: endDate,
-						sopTemplateId: sop.id,
-						ownerId: ownerId || null
-					}
-				}).run();
+			}).run();
 		});
 		const refreshed = await getProjectPageData(dateInShanghai());
 		return { success: true, projectId, ...refreshed, message: '项目已创建，并已套用对应 SOP 节点。' };
@@ -217,12 +216,11 @@ export const actions: Actions = {
 		const status = String(data.get('status') ?? '').trim();
 		const ownerId = String(data.get('ownerId') ?? '').trim();
 		const notes = String(data.get('notes') ?? '').trim();
-		const { startDate, endDate } = projectDates(data);
+		const plannedBookbuildingDate = projectBookbuildingDate(data);
 		if (!projectId || !name || name.length > 160) return fail(400, { message: '项目名称须为 1–160 个字符' });
 		if (!PROJECT_STATUSES.has(status)) return fail(400, { message: '项目状态无效' });
 		if (notes.length > 4000) return fail(400, { message: '项目说明不能超过 4,000 个字符' });
-		const dateError = invalidProjectDates(startDate, endDate);
-		if (dateError) return fail(400, { message: dateError });
+		if (!ISO_DATE.test(plannedBookbuildingDate)) return fail(400, { message: '请填写有效的计划簿记日期' });
 
 		const db = getDatabase();
 		if (ownerId && !await db.prepare('SELECT 1 FROM people WHERE id = ? AND active = TRUE').get(ownerId)) {
@@ -234,28 +232,52 @@ export const actions: Actions = {
 			FROM projects WHERE id = ?
 		`).get(projectId) as any;
 		if (!before) return fail(404, { message: '项目不存在' });
-		const after = {
-			...before,
-			name,
-			status,
-			ownerId: ownerId || null,
-			plannedStartDate: startDate,
-			plannedIssueDate: endDate,
-			notes: notes || null
-		};
-		await db.batch([
-			db.prepare(`
+		await db.transaction(async (transaction: ReturnType<typeof getDatabase>) => {
+			if (before.plannedIssueDate && before.plannedIssueDate !== plannedBookbuildingDate) {
+				await transaction.prepare(`
+					UPDATE project_tasks
+					SET planned_start_date = CASE
+							WHEN planned_start_date IS NULL THEN NULL
+							ELSE planned_start_date + (?::date - ?::date)
+						END,
+						due_date = CASE
+							WHEN sop_node_id IN (SELECT id FROM sop_nodes WHERE default_offset_days = 0)
+								THEN ?::date
+							WHEN due_date IS NULL THEN NULL
+							ELSE due_date + (?::date - ?::date)
+						END,
+						updated_at = CURRENT_TIMESTAMP
+					WHERE project_id = ? AND sop_node_id IS NOT NULL
+				`).run(
+					plannedBookbuildingDate, before.plannedIssueDate, plannedBookbuildingDate,
+					plannedBookbuildingDate, before.plannedIssueDate, projectId
+				);
+			}
+			const schedule = await transaction.prepare(`
+				SELECT LEAST(?::date, COALESCE(MIN(due_date), ?::date)) AS startDate
+				FROM project_tasks WHERE project_id = ?
+			`).get(plannedBookbuildingDate, plannedBookbuildingDate, projectId) as { startDate: string };
+			const after = {
+				...before,
+				name,
+				status,
+				ownerId: ownerId || null,
+				plannedStartDate: schedule.startDate,
+				plannedIssueDate: plannedBookbuildingDate,
+				notes: notes || null
+			};
+			await transaction.prepare(`
 				UPDATE projects
 				SET name = ?, status = ?, owner_id = ?, planned_start_date = ?,
 					planned_issue_date = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
-			`).bind(name, status, ownerId || null, startDate, endDate, notes || null, projectId),
-			prepareAudit({
-				...auditRequestMeta(event), db,
+			`).run(name, status, ownerId || null, schedule.startDate, plannedBookbuildingDate, notes || null, projectId);
+			await prepareAudit({
+				...auditRequestMeta(event), db: transaction,
 				action: 'project.update', entityType: 'project', entityId: projectId,
 				summary: `更新项目：${name}`, before, after
-			})
-		]);
+			}).run();
+		});
 		const refreshed = await getProjectPageData(dateInShanghai());
 		return { success: true, updatedProjectId: projectId, ...refreshed, message: `已更新项目 ${name}` };
 	},
