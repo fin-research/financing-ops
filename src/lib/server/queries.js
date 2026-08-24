@@ -298,13 +298,25 @@ export async function getProjectGanttData(filters = {}) {
 	return { filters, projects: [...projects.values()] };
 }
 
-export async function getActiveProjectSopOptions() {
-	return getDatabase().prepare(`
-		SELECT id, name, debt_type AS debtType
-		FROM sop_templates
-		WHERE is_active = TRUE
-		ORDER BY debt_type, name, id
-	`).all();
+export async function getProjectFormOptions(database = getDatabase()) {
+	const result = await database.prepare(`
+		SELECT COALESCE((
+			SELECT jsonb_agg(jsonb_build_object(
+				'id', person.id, 'name', person.name, 'role', person.role
+			) ORDER BY person.name, person.id)
+			FROM people person WHERE person.active = TRUE
+		), '[]'::jsonb) AS people,
+		COALESCE((
+			SELECT jsonb_agg(jsonb_build_object(
+				'id', template.id, 'name', template.name, 'debtType', template.debt_type
+			) ORDER BY template.debt_type, template.name, template.id)
+			FROM sop_templates template WHERE template.is_active = TRUE
+		), '[]'::jsonb) AS projectSops
+	`).get();
+	return {
+		people: result?.people ?? [],
+		projectSops: result?.projectSops ?? []
+	};
 }
 
 export async function getDebtLimitSummary(database = getDatabase()) {

@@ -41,6 +41,9 @@
 	let newProjectBookbuildingDate = $state('');
 	const initialProjectSources = untrack(() => data?.projectSources ?? []);
 	let projectSources = $state<any[]>([...initialProjectSources]);
+	let projectOptions = $state<{ people: any[]; projectSops: any[] }>({ people: [], projectSops: [] });
+	let projectOptionsStatus = $state<'idle' | 'loading' | 'ready' | 'error'>('idle');
+	let projectOptionsRequest: Promise<boolean> | null = null;
 	let actionState = $state<{ key: string; status: 'idle' | 'pending' | 'success' | 'error'; message: string }>({
 		key: '', status: 'idle', message: ''
 	});
@@ -113,14 +116,44 @@
 		};
 	};
 
+	function ensureProjectOptions() {
+		if (projectOptionsStatus === 'ready') return Promise.resolve(true);
+		if (projectOptionsRequest) return projectOptionsRequest;
+		projectOptionsStatus = 'loading';
+		projectOptionsRequest = (async () => {
+			try {
+				const response = await fetch(withBase('/projects/options'), {
+					headers: { Accept: 'application/json' },
+					cache: 'no-store'
+				});
+				if (!response.ok) throw new Error(`项目表单选项加载失败（${response.status}）`);
+				const options = await response.json();
+				projectOptions = {
+					people: Array.isArray(options?.people) ? options.people : [],
+					projectSops: Array.isArray(options?.projectSops) ? options.projectSops : []
+				};
+				projectOptionsStatus = 'ready';
+				return true;
+			} catch {
+				projectOptionsStatus = 'error';
+				return false;
+			} finally {
+				projectOptionsRequest = null;
+			}
+		})();
+		return projectOptionsRequest;
+	}
+
 	function openNewProject() {
 		newProjectBookbuildingDate = data.today;
 		newProjectDialog.showModal();
+		void ensureProjectOptions();
 	}
 
 	function openEditProject(project: any) {
 		editingProject = project;
 		editProjectDialog.showModal();
+		void ensureProjectOptions();
 	}
 
 	const projectPage = $derived(buildProjectPageData(projectSources, data.today));
@@ -402,9 +435,11 @@
 			</label>
 			<label class="wide">
 				<span>融资品种 / SOP</span>
-				<select name="sopTemplateId" required>
-					<option value="">请选择融资品种</option>
-					{#each data.projectSops as sop}
+				<select name="sopTemplateId" required disabled={projectOptionsStatus !== 'ready'}>
+					<option value="">
+						{projectOptionsStatus === 'loading' ? '正在加载选项…' : '请选择融资品种'}
+					</option>
+					{#each projectOptions.projectSops as sop}
 						<option value={sop.id}>{sop.debtType} · {sop.name}</option>
 					{/each}
 				</select>
@@ -415,9 +450,9 @@
 			</label>
 			<label>
 				<span>负责人</span>
-				<select name="ownerId" value={data.viewContext.personId ?? ''}>
+				<select name="ownerId" value={data.viewContext.personId ?? ''} disabled={projectOptionsStatus !== 'ready'}>
 					<option value="">待分配</option>
-					{#each data.people as person}
+					{#each projectOptions.people as person}
 						<option value={person.id}>{person.name}</option>
 					{/each}
 				</select>
@@ -432,9 +467,13 @@
 			</label>
 		</div>
 		<div class="modal-note">
-			<CheckCircle2 size={15} />
+			{#if projectOptionsStatus === 'loading'}<LoaderCircle class="spin" size={15} />{:else}<CheckCircle2 size={15} />{/if}
 			<span>
-				{#if data.projectSops.length === 0}
+				{#if projectOptionsStatus === 'loading'}
+					正在按需加载人员和 SOP 选项…
+				{:else if projectOptionsStatus === 'error'}
+					选项加载失败，请关闭后重试。
+				{:else if projectOptions.projectSops.length === 0}
 					暂无启用中的 SOP，请先在 SOP 管理中启用至少一个模板。
 				{:else}
 					创建后会按所选 SOP 生成项目节点，现有负债数据保持不变。
@@ -446,7 +485,7 @@
 			<button
 				class="primary-action"
 				type="submit"
-				disabled={actionState.status === 'pending' || data.projectSops.length === 0}
+				disabled={actionState.status === 'pending' || projectOptionsStatus !== 'ready' || projectOptions.projectSops.length === 0}
 			>
 				{#if actionState.status === 'pending' && actionState.key === 'create'}<LoaderCircle class="spin" size={16} />{/if}
 				{actionState.status === 'pending' && actionState.key === 'create' ? '创建中…' : '创建项目'}
@@ -490,7 +529,10 @@
 					<span>负责人</span>
 					<select name="ownerId" value={editingProject.ownerId ?? ''}>
 						<option value="">待分配</option>
-						{#each data.people as person}
+						{#if projectOptionsStatus !== 'ready' && editingProject.ownerId}
+							<option value={editingProject.ownerId}>{editingProject.owner}</option>
+						{/if}
+						{#each projectOptions.people as person}
 							<option value={person.id}>{person.name}</option>
 						{/each}
 					</select>

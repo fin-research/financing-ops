@@ -6,6 +6,7 @@ declare global {
 		interface Locals {
 			database: import('$lib/server/db.js').PostgresDatabase | null;
 			dataApiJwt: string | null;
+			authCacheStatus: 'hit' | 'miss' | 'bypass';
 			user: {
 				id: string;
 				email: string | null;

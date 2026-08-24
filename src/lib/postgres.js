@@ -104,6 +104,8 @@ export class PostgresDatabase {
 		this.client = new Client({ connectionString, application_name: applicationName, keepAlive: true });
 		this.connecting = null;
 		this.closed = false;
+		this.queryCount = 0;
+		this.queryDurationMs = 0;
 	}
 
 	async connect() {
@@ -113,8 +115,14 @@ export class PostgresDatabase {
 	}
 
 	async query(sql, values = []) {
-		await this.connect();
-		return this.client.query(sql, values);
+		const startedAt = performance.now();
+		this.queryCount += 1;
+		try {
+			await this.connect();
+			return await this.client.query(sql, values);
+		} finally {
+			this.queryDurationMs += performance.now() - startedAt;
+		}
 	}
 
 	prepare(sql) { return preparedStatement(this, sql); }

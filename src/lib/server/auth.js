@@ -3,6 +3,7 @@ import { env } from '$env/dynamic/private';
 import { appCookiePath } from '../app-paths.js';
 import { normalizeEmail } from '../email.js';
 import { getDatabase } from './db.js';
+import { cacheSessionUser, readCachedSessionUser } from './auth-cache.js';
 import { createNeonAuthClient, NeonAuthApiError } from './neon-auth-client.js';
 
 export const SESSION_COOKIE = 'financing_session';
@@ -72,14 +73,31 @@ export async function authenticate(event, email, password) {
 	return user;
 }
 
-export async function getSessionUser(event, token = currentToken(event), { requireDataApiJwt = false } = {}) {
+export async function getSessionUser(
+	event,
+	token = currentToken(event),
+	{ requireDataApiJwt = false, useSessionCache = false } = {}
+) {
 	if (!token) return null;
+	const canUseCache = Boolean(useSessionCache && !requireDataApiJwt);
+	if (canUseCache) {
+		const cachedUser = await readCachedSessionUser(event, token);
+		if (cachedUser) {
+			event.locals.authCacheStatus = 'hit';
+			return cachedUser;
+		}
+		event.locals.authCacheStatus = 'miss';
+	} else {
+		event.locals.authCacheStatus = 'bypass';
+	}
 	try {
 		const result = await client(event, token).getSession({ disableCookieCache: requireDataApiJwt });
 		event.locals.dataApiJwt = result.jwt ?? null;
 		if (!result.data?.user) return null;
 		if (result.token && result.token !== token) setSessionCookie(event, result.token, result.maxAge);
-		return await localIdentity(result.data.user);
+		const user = await localIdentity(result.data.user);
+		if (user && canUseCache) await cacheSessionUser(event, result.token ?? token, user);
+		return user;
 	} catch (error) {
 		if (error instanceof NeonAuthApiError && (error.status === 401 || error.status === 403)) return null;
 		throw error;

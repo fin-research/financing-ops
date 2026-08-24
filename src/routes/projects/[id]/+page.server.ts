@@ -73,7 +73,7 @@ async function loadProject(projectId: string) {
 		LEFT JOIN sop_templates st ON st.id = p.sop_template_id
 		WHERE p.id = ?
 	`).get(projectId);
-	if (!row) throw error(404, '项目不存在');
+	if (!row) return null;
 	const { tasks = [], people = [], auditLogs = [], ...project } = row as any;
 
 	const membersById = new Map<string, { id: string; name: string; email: string | null; role: string | null; responsibility: string }>();
@@ -114,9 +114,19 @@ async function loadProject(projectId: string) {
 }
 
 export const load: PageServerLoad = async ({ params }) => {
-	const projectId = await resolveProjectId(params.id);
-	if (!projectId) throw error(404, '项目不存在');
-	return loadProject(projectId);
+	const direct = await loadProject(params.id);
+	if (direct) return direct;
+	const legacyIndex = Number(params.id);
+	if (!Number.isInteger(legacyIndex) || legacyIndex < 1) throw error(404, '项目不存在');
+	const legacy = await getDatabase().prepare(`
+		SELECT id FROM projects
+		ORDER BY COALESCE(planned_start_date, planned_issue_date), name
+		LIMIT 1 OFFSET ?
+	`).get(legacyIndex - 1) as { id: string } | undefined;
+	if (!legacy) throw error(404, '项目不存在');
+	const result = await loadProject(legacy.id);
+	if (!result) throw error(404, '项目不存在');
+	return result;
 };
 
 export const actions: Actions = {

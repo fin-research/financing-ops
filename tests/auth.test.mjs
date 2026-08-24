@@ -4,6 +4,7 @@ import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { isValidEmail, normalizeEmail } from '../src/lib/email.js';
 import { DATA_ADMIN_DEBT_TYPES, DEBT_TYPES } from '../src/lib/debt-types.js';
+import { cacheSessionUser, invalidateCachedSession, readCachedSessionUser } from '../src/lib/server/auth-cache.js';
 import { createNeonAuthClient, jwtFromResponseHeaders, NEON_SESSION_COOKIE, sessionMaxAgeFromSetCookie, sessionTokenFromSetCookie } from '../src/lib/server/neon-auth-client.js';
 import { dataApiUrlFromAuthUrl } from '../src/lib/neon-urls.js';
 import { deleteProjectWithReminders } from '../src/lib/server/project-deletion.js';
@@ -92,6 +93,34 @@ test('Data API token requests bypass the Neon Auth session cookie cache', async 
 	assert.equal(new URL(requests[0]).searchParams.get('disableCookieCache'), 'true');
 	const hooksSource = fs.readFileSync(new URL('../src/hooks.server.ts', import.meta.url), 'utf8');
 	assert.match(hooksSource, /requireDataApiJwt:\s*routeId === '\/data\/token'/);
+});
+
+test('short-lived Worker auth cache hashes opaque tokens and can be invalidated', async () => {
+	const entries = new Map();
+	const writes = [];
+	const cache = {
+		async match(request) { return entries.get(request.url)?.clone(); },
+		async put(request, response) { entries.set(request.url, response.clone()); },
+		async delete(request) { return entries.delete(request.url); }
+	};
+	const event = {
+		url: new URL('https://eastmoney.hasbai.xyz/financing/projects'),
+		platform: {
+			caches: { async open() { return cache; } },
+			context: { waitUntil(promise) { writes.push(promise); } }
+		}
+	};
+	const user = {
+		id: 'auth-id', email: 'admin@example.com', role: 'admin', personId: 'person-id',
+		personName: '管理员', hasAvatar: false, avatarVersion: '1'
+	};
+	await cacheSessionUser(event, 'opaque-session-token', user);
+	await Promise.all(writes);
+	assert.equal(entries.size, 1);
+	assert.equal([...entries.keys()][0].includes('opaque-session-token'), false);
+	assert.deepEqual(await readCachedSessionUser(event, 'opaque-session-token'), user);
+	assert.equal(await invalidateCachedSession(event, 'opaque-session-token'), true);
+	assert.equal(await readCachedSessionUser(event, 'opaque-session-token'), null);
 });
 
 test('收益凭证在数据后台合并、在仪表盘筛选中保留浮动和固定分类', () => {

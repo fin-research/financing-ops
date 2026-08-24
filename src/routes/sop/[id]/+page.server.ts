@@ -38,6 +38,26 @@ async function loadNodes(templateId: string) {
 	}>;
 }
 
+async function loadSopDetail(id: string) {
+	const row = await getDatabase().prepare(`
+		SELECT template.id, template.name, template.debt_type AS debtType,
+			template.description, template.is_active AS isActive,
+			template.created_at AS createdAt, template.updated_at AS updatedAt,
+			COALESCE((
+				SELECT jsonb_agg(jsonb_build_object(
+					'id', node.id, 'name', node.name, 'description', node.description,
+					'sortOrder', node.sort_order, 'offsetDays', node.default_offset_days,
+					'ownerRole', node.default_owner_role
+				) ORDER BY node.sort_order, node.created_at, node.id)
+				FROM sop_nodes node WHERE node.template_id = template.id
+			), '[]'::jsonb) AS nodes
+		FROM sop_templates template WHERE template.id = ?
+	`).get(id) as any;
+	if (!row) return null;
+	const { nodes = [], ...template } = row;
+	return { template: { ...template, isActive: Boolean(template.isActive) }, nodes };
+}
+
 function parseNode(data: FormData) {
 	const name = String(data.get('name') ?? '').trim();
 	const description = String(data.get('description') ?? '').trim();
@@ -53,16 +73,14 @@ function parseNode(data: FormData) {
 }
 
 export const load: PageServerLoad = async ({ params }) => {
-	const template = await loadTemplate(params.id);
-	if (!template) throw error(404, 'SOP 模板不存在');
-	const nodes = await loadNodes(params.id);
+	const detail = await loadSopDetail(params.id);
+	if (!detail) throw error(404, 'SOP 模板不存在');
 	const roles = [
 		{ code: 'handler', label: '经办' },
 		{ code: 'reviewer', label: '复核' }
 	];
 	return {
-		template,
-		nodes,
+		...detail,
 		roles
 	};
 };

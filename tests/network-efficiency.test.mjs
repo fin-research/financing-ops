@@ -31,3 +31,34 @@ test('reminder history is cursor-paginated in bounded batches', async () => {
 	assert.match(query, /nextCursor/);
 	assert.match(query, /safeLimit \+ 1/);
 });
+
+test('authenticated GET navigation reuses a bounded server-side session decision', async () => {
+	const [hooks, auth, cache] = await Promise.all([
+		readFile(new URL('../src/hooks.server.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/lib/server/auth.js', import.meta.url), 'utf8'),
+		readFile(new URL('../src/lib/server/auth-cache.js', import.meta.url), 'utf8')
+	]);
+	assert.match(hooks, /useSessionCache: safeRequest && routeId !== '\/data\/token'/);
+	assert.match(hooks, /!safeRequest\) await invalidateCachedSession/);
+	assert.match(auth, /readCachedSessionUser/);
+	assert.match(cache, /CACHE_TTL_SECONDS = 15/);
+	assert.match(cache, /crypto\.subtle\.digest\('SHA-256'/);
+	assert.doesNotMatch(cache, /Map\s*\(/);
+	assert.match(hooks, /queryCount/);
+});
+
+test('page loads defer form-only options and remove duplicate identity queries', async () => {
+	const [projectsPage, projectOptions, projectComponent, settingsPage, sopDetail] = await Promise.all([
+		readFile(new URL('../src/routes/projects/+page.server.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/projects/options/+server.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/projects/+page.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/settings/+page.server.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/sop/[id]/+page.server.ts', import.meta.url), 'utf8')
+	]);
+	assert.doesNotMatch(projectsPage, /getProjectFormOptions|getActiveProjectSopOptions/);
+	assert.match(projectOptions, /getProjectFormOptions/);
+	assert.match(projectComponent, /fetch\(withBase\('\/projects\/options'\)/);
+	assert.match(settingsPage, /name: locals\.user\.personName/);
+	assert.match(sopDetail, /async function loadSopDetail/);
+	assert.match(sopDetail, /jsonb_agg\(jsonb_build_object/);
+});

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getDatabase } from '$lib/server/db.js';
-import { getActiveProjectSopOptions, getProjectGanttData } from '$lib/server/queries.js';
+import { getProjectGanttData } from '$lib/server/queries.js';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 import { deleteProjectWithReminders } from '$lib/server/project-deletion.js';
 
@@ -35,17 +35,10 @@ function projectStartDate(plannedBookbuildingDate: string, nodes: Array<{ offset
 }
 
 export const load: PageServerLoad = async ({ locals }) => {
-	const db = getDatabase();
 	const today = dateInShanghai();
-	const [projectData, people, projectSops] = await Promise.all([
-		getProjectGanttData(),
-		db.prepare('SELECT id, name, role FROM people WHERE active = TRUE ORDER BY name').all(),
-		getActiveProjectSopOptions()
-	]);
+	const projectData = await getProjectGanttData();
 	return {
 		projectSources: projectData.projects,
-		people,
-		projectSops,
 		today,
 		viewContext: {
 			role: locals.user?.role ?? 'reviewer',

@@ -59,9 +59,15 @@ function authMessage(authError: NeonAuthApiError, operation: 'profile' | 'passwo
 
 export const load: PageServerLoad = async ({ locals }) => {
 	if (!locals.user) throw error(401, '登录已失效，请重新登录');
-	const profile = await currentProfile(locals.user.personId);
-	if (!profile) throw error(404, '未找到当前账号');
-	return { profile: publicProfile(profile) };
+	return {
+		profile: {
+			hasAvatar: locals.user.hasAvatar,
+			avatarVersion: locals.user.avatarVersion,
+			name: locals.user.personName,
+			email: locals.user.email,
+			role: locals.user.role
+		}
+	};
 };
 
 export const actions: Actions = {
