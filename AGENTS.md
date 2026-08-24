@@ -124,7 +124,7 @@ Cloudflare Git 当前使用 pnpm 10.11.1；`pnpm-workspace.yaml` 必须显式包
 - 禁止 N+1 查询。Dashboard、甘特图、额度、提醒和详情查询增加功能时，必须说明请求级 SQL 次数是否变化。
 - Dashboard 当前业务数据为 3 次 SQL；根布局的数据日期与提醒为 1 次 SQL；项目列表首屏为 1 次 SQL，人员与启用 SOP 仅在项目表单打开时合并为 1 次按需查询。
 - `__data.json` 是 SvelteKit 客户端导航协议，链接数据预取使用 `tap`，不得恢复全局 `hover` 预取使未点击菜单触发业务查询。
-- 首次认证后，只读请求允许通过 Workers Cache 复用最多 15 秒的身份判断；缓存键必须是会话 token 的 SHA-256，不得保存明文 token。写请求与 `/data/token` 必须绕过并清除缓存，缓存失效或不可用时立即回退 Neon Auth 实时校验。
+- 首次认证后，只读请求允许通过 Workers Cache 复用最多 60 秒的身份判断；缓存键必须是会话 token 的 SHA-256，不得保存明文 token。写请求与 `/data/token` 必须绕过并清除缓存，缓存失效或不可用时立即回退 Neon Auth 实时校验。
 - mutation action 只回传服务端确认的变更实体或删除 ID，前端就地合并；禁止用 `invalidateAll` 刷新当前整页。仅当顶栏身份或提醒确实变化时，分别失效 `financing:identity`、`financing:reminders`。
 - 认证身份查询不得读取 `avatar_data_url`；只返回头像存在状态和版本。头像通过 `/avatar` 私有长缓存按版本独立传输。
 - 提醒历史使用三字段 keyset 游标分页，首批和后续批次均最多 50 条；后续批次不得重复执行全量汇总。

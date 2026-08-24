@@ -43,7 +43,7 @@
 - SvelteKit 的 `__data.json` 是客户端导航的页面数据协议；全局预取只在按下链接时触发，不因鼠标经过菜单而提前查询未访问页面。
 - 页面 mutation 只返回新增、更新或删除的实体增量，前端就地合并；禁止成功后 `invalidateAll` 重新读取当前整页。确需同步顶栏时，只失效 `financing:identity` 或 `financing:reminders` 根布局依赖。
 - 账号、密码和会话由 Neon Managed Better Auth 托管；Worker 只保存作用域为 `/financing` 的不透明会话 Cookie，并从 Auth 会话响应取得短期 Data API JWT。
-- 首次受保护请求通过 Neon Auth 会话接口与一次 Hyperdrive 身份查询完成校验；随后 15 秒内的只读请求可从 Workers Cache 复用以会话 token 哈希键保存的身份判断。缓存不写入浏览器、不保存明文 token，写请求和 `/data/token` 强制绕过并清除缓存。身份查询只返回身份与头像版本，不传输 base64 头像；头像由私有缓存的 `/financing/avatar` 独立读取。
+- 首次受保护请求通过 Neon Auth 会话接口与一次 Hyperdrive 身份查询完成校验；随后 60 秒内的只读请求可从 Workers Cache 复用以会话 token 哈希键保存的身份判断。缓存不写入浏览器、不保存明文 token，写请求和 `/data/token` 强制绕过并清除缓存。身份查询只返回身份与头像版本，不传输 base64 头像；头像由私有缓存的 `/financing/avatar` 独立读取。
 - `wrangler.jsonc` 启用 Smart Placement，并绑定 Hyperdrive ID `26b76413a03a4328836d95f3ca320a1e`。
 
 ## 项目管理

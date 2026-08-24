@@ -41,7 +41,7 @@ test('authenticated GET navigation reuses a bounded server-side session decision
 	assert.match(hooks, /useSessionCache: safeRequest && routeId !== '\/data\/token'/);
 	assert.match(hooks, /!safeRequest\) await invalidateCachedSession/);
 	assert.match(auth, /readCachedSessionUser/);
-	assert.match(cache, /CACHE_TTL_SECONDS = 15/);
+	assert.match(cache, /CACHE_TTL_SECONDS = 60/);
 	assert.match(cache, /crypto\.subtle\.digest\('SHA-256'/);
 	assert.doesNotMatch(cache, /Map\s*\(/);
 	assert.match(hooks, /queryCount/);

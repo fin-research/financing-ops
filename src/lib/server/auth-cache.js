@@ -1,7 +1,7 @@
 // @ts-nocheck
 
 const CACHE_NAME = 'financing-auth-session-v1';
-const CACHE_TTL_SECONDS = 15;
+const CACHE_TTL_SECONDS = 60;
 const VALID_ROLES = new Set(['admin', 'handler', 'reviewer']);
 
 function cacheStorage(event) {
