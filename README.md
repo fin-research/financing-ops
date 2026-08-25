@@ -28,6 +28,7 @@ pnpm dev
 - [UI/UX 规范](DESIGN.md)
 - [系统架构](docs/ARCHITECTURE.md)
 - [业务规则](docs/DOMAIN.md)
+- [融资仪表盘指标口径](docs/METRICS.md)
 - [数据库](docs/DATABASE.md)
 - [接口约定](docs/API.md)
 - [安全与权限](docs/SECURITY.md)

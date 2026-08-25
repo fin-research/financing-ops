@@ -1,10 +1,15 @@
 // @ts-nocheck
 import { REPORTING_DEBT_TYPES } from '../debt-types.js';
 import { reminderPeriodLabel } from '../reminder-periods.js';
+import {
+	currentYearBorrowingPredicateSql,
+	reportingTypeSql,
+	shortDebtPredicateSql
+} from './dashboard-metrics.js';
 import { getDatabase } from './db.js';
 
 const number = (value) => Number(value ?? 0);
-const REPORTING_TYPE_SQL = (alias = 'd') => `COALESCE(NULLIF(${alias}.subtype, ''), ${alias}.debt_type)`;
+const REPORTING_TYPE_SQL = reportingTypeSql;
 
 function addUtcDays(date, days) {
 	const value = new Date(`${date}T00:00:00Z`);
@@ -132,10 +137,12 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 			)), '{}'::jsonb) AS value
 			FROM finance_parameters
 		), borrowing AS (
-			SELECT COALESCE(MAX(d.amount), 0) / 100000000.0 AS largest_yi,
+			SELECT COALESCE(MAX(d.amount) FILTER (
+					WHERE ${currentYearBorrowingPredicateSql()}
+				), 0) / 100000000.0 AS largest_yi,
 				COALESCE(SUM(d.amount) FILTER (
-					WHERE d.maturity_date > latest.as_of_date AND d.maturity_date <= latest.as_of_date + 365
-						AND (${REPORTING_TYPE_SQL()} IN ('浮动收益凭证', '固定收益凭证', '短期融资券', '同业拆借', '小公募', '次级债', '私募债', '科创债'))
+					WHERE (d.maturity_date IS NULL OR d.maturity_date > latest.as_of_date)
+						AND ${shortDebtPredicateSql()}
 				), 0) / 100000000.0 AS short_debt_yi
 			FROM debt d CROSS JOIN latest CROSS JOIN args
 			WHERE (d.issue_date IS NULL OR d.issue_date <= latest.as_of_date)
