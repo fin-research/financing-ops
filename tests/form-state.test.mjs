@@ -130,7 +130,7 @@ test('project and SOP edit forms auto-save without per-item save buttons', async
 	]);
 
 	assert.match(projects, /action="\?\/updateProject" use:autoSave use:enhance=/);
-	assert.match(projectDetail, /action="\?\/updateTask"[\s\S]*?use:autoSave=/);
+	assert.match(projectDetail, /action=\{canManage \? '\?\/updateTask' : '\?\/updateOwnTaskStatus'\}[\s\S]*?use:autoSave=/);
 	assert.match(projectDetail, /action="\?\/updateProject"[\s\S]*?use:autoSave=/);
 	assert.match(sopDetail, /action="\?\/updateNode"[\s\S]*?use:autoSave/);
 	assert.match(sopDetail, /action="\?\/updateTemplate" use:autoSave use:enhance=/);

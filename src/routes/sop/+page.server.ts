@@ -111,6 +111,9 @@ export const actions: Actions = {
 		};
 	},
 	createSop: async (event) => {
+		if (event.locals.user?.role !== 'admin' && event.locals.user?.role !== 'reviewer') {
+			return fail(403, { message: '当前角色无权新增 SOP' });
+		}
 		const data = await event.request.formData();
 		const name = String(data.get('name') ?? '').trim();
 		const debtType = String(data.get('debtType') ?? '').trim();

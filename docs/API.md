@@ -18,6 +18,7 @@
 ## Mutation
 
 - action 负责输入解析、业务校验、权限和事务调用。
+- 写权限精确到 named action：`reviewer` 仅开放人员主档、项目和 SOP 的创建 action；所有启用角色的本人任务 action 只接收 `taskId` 与 `status`，并在查询和更新时双重校验 `assignee_id`。
 - 成功响应只返回一个新增/更新实体或删除 ID；浏览器就地合并。
 - 禁止在 action 成功后返回当前页面完整列表，禁止前端 `invalidateAll`。
 - 只有身份或顶栏提醒确实变化时才定向失效相应根布局依赖。

@@ -1,7 +1,7 @@
 export const ROLE_DEFINITIONS = [
-  { code: "admin", label: "管理员", description: "维护人员、账号和系统配置" },
-  { code: "handler", label: "经办", description: "负责经办" },
-  { code: "reviewer", label: "复核", description: "负责复核" },
+  { code: "admin", label: "管理员", description: "维护人员账号与全部业务配置" },
+  { code: "handler", label: "经办", description: "负责经办并维护本人任务节点状态" },
+  { code: "reviewer", label: "复核", description: "负责复核，可新增人员、项目和 SOP" },
 ] as const;
 
 export type RoleCode = (typeof ROLE_DEFINITIONS)[number]["code"];

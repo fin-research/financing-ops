@@ -3,14 +3,12 @@ import type { Handle } from '@sveltejs/kit';
 import { appCookiePath, appRoot, withBase } from '$lib/app-paths';
 import { invalidateCachedSession } from '$lib/server/auth-cache.js';
 import { closeDatabase } from '$lib/server/db.js';
+import { actionNameFromUrl, isAuthorizedRequest, isSafeRequestMethod } from '$lib/server/request-authorization.js';
 import {
-	canWrite,
 	getSessionUser,
 	NeonAuthApiError,
 	SESSION_COOKIE
 } from '$lib/server/auth.js';
-
-const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const handle: Handle = async ({ event, resolve }) => {
 	try {
@@ -20,7 +18,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		const isStaticAsset = event.url.pathname.startsWith(withBase('/_app/'));
 		const isPublic = routeId === '/login' || isStaticAsset;
 		const sessionToken = isStaticAsset ? null : event.cookies.get(SESSION_COOKIE);
-		const safeRequest = SAFE_METHODS.has(event.request.method);
+		const safeRequest = isSafeRequestMethod(event.request.method);
 		if (sessionToken && !safeRequest) await invalidateCachedSession(event, sessionToken);
 		const authStartedAt = performance.now();
 		try {
@@ -45,9 +43,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 			throw redirect(303, `${withBase('/login')}?redirectTo=${encodeURIComponent(redirectTo)}`);
 		}
 
-		const isOwnSettingsWrite = routeId === '/settings' && event.request.method === 'POST';
-		if (!isPublic && !SAFE_METHODS.has(event.request.method) && !isOwnSettingsWrite && !canWrite(event.locals.user)) {
-			return new Response('当前账号仅有只读权限', { status: 403 });
+		const actionName = actionNameFromUrl(event.url);
+		if (!isPublic && !isAuthorizedRequest(event.locals.user?.role, routeId, event.request.method, actionName)) {
+			return new Response('当前账号无权执行该操作', { status: 403 });
 		}
 
 		if (routeId === '/login' && event.locals.user && event.request.method === 'GET') {

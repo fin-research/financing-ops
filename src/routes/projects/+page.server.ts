@@ -51,6 +51,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
 	createProject: async (event) => {
+		if (event.locals.user?.role !== 'admin' && event.locals.user?.role !== 'reviewer') {
+			return fail(403, { message: '当前角色无权新增项目' });
+		}
 		const data = await event.request.formData();
 		const name = String(data.get('name') ?? '').trim();
 		const sopTemplateId = String(data.get('sopTemplateId') ?? '').trim();

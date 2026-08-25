@@ -22,7 +22,7 @@
 	import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
 
 	let { data } = $props();
-	let personDialog: HTMLDialogElement;
+	let personDialog = $state<HTMLDialogElement>();
 	let editingPerson = $state<any>(null);
 	let accountEnabled = $state(true);
 	let actionState = $state<{
@@ -36,6 +36,10 @@
 	const roleCount = (role: string) =>
 		displayedPeople.filter((person: any) => person.role === role).length;
 	const canManage = $derived(data?.user?.role === 'admin');
+	const canCreate = $derived(canManage || data?.user?.role === 'reviewer');
+	const creatableRoles = $derived(
+		canManage ? ROLE_DEFINITIONS : ROLE_DEFINITIONS.filter((role) => role.code !== 'admin')
+	);
 
 	const enhanceAction = (key: string, closeDialog = false): SubmitFunction => {
 		return () => {
@@ -79,8 +83,8 @@
 
 	function openPerson(person: any = null) {
 		editingPerson = person;
-		accountEnabled = person ? Boolean(person.accountId) : true;
-		personDialog.showModal();
+		accountEnabled = person ? Boolean(person.accountId) : canManage;
+		personDialog?.showModal();
 	}
 </script>
 
@@ -193,7 +197,7 @@
 		</div>
 	</section>
 
-	{#if canManage}
+	{#if canCreate}
 		<button
 			class="floating-create-button"
 			type="button"
@@ -205,6 +209,7 @@
 		</button>
 	{/if}
 
+	{#if canCreate}
 	<dialog class="config-modal" bind:this={personDialog}>
 		<form
 			method="post"
@@ -214,10 +219,10 @@
 			<div class="modal-header">
 				<div>
 					<p class="eyebrow">UNIFIED IDENTITY</p>
-					<h2>{editingPerson ? '编辑人员与账号' : '添加人员与账号'}</h2>
-					<p>工作邮箱同时作为登录标识，项目责任关系直接使用该人员主档。</p>
+					<h2>{editingPerson ? '编辑人员与账号' : canManage ? '添加人员与账号' : '添加人员主档'}</h2>
+					<p>{canManage ? '工作邮箱同时作为登录标识，项目责任关系直接使用该人员主档。' : '添加后可直接分配项目和任务；登录账号由管理员另行开通。'}</p>
 				</div>
-				<button type="button" aria-label="关闭" onclick={() => personDialog.close()}>×</button>
+				<button type="button" aria-label="关闭" onclick={() => personDialog?.close()}>×</button>
 			</div>
 			{#if editingPerson}
 				<input type="hidden" name="id" value={editingPerson.id} />
@@ -230,19 +235,24 @@
 				<label>
 					<span>系统角色</span>
 					<select name="role" required value={editingPerson?.role ?? 'handler'}>
-						{#each ROLE_DEFINITIONS as role}<option value={role.code}>{role.label}</option>{/each}
+					{#each creatableRoles as role}<option value={role.code}>{role.label}</option>{/each}
 					</select>
 				</label>
 				<label class="wide">
 					<span>工作邮箱</span>
 					<input name="email" type="email" required value={editingPerson?.email ?? ''} autocomplete="email" />
 				</label>
-				<label class="account-switch wide">
-					<input type="checkbox" bind:checked={accountEnabled} />
-					<input type="hidden" name="accountEnabled" value={accountEnabled ? '1' : '0'} />
-					<span>允许使用邮箱登录</span>
-				</label>
-				{#if accountEnabled}
+				{#if canManage}
+					<label class="account-switch wide">
+						<input type="checkbox" bind:checked={accountEnabled} />
+						<input type="hidden" name="accountEnabled" value={accountEnabled ? '1' : '0'} />
+						<span>允许使用邮箱登录</span>
+					</label>
+				{:else}
+					<input type="hidden" name="accountEnabled" value="0" />
+					<p class="permission-note wide">复核角色可添加人员主档；登录账号、管理员角色及后续维护由管理员配置。</p>
+				{/if}
+				{#if canManage && accountEnabled}
 					<label class="wide">
 						<span>{editingPerson?.accountId ? '重置密码（留空不变）' : '初始密码'}</span>
 						<input
@@ -256,7 +266,7 @@
 				{/if}
 			</div>
 			<div class="modal-actions">
-				<button type="button" onclick={() => personDialog.close()}>取消</button>
+				<button type="button" onclick={() => personDialog?.close()}>取消</button>
 				<button class="primary-action" type="submit" disabled={actionState.status === 'pending'}>
 					<Save size={15} />
 					{actionState.status === 'pending' && actionState.key === 'person' ? '保存中…' : '保存'}
@@ -264,6 +274,7 @@
 			</div>
 		</form>
 	</dialog>
+	{/if}
 </div>
 
 <style>
@@ -428,6 +439,17 @@
 	}
 
 	.account-switch input[type='checkbox'] { width: 1.125rem; min-height: 1.125rem; }
+	.permission-note {
+		grid-column: 1 / -1;
+		margin: 0;
+		padding: 0.75rem;
+		border: 1px solid #dbe6fb;
+		border-radius: 0.5rem;
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: #475467;
+		background: #f8faff;
+	}
 
 	@media (max-width: 75rem) {
 		.identity-head { display: none; }

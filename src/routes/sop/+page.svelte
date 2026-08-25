@@ -20,8 +20,8 @@
 	import { MAX_REMINDER_PERIODS, reminderPeriodLabel } from '$lib/reminder-periods.js';
 
 	let { data } = $props();
-	let reminderDialog: HTMLDialogElement;
-	let sopDialog: HTMLDialogElement;
+	let reminderDialog = $state<HTMLDialogElement>();
+	let sopDialog = $state<HTMLDialogElement>();
 	let reminderRecipientMode = $state('assignee');
 	let reminderPeriodSequence = 1;
 	let reminderPeriods = $state([{ key: 'period-1', days: 3, hours: 0 }]);
@@ -39,6 +39,8 @@
 		displayedSettings = data?.settings ?? fallback;
 	});
 	const settings = $derived(displayedSettings);
+	const canManage = $derived(data?.user?.role === 'admin');
+	const canCreateSop = $derived(canManage || data?.user?.role === 'reviewer');
 	const activeSopTemplates = $derived(
 		settings.sopTemplates.filter((sop: { isActive: boolean }) => sop.isActive)
 	);
@@ -125,9 +127,11 @@
 					<h2>负债品种 SOP</h2>
 					<p>启用的 SOP 同时决定首页展示哪些品种的项目、到期和付息事件</p>
 				</div>
-				<button class="link-button" type="button" onclick={() => sopDialog.showModal()}>
-					<Plus size={14} /> 新建
-				</button>
+				{#if canCreateSop}
+					<button class="link-button" type="button" onclick={() => sopDialog?.showModal()}>
+						<Plus size={14} /> 新建
+					</button>
+				{/if}
 			</div>
 			<div class="sop-list">
 				{#each settings.sopTemplates as sop}
@@ -163,9 +167,11 @@
 				</div>
 				<div class="header-actions">
 					<a class="link-button" href={withBase('/sop/reminders')}>发送历史</a>
-					<button class="link-button" type="button" onclick={() => reminderDialog.showModal()}>
-						<Plus size={14} /> 新建
-					</button>
+					{#if canManage}
+						<button class="link-button" type="button" onclick={() => reminderDialog?.showModal()}>
+							<Plus size={14} /> 新建
+						</button>
+					{/if}
 				</div>
 			</div>
 			<div class="reminder-list">
@@ -198,24 +204,29 @@
 				{:else}
 					<p class="empty-state">尚未配置提醒规则。</p>
 				{/each}
-				<button class="add-rule" type="button" onclick={() => reminderDialog.showModal()}>
-					<Plus size={15} />
-					添加提醒规则
-				</button>
+				{#if canManage}
+					<button class="add-rule" type="button" onclick={() => reminderDialog?.showModal()}>
+						<Plus size={15} />
+						添加提醒规则
+					</button>
+				{/if}
 			</div>
 		</article>
 	</section>
 
+	{#if canCreateSop}
 	<button
 		class="floating-create-button"
 		type="button"
-		onclick={() => sopDialog.showModal()}
+		onclick={() => sopDialog?.showModal()}
 		aria-label="新建 SOP"
 		title="新建 SOP"
 	>
 		<Plus size={23} />
 	</button>
+	{/if}
 
+	{#if canManage}
 	<dialog class="config-modal" bind:this={reminderDialog}>
 		<form method="post" action="?/createReminder" use:enhance={enhanceAction('reminder', '提醒规则已保存')}>
 			<div class="modal-header">
@@ -224,7 +235,7 @@
 					<h2>配置邮件提醒</h2>
 					<p>一条规则可关联多个 SOP 节点，并配置多个提前提醒周期。</p>
 				</div>
-				<button type="button" aria-label="关闭" onclick={() => reminderDialog.close()}>×</button>
+				<button type="button" aria-label="关闭" onclick={() => reminderDialog?.close()}>×</button>
 			</div>
 			<div class="form-grid">
 				<label class="wide">
@@ -300,23 +311,25 @@
 				{/if}
 			</div>
 			<div class="modal-actions">
-				<button type="button" onclick={() => reminderDialog.close()}>取消</button>
+				<button type="button" onclick={() => reminderDialog?.close()}>取消</button>
 				<button class="primary-action" type="submit" disabled={actionState.status === 'pending'}>
 					{actionState.status === 'pending' && actionState.key === 'reminder' ? '保存中…' : '保存规则'}
 				</button>
 			</div>
 		</form>
 	</dialog>
+	{/if}
 
+	{#if canCreateSop}
 	<dialog class="config-modal" bind:this={sopDialog}>
 		<form method="post" action="?/createSop" use:enhance={enhanceAction('sop', 'SOP 模板已创建')}>
 			<div class="modal-header">
 				<div>
 					<p class="eyebrow">SOP TEMPLATE</p>
 					<h2>新建负债品种 SOP</h2>
-					<p>保存后再编排节点、默认角色和相对日期。</p>
+					<p>{canManage ? '保存后再编排节点、默认角色和相对日期。' : '复核可新建模板，节点编排和启停由管理员维护。'}</p>
 				</div>
-				<button type="button" aria-label="关闭" onclick={() => sopDialog.close()}>×</button>
+				<button type="button" aria-label="关闭" onclick={() => sopDialog?.close()}>×</button>
 			</div>
 			<div class="form-grid">
 				<label class="wide">
@@ -341,13 +354,14 @@
 				</label>
 			</div>
 			<div class="modal-actions">
-				<button type="button" onclick={() => sopDialog.close()}>取消</button>
+				<button type="button" onclick={() => sopDialog?.close()}>取消</button>
 				<button class="primary-action" type="submit" disabled={actionState.status === 'pending'}>
-					{actionState.status === 'pending' && actionState.key === 'sop' ? '创建中…' : '创建并配置节点'}
+					{actionState.status === 'pending' && actionState.key === 'sop' ? '创建中…' : canManage ? '创建并配置节点' : '创建 SOP'}
 				</button>
 			</div>
 		</form>
 	</dialog>
+	{/if}
 </div>
 
 <style>

@@ -8,6 +8,7 @@ import { cacheSessionUser, invalidateCachedSession, readCachedSessionUser } from
 import { createNeonAuthClient, jwtFromResponseHeaders, NEON_SESSION_COOKIE, sessionMaxAgeFromSetCookie, sessionTokenFromSetCookie } from '../src/lib/server/neon-auth-client.js';
 import { dataApiUrlFromAuthUrl } from '../src/lib/neon-urls.js';
 import { deleteProjectWithReminders } from '../src/lib/server/project-deletion.js';
+import { actionNameFromUrl, isAuthorizedRequest, isSafeRequestMethod } from '../src/lib/server/request-authorization.js';
 
 function migrationSql(name) {
 	return fs.readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8')
@@ -54,6 +55,49 @@ test('login emails are normalized and validated', () => {
 	assert.equal(normalizeEmail(' User@Example.COM '), 'user@example.com');
 	assert.equal(isValidEmail('user@example.com'), true);
 	assert.equal(isValidEmail('legacy-admin'), false);
+});
+
+test('write authorization is enforced by role and named action', () => {
+	assert.equal(actionNameFromUrl(new URL('https://example.com/financing/logout')), 'default');
+	assert.equal(actionNameFromUrl(new URL('https://example.com/financing/projects?/createProject')), 'createProject');
+	for (const method of ['GET', 'HEAD', 'OPTIONS']) {
+		assert.equal(isSafeRequestMethod(method), true);
+		assert.equal(isAuthorizedRequest(null, '/projects', method), true);
+	}
+	assert.equal(isSafeRequestMethod('POST'), false);
+	assert.equal(isAuthorizedRequest('admin', '/sop/[id]', 'POST', 'deleteNode'), true);
+
+	for (const role of ['handler', 'reviewer']) {
+		assert.equal(isAuthorizedRequest(role, '/logout', 'POST'), true);
+		assert.equal(isAuthorizedRequest(role, '/settings', 'POST', 'updateProfile'), true);
+		assert.equal(isAuthorizedRequest(role, '/settings', 'POST', 'updatePassword'), true);
+		assert.equal(isAuthorizedRequest(role, '/projects/[id]', 'POST', 'updateOwnTaskStatus'), true);
+		assert.equal(isAuthorizedRequest(role, '/projects/[id]', 'POST', 'updateTask'), false);
+		assert.equal(isAuthorizedRequest(role, '/logout', 'DELETE'), false);
+	}
+
+	for (const [routeId, actionName] of [
+		['/people', 'createPerson'],
+		['/projects', 'createProject'],
+		['/sop', 'createSop']
+	]) {
+		assert.equal(isAuthorizedRequest('reviewer', routeId, 'POST', actionName), true);
+		assert.equal(isAuthorizedRequest('handler', routeId, 'POST', actionName), false);
+	}
+	assert.equal(isAuthorizedRequest('reviewer', '/people', 'POST', 'updatePerson'), false);
+	assert.equal(isAuthorizedRequest('reviewer', '/sop', 'POST', 'createReminder'), false);
+});
+
+test('reviewer creation and own-task writes retain server-side field boundaries', () => {
+	const peopleSource = fs.readFileSync(new URL('../src/routes/people/+page.server.ts', import.meta.url), 'utf8');
+	assert.match(peopleSource, /actorRole === 'reviewer' && \(fields\.accountEnabled \|\| fields\.role === 'admin'\)/);
+	const taskSource = fs.readFileSync(new URL('../src/routes/projects/[id]/+page.server.ts', import.meta.url), 'utf8');
+	assert.match(taskSource, /updateOwnTaskStatus:/);
+	assert.match(taskSource, /before\.assigneeId !== personId/);
+	assert.match(taskSource, /WHERE id = \? AND project_id = \? AND assignee_id = \?/);
+	const ownTaskAction = taskSource.slice(taskSource.indexOf('updateOwnTaskStatus:'), taskSource.indexOf('\n\taddTask:'));
+	assert.match(ownTaskAction, /SET status = \?,\s*completed_at = CASE/);
+	assert.doesNotMatch(ownTaskAction, /SET status = \?,\s*assignee_id = \?/);
 });
 
 test('Neon Auth session cookie is proxied without exposing the upstream cookie', async () => {

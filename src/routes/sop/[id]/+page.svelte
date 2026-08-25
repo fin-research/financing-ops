@@ -38,8 +38,8 @@
 	const pendingAction = $derived(pendingActions.at(-1) ?? '');
 	let handledForm = $state<unknown>(null);
 	let suppressFormFeedback = $state(false);
-	let addNodeDialog: HTMLDialogElement;
-	let addNodeNameInput: HTMLInputElement;
+	let addNodeDialog = $state<HTMLDialogElement>();
+	let addNodeNameInput = $state<HTMLInputElement>();
 	let reorderForm: HTMLFormElement;
 	let draggedNodeId = $state<string | null>(null);
 	let pointerId = $state<number | null>(null);
@@ -48,6 +48,7 @@
 	let dragChanged = $state(false);
 	let keyboardGrabbedId = $state<string | null>(null);
 	let reorderAnnouncement = $state('');
+	const canManage = $derived(data?.user?.role === 'admin');
 	$effect(() => {
 		if (!form?.message || suppressFormFeedback || handledForm === form) return;
 		handledForm = form;
@@ -165,7 +166,8 @@
 	};
 
 	function openAddNode() {
-		addNodeDialog.showModal();
+		if (!canManage) return;
+		addNodeDialog?.showModal();
 		queueMicrotask(() => addNodeNameInput?.focus());
 	}
 
@@ -176,7 +178,7 @@
 	}
 
 	function beginPointerDrag(event: PointerEvent, nodeId: string) {
-		if (event.button !== 0 || pendingAction) return;
+		if (!canManage || event.button !== 0 || pendingAction) return;
 		const handle = event.currentTarget as HTMLButtonElement;
 		handle.setPointerCapture(event.pointerId);
 		pointerId = event.pointerId;
@@ -225,7 +227,7 @@
 	}
 
 	async function handleReorderKey(event: KeyboardEvent, nodeId: string) {
-		if (pendingAction) return;
+		if (!canManage || pendingAction) return;
 		if (!keyboardGrabbedId) {
 			if (event.key !== ' ' && event.key !== 'Enter') return;
 			event.preventDefault();
@@ -269,11 +271,15 @@
 <div class="management-page sop-detail-page">
 	<div class="back-nav detail-toolbar">
 		<a href={withBase('/sop')}><ArrowLeft size={18} /> 返回 SOP 管理</a>
-		<form method="post" action="?/toggleTemplate" use:enhance={enhanceForm('toggle')}>
-			<button class:active={template.isActive} class="toggle-button" type="submit" disabled={pendingAction !== ''}>
-				{pendingAction === 'toggle' ? '更新中…' : template.isActive ? '已启用 · 点击停用' : '已停用 · 点击启用'}
-			</button>
-		</form>
+		{#if canManage}
+			<form method="post" action="?/toggleTemplate" use:enhance={enhanceForm('toggle')}>
+				<button class:active={template.isActive} class="toggle-button" type="submit" disabled={pendingAction !== ''}>
+					{pendingAction === 'toggle' ? '更新中…' : template.isActive ? '已启用 · 点击停用' : '已停用 · 点击启用'}
+				</button>
+			</form>
+		{:else}
+			<span class:active={template.isActive} class="toggle-button read-only-status">{template.isActive ? '已启用' : '已停用'}</span>
+		{/if}
 	</div>
 
 	<p class="sr-only" aria-live="assertive">{reorderAnnouncement}</p>
@@ -287,13 +293,13 @@
 				<header>
 					<div>
 						<h2>流程节点</h2>
-						<p>修改自动保存；拖拽节点左侧手柄调整顺序</p>
+						<p>{canManage ? '修改自动保存；拖拽节点左侧手柄调整顺序' : '当前为只读视图，节点配置由管理员维护'}</p>
 					</div>
 					<GitBranch size={20} />
 				</header>
 				<div class="node-list">
 					{#each nodes as node, index (node.id)}
-						<article class:dragging={draggedNodeId === node.id} class="node-card" data-node-id={node.id}>
+						<article class:dragging={draggedNodeId === node.id} class:read-only={!canManage} class="node-card" data-node-id={node.id}>
 							<div class="node-order">
 								<strong>{index + 1}</strong>
 								<button
@@ -303,7 +309,7 @@
 									aria-label={`拖拽排序 ${node.name}，当前第 ${index + 1} 项`}
 									aria-pressed={keyboardGrabbedId === node.id}
 									title="拖拽排序；键盘按空格抓取后使用上下方向键"
-									disabled={pendingAction !== ''}
+									disabled={!canManage || pendingAction !== ''}
 									onpointerdown={(event) => beginPointerDrag(event, node.id)}
 									onpointermove={continuePointerDrag}
 									onpointerup={finishPointerDrag}
@@ -323,27 +329,28 @@
 								<input type="hidden" name="nodeId" value={node.id} />
 								<label class="node-name">
 									<span>节点名称</span>
-									<input name="name" maxlength="120" required bind:value={node.name} />
+									<input name="name" maxlength="120" required bind:value={node.name} disabled={!canManage} />
 								</label>
 								<label>
 									<span>相对发行日</span>
 									<div class="offset-input">
-										<input name="offsetDays" type="number" min="-3650" max="3650" step="1" required bind:value={node.offsetDays} />
+										<input name="offsetDays" type="number" min="-3650" max="3650" step="1" required bind:value={node.offsetDays} disabled={!canManage} />
 										<small>天</small>
 									</div>
 								</label>
 								<label>
 									<span>默认角色</span>
-									<select name="ownerRole" bind:value={node.ownerRole}>
+									<select name="ownerRole" bind:value={node.ownerRole} disabled={!canManage}>
 										<option value="">不指定</option>
 										{#each data.roles as role}<option value={role.code}>{role.label}</option>{/each}
 									</select>
 								</label>
 								<label class="node-description">
 									<span>节点说明</span>
-									<input name="description" bind:value={node.description} placeholder="可选：说明交付物或控制要求" />
+									<input name="description" bind:value={node.description} placeholder="可选：说明交付物或控制要求" disabled={!canManage} />
 								</label>
 							</form>
+							{#if canManage}
 							<form
 								method="post"
 								action="?/deleteNode"
@@ -358,6 +365,7 @@
 									<Trash2 size={16} />
 								</button>
 							</form>
+							{/if}
 						</article>
 					{:else}
 						<p class="empty-state">尚未配置流程节点，请使用右下角加号添加。</p>
@@ -371,21 +379,21 @@
 				<header>
 					<div>
 						<h2>模板信息</h2>
-						<p>修改后自动保存</p>
+						<p>{canManage ? '修改后自动保存' : '当前为只读视图'}</p>
 					</div>
 				</header>
 				<form method="post" action="?/updateTemplate" use:autoSave use:enhance={enhanceForm('template', { autoSave: true })} class="template-form">
 					<label>
 						<span>SOP 名称</span>
-						<input name="name" maxlength="120" required bind:value={template.name} />
+						<input name="name" maxlength="120" required bind:value={template.name} disabled={!canManage} />
 					</label>
 					<label>
 						<span>负债品种</span>
-						<input name="debtType" maxlength="80" required bind:value={template.debtType} />
+						<input name="debtType" maxlength="80" required bind:value={template.debtType} disabled={!canManage} />
 					</label>
 					<label>
 						<span>模板说明</span>
-						<textarea name="description" rows="6" placeholder="说明适用范围和关键控制要求" bind:value={template.description}></textarea>
+						<textarea name="description" rows="6" placeholder="说明适用范围和关键控制要求" bind:value={template.description} disabled={!canManage}></textarea>
 					</label>
 				</form>
 			</section>
@@ -401,11 +409,12 @@
 		</aside>
 	</div>
 
-	<button class="floating-create-button" type="button" onclick={openAddNode} aria-label="添加流程节点" title="添加流程节点">
-		<Plus size={23} />
-	</button>
+	{#if canManage}
+		<button class="floating-create-button" type="button" onclick={openAddNode} aria-label="添加流程节点" title="添加流程节点">
+			<Plus size={23} />
+		</button>
 
-	<dialog class="config-modal" bind:this={addNodeDialog}>
+		<dialog class="config-modal" bind:this={addNodeDialog}>
 		<form method="post" action="?/addNode" use:enhance={enhanceForm('add-node', { resetOnSuccess: true, closeOnSuccess: true })}>
 			<div class="modal-header">
 				<div>
@@ -413,7 +422,7 @@
 					<h2>添加流程节点</h2>
 					<p>新节点会添加到流程末尾，保存后可直接拖拽排序。</p>
 				</div>
-				<button type="button" aria-label="关闭" title="关闭" onclick={() => addNodeDialog.close()}><X size={18} /></button>
+				<button type="button" aria-label="关闭" title="关闭" onclick={() => addNodeDialog?.close()}><X size={18} /></button>
 			</div>
 			<div class="form-grid">
 				<label class="wide">
@@ -437,13 +446,14 @@
 				</label>
 			</div>
 			<div class="modal-actions">
-				<button type="button" onclick={() => addNodeDialog.close()}>取消</button>
+				<button type="button" onclick={() => addNodeDialog?.close()}>取消</button>
 				<button class="primary-action" type="submit" disabled={pendingAction !== ''}>
 					{pendingAction === 'add-node' ? '添加中…' : '添加节点'}
 				</button>
 			</div>
 		</form>
-	</dialog>
+		</dialog>
+	{/if}
 </div>
 
 <style>
@@ -453,6 +463,7 @@
 	.back-nav a { display: inline-flex; min-height: 2.75rem; align-items: center; gap: 0.5rem; font-size: 1rem; font-weight: 600; color: var(--blue); }
 	.toggle-button { min-height: 2.75rem; padding: 0 1rem; border: 1px solid #d0d5dd; border-radius: 0.5rem; font-size: 1rem; font-weight: 700; color: #475467; background: #fff; }
 	.toggle-button.active { border-color: #a6f4c5; color: #067647; background: #ecfdf3; }
+	.read-only-status { display: inline-flex; align-items: center; }
 	.editor-grid { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(18rem, 0.65fr); gap: 1rem; align-items: start; }
 	main, aside { display: grid; min-width: 0; gap: 1rem; }
 	.panel { overflow: hidden; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--surface); box-shadow: var(--shadow); }
@@ -461,6 +472,7 @@
 	.panel header p { margin: 0.2rem 0 0; font-size: 0.75rem; color: var(--subtle); }
 	.reorder-form { display: none; }
 	.node-card { display: grid; grid-template-columns: 3.25rem minmax(0, 1fr) 2.75rem; gap: 0.75rem; padding: 1rem; border-bottom: 1px solid var(--line); background: #fff; transition: border-color 180ms ease, background 180ms ease, opacity 180ms ease; }
+	.node-card.read-only { grid-template-columns: 3.25rem minmax(0, 1fr); }
 	.node-card.dragging { border-color: #84adff; background: #eff4ff; opacity: 0.75; }
 	.node-order { display: grid; align-content: start; justify-items: center; gap: 0.5rem; }
 	.node-order > strong { display: grid; width: 2.25rem; height: 2.25rem; place-items: center; border-radius: 999rem; font-size: 1rem; color: #175cd3; background: #edf4ff; }

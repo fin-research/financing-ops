@@ -232,6 +232,66 @@ export const actions: Actions = {
 				(before.dueDate ?? null) !== (dueDate || null)
 		};
 	},
+	updateOwnTaskStatus: async (event) => {
+		const { request, params } = event;
+		if (!['admin', 'handler', 'reviewer'].includes(event.locals.user?.role ?? '')) {
+			return fail(403, { message: '当前角色无权更新任务节点' });
+		}
+		const personId = event.locals.user?.personId;
+		if (!personId) return fail(401, { message: '当前账号未关联人员主档，无法更新任务节点' });
+		const projectId = await resolveProjectId(params.id);
+		if (!projectId) return fail(404, { message: '项目不存在' });
+		const data = await request.formData();
+		const taskId = String(data.get('taskId') ?? '');
+		const status = String(data.get('status') ?? '');
+		if (!taskId || !TASK_STATUSES.has(status)) return fail(400, { message: '任务参数无效' });
+
+		const db = getDatabase();
+		const before = await db.prepare(`
+			SELECT id, name, status, assignee_id AS assigneeId, due_date AS dueDate,
+				completed_at AS completedAt
+			FROM project_tasks WHERE id = ? AND project_id = ?
+		`).get(taskId, projectId) as any;
+		if (!before) return fail(404, { message: '任务节点不存在' });
+		if (before.assigneeId !== personId) return fail(403, { message: '仅可更新分配给自己的任务节点状态' });
+
+		let task;
+		await db.transaction(async (transaction: ReturnType<typeof getDatabase>) => {
+			task = await transaction.prepare(`
+				UPDATE project_tasks
+				SET status = ?,
+					completed_at = CASE
+						WHEN ? = 'completed' THEN COALESCE(completed_at, CURRENT_TIMESTAMP)
+						ELSE NULL
+					END,
+					updated_at = CURRENT_TIMESTAMP
+				WHERE id = ? AND project_id = ? AND assignee_id = ?
+				RETURNING id, name, status, assignee_id AS assigneeId,
+					planned_start_date AS plannedStartDate, due_date AS dueDate,
+					completed_at AS completedAt, sort_order AS sortOrder, notes,
+					updated_at AS updatedAt
+			`).get(status, status, taskId, projectId, personId);
+			if (!task) return;
+			await prepareAudit({
+				db: transaction,
+				...auditRequestMeta(event),
+				action: 'project.task.status.update',
+				entityType: 'project',
+				entityId: projectId,
+				summary: `更新本人任务节点状态：${before.name}`,
+				before,
+				after: task
+			}).run();
+		});
+		if (!task) return fail(409, { message: '任务负责人已变化，请刷新页面后重试' });
+		return {
+			success: true,
+			message: '任务节点状态已更新',
+			task,
+			auditLog: actionAudit(event, 'project.task.status.update', `更新本人任务节点状态：${before.name}`),
+			refreshReminders: before.status !== status
+		};
+	},
 	addTask: async (event) => {
 		const { request, params } = event;
 		const projectId = await resolveProjectId(params.id);

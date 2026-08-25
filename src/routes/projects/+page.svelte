@@ -49,6 +49,7 @@
 		key: '', status: 'idle'
 	});
 	const canManage = $derived(data?.user?.role === 'admin');
+	const canCreate = $derived(canManage || data?.user?.role === 'reviewer');
 
 	function showAutoSaved(message: string) {
 		globalMessages.success(message, { key: 'project-list-auto-save', duration: 3000, title: '项目已同步' });
@@ -390,7 +391,7 @@
 	</div>
 </section>
 
-{#if canManage}
+{#if canCreate}
 	<button
 		class="floating-create-button"
 		type="button"

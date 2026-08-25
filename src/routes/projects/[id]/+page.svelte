@@ -31,6 +31,8 @@
 	let suppressFormFeedback = $state(false);
 	let handledForm = $state<unknown>(null);
 	const pendingAction = $derived(pendingActions.at(-1) ?? '');
+	const canManage = $derived(data?.user?.role === 'admin');
+	const canUpdateTaskStatus = (task: any) => canManage || task.assigneeId === data?.user?.personId;
 	$effect(() => {
 		if (!form?.message || suppressFormFeedback || handledForm === form) return;
 		handledForm = form;
@@ -215,14 +217,14 @@
 			<header>
 				<div>
 					<h2>任务节点</h2>
-					<p>修改后自动保存</p>
+					<p>{canManage ? '修改后自动保存' : '仅可修改分配给自己的节点状态'}</p>
 				</div>
 			</header>
 			<div class="task-list">
 				{#each data.tasks as task, index}
 					<form
 						method="post"
-						action="?/updateTask"
+						action={canManage ? '?/updateTask' : '?/updateOwnTaskStatus'}
 						use:autoSave={{ onDirty: markPageDirty }}
 						use:enhance={enhanceForm(`task-${task.id}`, { autoSave: true })}
 						class="task-item"
@@ -235,7 +237,7 @@
 						</div>
 						<label>
 							<span>状态</span>
-							<select name="status" value={task.status} aria-label={`${task.name}状态`}>
+							<select name="status" value={task.status} aria-label={`${task.name}状态`} disabled={!canUpdateTaskStatus(task)}>
 								{#each Object.entries(taskStatusLabels) as [value, label]}
 									<option {value}>{label}</option>
 								{/each}
@@ -243,7 +245,7 @@
 						</label>
 						<label>
 							<span>负责人</span>
-							<select name="assigneeId" value={task.assigneeId ?? ''} aria-label={`${task.name}负责人`}>
+							<select name="assigneeId" value={task.assigneeId ?? ''} aria-label={`${task.name}负责人`} disabled={!canManage}>
 								<option value="">待分配</option>
 								{#each data.people as person}
 									<option value={person.id}>{person.name}</option>
@@ -252,13 +254,14 @@
 						</label>
 						<label>
 							<span>截止日</span>
-							<input name="dueDate" type="date" value={task.dueDate ?? ''} aria-label={`${task.name}截止日`} />
+							<input name="dueDate" type="date" value={task.dueDate ?? ''} aria-label={`${task.name}截止日`} disabled={!canManage} />
 						</label>
 					</form>
 				{:else}
-					<p class="empty-state">尚无任务节点，可在下方添加第一个任务。</p>
+					<p class="empty-state">{canManage ? '尚无任务节点，可在下方添加第一个任务。' : '尚无任务节点。'}</p>
 				{/each}
 			</div>
+			{#if canManage}
 			<form method="post" action="?/addTask" use:enhance={enhanceForm('add-task', { resetOnSuccess: true })} class="add-task">
 				<label>
 					<span>任务名称</span>
@@ -282,6 +285,7 @@
 					{pendingAction === 'add-task' ? '添加中…' : '添加节点'}
 				</button>
 			</form>
+			{/if}
 		</section>
 
 		<section class="panel audit-panel">
@@ -311,7 +315,7 @@
 			<header>
 				<div>
 					<h2>基本信息</h2>
-					<p>修改后自动保存</p>
+					<p>{canManage ? '修改后自动保存' : '当前为只读视图'}</p>
 				</div>
 			</header>
 			<form
@@ -323,7 +327,7 @@
 			>
 				<label>
 					<span>项目状态</span>
-					<select name="status" value={data.project.status}>
+					<select name="status" value={data.project.status} disabled={!canManage}>
 						{#each Object.entries(statusLabels) as [value, label]}
 							<option {value}>{label}</option>
 						{/each}
@@ -331,7 +335,7 @@
 				</label>
 				<label>
 					<span>负责人</span>
-					<select name="ownerId" value={data.project.ownerId ?? ''}>
+					<select name="ownerId" value={data.project.ownerId ?? ''} disabled={!canManage}>
 						<option value="">待分配</option>
 						{#each data.people as person}
 							<option value={person.id}>{person.name} · {roleLabel(person.role)}</option>
@@ -340,7 +344,7 @@
 				</label>
 				<label>
 					<span>项目说明</span>
-					<textarea name="notes" rows="5" placeholder="补充项目背景、风险或执行说明">{data.project.notes ?? ''}</textarea>
+					<textarea name="notes" rows="5" placeholder="补充项目背景、风险或执行说明" disabled={!canManage}>{data.project.notes ?? ''}</textarea>
 				</label>
 			</form>
 			<dl class="metadata">
