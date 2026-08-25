@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import {
@@ -48,6 +49,12 @@ test('reminder periods accept multiple unique day-hour lead times', () => {
 	assert.equal(reminderPeriodLabel(0), '节点到期日（09:00）');
 	assert.equal(reminderPeriodLabel(48), '提前 2 天（09:00）');
 	assert.equal(reminderPeriodLabel(36), '提前 1 天 12 小时');
+});
+
+test('reminder core is Worker-safe and requires an injected database', async () => {
+	await assert.rejects(collectDueReminders(), /必须显式传入数据库连接/);
+	const source = fs.readFileSync(new URL('../src/lib/server/reminders.js', import.meta.url), 'utf8');
+	assert.doesNotMatch(source, /import\(['"]\.\/db\.js['"]\)/);
 });
 
 test('due reminders match selected SOP nodes and independently expose each due period', async (t) => {

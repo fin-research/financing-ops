@@ -37,13 +37,13 @@ function escapeHtml(value) {
 		.replaceAll("'", '&#039;');
 }
 
-async function resolveDatabase(db) {
-	if (db) return db;
-	return (await import('./db.js')).getDatabase();
+function requireDatabase(db) {
+	if (!db) throw new Error('提醒任务必须显式传入数据库连接');
+	return db;
 }
 
 export async function collectDueReminders({ asOf, asOfDate, db } = {}) {
-	db = await resolveDatabase(db);
+	db = requireDatabase(db);
 	const instant = normaliseAsOf(asOf, asOfDate);
 	const asOfIso = instant.toISOString();
 	const rows = await db.prepare(`
@@ -108,7 +108,7 @@ export async function collectDueReminders({ asOf, asOfDate, db } = {}) {
 }
 
 export async function sendDueReminders({ asOf, asOfDate, dryRun = false, db, config = process.env } = {}) {
-	db = await resolveDatabase(db);
+	db = requireDatabase(db);
 	const instant = normaliseAsOf(asOf, asOfDate);
 	const reminders = await collectDueReminders({ asOf: instant, db });
 	const apiKey = config.RESEND_API_KEY;
