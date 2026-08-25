@@ -228,9 +228,44 @@ textarea:focus-visible {
   box-shadow: inset 0.1875rem 0 #4b83f5;
 }
 
+.main-nav a.pending:not(.active) {
+  border-color: rgb(79 130 246 / 20%);
+  color: #fff;
+  background: rgb(47 111 237 / 16%);
+}
+
 .workspace {
   grid-column: 2;
   min-width: 0;
+}
+
+.navigation-progress {
+  position: fixed;
+  z-index: 100;
+  top: 0;
+  right: 0;
+  left: 14.5rem;
+  height: 0.1875rem;
+  overflow: hidden;
+  background: rgb(47 111 237 / 12%);
+}
+
+.navigation-progress::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 36%;
+  content: '';
+  background: var(--blue);
+  animation: navigation-progress 1s ease-in-out infinite;
+}
+
+@keyframes navigation-progress {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(310%);
+  }
 }
 
 .topbar {
@@ -560,6 +595,10 @@ textarea:focus-visible {
     min-height: 100vh;
   }
 
+  .navigation-progress {
+    left: 0;
+  }
+
   .topbar {
     height: 3.625rem;
     padding: 0 1rem;
@@ -620,6 +659,13 @@ textarea:focus-visible {
     font-weight: 700;
     color: var(--blue);
     background: var(--blue-soft);
+  }
+
+  .mobile-nav a.pending:not(.active) {
+    border-color: #84adff;
+    font-weight: 700;
+    color: #175cd3;
+    background: #f5f8ff;
   }
 
   .page-content {

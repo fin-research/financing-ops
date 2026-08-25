@@ -1,6 +1,7 @@
 <script lang="ts">
 	import './layout.css';
-	import { page } from '$app/state';
+	import { preloadData } from '$app/navigation';
+	import { navigating, page } from '$app/state';
 	import { withBase, withoutBase } from '$lib/app-paths';
 	import {
 		BarChart3,
@@ -32,9 +33,30 @@
 
 	const isActive = (href: string) => {
 		const pathname = withoutBase(page.url.pathname);
+		return matchesNavigation(pathname, href);
+	};
+	const matchesNavigation = (pathname: string, href: string) => {
 		if (href === '/') return pathname === '/' || pathname.startsWith('/debts/');
 		return pathname === href || pathname.startsWith(`${href}/`);
 	};
+	const isPending = (href: string) => {
+		const pathname = navigating.to?.url.pathname;
+		return pathname ? matchesNavigation(withoutBase(pathname), href) : false;
+	};
+	const preloadNavigation = (href: string) => {
+		if (isActive(href)) return;
+		void preloadData(withBase(href)).catch(() => undefined);
+	};
+	let navigationSlow = $state(false);
+	$effect(() => {
+		if (!navigating.to) {
+			navigationSlow = false;
+			return;
+		}
+		navigationSlow = false;
+		const timer = setTimeout(() => (navigationSlow = true), 300);
+		return () => clearTimeout(timer);
+	});
 	const avatarUrl = (user: NonNullable<typeof data.user>) =>
 		`${withBase('/avatar')}?v=${encodeURIComponent(`${user.personId}:${user.avatarVersion}`)}`;
 
@@ -73,17 +95,32 @@
 			</span>
 		</a>
 
-		<nav class="main-nav" aria-label="主导航">
+		<nav
+			class="main-nav"
+			aria-label="主导航"
+			data-sveltekit-preload-data="hover"
+			data-sveltekit-preload-code="viewport"
+		>
 			<p class="nav-caption">工作空间</p>
 			{#each workspaceItems as item}
-				<a class:active={isActive(item.href)} href={withBase(item.href)}>
+				<a
+					class:active={isActive(item.href)}
+					class:pending={isPending(item.href)}
+					href={withBase(item.href)}
+					onfocus={() => preloadNavigation(item.href)}
+				>
 					<item.icon size={18} strokeWidth={1.8} />
 					<span>{item.label}</span>
 				</a>
 			{/each}
 			<p class="nav-caption nav-caption-spaced">数据管理</p>
 			{#each managementItems as item}
-				<a class:active={isActive(item.href)} href={withBase(item.href)}>
+				<a
+					class:active={isActive(item.href)}
+					class:pending={isPending(item.href)}
+					href={withBase(item.href)}
+					onfocus={() => preloadNavigation(item.href)}
+				>
 					<item.icon size={18} strokeWidth={1.8} />
 					<span>{item.label}</span>
 				</a>
@@ -94,6 +131,9 @@
 
 	<div class="workspace">
 		<GlobalMessages hasReminderTicker={data.reminders.total > 0} />
+		{#if navigationSlow}
+			<div class="navigation-progress" role="progressbar" aria-label="页面加载中"></div>
+		{/if}
 		<header class="topbar">
 			<div class="mobile-brand">
 				<span class="brand-mark"><BarChart3 size={18} /></span>
@@ -124,9 +164,19 @@
 			</div>
 		</header>
 
-		<div class="mobile-nav" aria-label="移动端导航">
+		<div
+			class="mobile-nav"
+			aria-label="移动端导航"
+			data-sveltekit-preload-data="hover"
+			data-sveltekit-preload-code="viewport"
+		>
 			{#each mobileItems as item}
-				<a class:active={isActive(item.href)} href={withBase(item.href)}>
+				<a
+					class:active={isActive(item.href)}
+					class:pending={isPending(item.href)}
+					href={withBase(item.href)}
+					onfocus={() => preloadNavigation(item.href)}
+				>
 					<item.icon size={18} />
 					<span>{item.mobileLabel}</span>
 				</a>
@@ -157,7 +207,7 @@
 			</div>
 		{/if}
 
-		<main class="page-content" id="main-content" tabindex="-1">
+		<main class="page-content" id="main-content" tabindex="-1" aria-busy={Boolean(navigating.to)}>
 			{@render children()}
 		</main>
 	</div>

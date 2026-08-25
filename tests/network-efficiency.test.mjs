@@ -2,10 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-test('page data preloading waits for an intentional tap instead of link hover', async () => {
-	const source = await readFile(new URL('../src/app.html', import.meta.url), 'utf8');
-	assert.match(source, /data-sveltekit-preload-data="tap"/);
-	assert.doesNotMatch(source, /data-sveltekit-preload-data="hover"/);
+test('page data preloading uses tap globally and hover only for fixed navigation', async () => {
+	const [app, layout] = await Promise.all([
+		readFile(new URL('../src/app.html', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8')
+	]);
+	assert.match(app, /data-sveltekit-preload-data="tap"/);
+	assert.doesNotMatch(app, /data-sveltekit-preload-data="hover"/);
+	assert.equal((layout.match(/data-sveltekit-preload-data="hover"/g) ?? []).length, 2);
+	assert.equal((layout.match(/data-sveltekit-preload-code="viewport"/g) ?? []).length, 2);
+	assert.match(layout, /preloadData\(withBase\(href\)\)/);
+	assert.match(layout, /onfocus=\{\(\) => preloadNavigation\(item\.href\)\}/);
+});
+
+test('slow navigations expose pending and accessible loading states', async () => {
+	const [layout, styles] = await Promise.all([
+		readFile(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/layout.css', import.meta.url), 'utf8')
+	]);
+	assert.match(layout, /import \{ navigating, page \} from '\$app\/state'/);
+	assert.match(layout, /setTimeout\(\(\) => \(navigationSlow = true\), 300\)/);
+	assert.match(layout, /class:pending=\{isPending\(item\.href\)\}/);
+	assert.match(layout, /role="progressbar" aria-label="页面加载中"/);
+	assert.match(layout, /aria-busy=\{Boolean\(navigating\.to\)\}/);
+	assert.match(styles, /\.navigation-progress::after/);
+	assert.match(styles, /@keyframes navigation-progress/);
 });
 
 test('authenticated page loads do not transfer the base64 avatar through locals', async () => {
@@ -48,17 +69,40 @@ test('authenticated GET navigation reuses a bounded server-side session decision
 });
 
 test('page loads defer form-only options and remove duplicate identity queries', async () => {
-	const [projectsPage, projectOptions, projectComponent, settingsPage, sopDetail] = await Promise.all([
+	const [projectsPage, projectOptions, projectComponent, settingsPage, settingsComponent, sopDetail] = await Promise.all([
 		readFile(new URL('../src/routes/projects/+page.server.ts', import.meta.url), 'utf8'),
 		readFile(new URL('../src/routes/projects/options/+server.ts', import.meta.url), 'utf8'),
 		readFile(new URL('../src/routes/projects/+page.svelte', import.meta.url), 'utf8'),
 		readFile(new URL('../src/routes/settings/+page.server.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/settings/+page.svelte', import.meta.url), 'utf8'),
 		readFile(new URL('../src/routes/sop/[id]/+page.server.ts', import.meta.url), 'utf8')
 	]);
 	assert.doesNotMatch(projectsPage, /getProjectFormOptions|getActiveProjectSopOptions/);
 	assert.match(projectOptions, /getProjectFormOptions/);
 	assert.match(projectComponent, /fetch\(withBase\('\/projects\/options'\)/);
-	assert.match(settingsPage, /name: locals\.user\.personName/);
+	assert.doesNotMatch(settingsPage, /export const load/);
+	assert.match(settingsComponent, /data\.user\?\.personName/);
 	assert.match(sopDetail, /async function loadSopDetail/);
 	assert.match(sopDetail, /jsonb_agg\(jsonb_build_object/);
+});
+
+test('data administration gets its endpoint with the private token request', async () => {
+	const [endpoint, client, page, table] = await Promise.all([
+		readFile(new URL('../src/routes/data/token/+server.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/lib/neon-data-api.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/data/+page.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/lib/DataAdminTable.svelte', import.meta.url), 'utf8')
+	]);
+	await assert.rejects(
+		readFile(new URL('../src/routes/data/+page.server.ts', import.meta.url), 'utf8'),
+		(error) => error?.code === 'ENOENT'
+	);
+	assert.match(endpoint, /\{ token, dataApiUrl: getDataApiUrl\(\) \}/);
+	assert.match(endpoint, /'cache-control': 'no-store, private'/);
+	assert.match(endpoint, /vary: 'Cookie'/);
+	assert.match(client, /dataApiUrl\?: string/);
+	assert.match(client, /parsed\.protocol !== 'https:'/);
+	assert.match(page, /<DataAdminTable \/>/);
+	assert.match(table, /new NeonDataApi\(\)/);
+	assert.doesNotMatch(page, /dataApiUrl/);
 });

@@ -38,11 +38,11 @@ Local scripts → direct DATABASE_URL → Neon financing
 
 ### 页面读写
 
-浏览器导航 → SvelteKit `__data.json` → route load → request-scoped PostgreSQL client。链接只在按下时预取，避免浏览菜单触发未访问页面的查询。
+浏览器导航 → SvelteKit `__data.json` → route load → request-scoped PostgreSQL client。全局链接只在按下时预取；固定主导航允许 hover/focus 预取并复用同一次导航请求，列表、提醒和详情链接仍保持 tap，避免查询放大。`/settings` 复用根布局身份，`/data` 在组件内按需加载 token 与 Data API URL，两者不增加 page server load。
 
 ### 数据后台
 
-浏览器请求 `/data/token` → Neon Auth 返回短期 JWT → `src/lib/neon-data-api.ts` 访问 Data API → PostgreSQL RLS 与触发器授权、审计。长期会话 token 不进入浏览器脚本。
+浏览器请求 `/data/token` → Neon Auth 返回短期 JWT，Worker 同响应提供 HTTPS Data API URL → `src/lib/neon-data-api.ts` 访问 Data API → PostgreSQL RLS 与触发器授权、审计。响应使用 `private, no-store`；长期会话 token 不进入浏览器脚本。
 
 ### 本地维护
 

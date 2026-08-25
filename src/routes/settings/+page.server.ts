@@ -1,5 +1,5 @@
-import { error, fail } from '@sveltejs/kit';
-import type { Actions, PageServerLoad } from './$types';
+import { fail } from '@sveltejs/kit';
+import type { Actions } from './$types';
 import { getDatabase } from '$lib/server/db.js';
 import {
 	changeCurrentPassword,
@@ -56,19 +56,6 @@ function authMessage(authError: NeonAuthApiError, operation: 'profile' | 'passwo
 		? '当前密码不正确，或新密码不符合认证要求'
 		: 'Neon Auth 个人资料更新失败，请稍后重试';
 }
-
-export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) throw error(401, '登录已失效，请重新登录');
-	return {
-		profile: {
-			hasAvatar: locals.user.hasAvatar,
-			avatarVersion: locals.user.avatarVersion,
-			name: locals.user.personName,
-			email: locals.user.email,
-			role: locals.user.role
-		}
-	};
-};
 
 export const actions: Actions = {
 	updateProfile: async (event) => {

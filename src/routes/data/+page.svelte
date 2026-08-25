@@ -1,8 +1,6 @@
 <script lang="ts">
 	import '../management.css';
 	import DataAdminTable from '$lib/DataAdminTable.svelte';
-
-	let { data } = $props();
 </script>
 
 <svelte:head>
@@ -10,7 +8,7 @@
 </svelte:head>
 
 <div class="management-page data-page">
-	<DataAdminTable dataApiUrl={data.dataApiUrl} />
+	<DataAdminTable />
 </div>
 
 <style>

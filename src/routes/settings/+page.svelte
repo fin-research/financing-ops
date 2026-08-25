@@ -10,7 +10,13 @@
 	import { withBase } from '$lib/app-paths';
 
 	let { data, form } = $props();
-	let displayedProfile = $state(untrack(() => ({ ...data.profile })));
+	let displayedProfile = $state(untrack(() => ({
+		hasAvatar: Boolean(data.user?.hasAvatar),
+		avatarVersion: data.user?.avatarVersion ?? '0',
+		name: data.user?.personName ?? '',
+		email: data.user?.email ?? null,
+		role: data.user?.role ?? 'reviewer'
+	})));
 	let avatarPreview = $state<string | null>(null);
 	let avatarTouched = $state(false);
 	const avatarUrl = (profile: any) => profile.hasAvatar

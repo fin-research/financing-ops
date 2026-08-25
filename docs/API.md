@@ -6,7 +6,7 @@
 
 - 所有应用页面、内部路由、重定向和 Cookie 固定在 `/financing` 下。
 - 代码中的 URL 使用 `src/lib/app-paths.ts`，不要手工拼接遗漏前缀的绝对路径。
-- SvelteKit `__data.json` 是正常客户端导航协议；全局数据预取使用 `tap`，不恢复 hover 预取。
+- SvelteKit `__data.json` 是正常客户端导航协议；全局数据预取使用 `tap`，仅固定侧栏和移动端主导航使用 `hover`，列表、提醒和详情链接不得扩大 hover 预取范围。
 
 ## 页面数据
 
@@ -28,7 +28,7 @@
 ## 内部 HTTP 路由
 
 - `GET /financing/avatar`：当前用户头像，私有缓存并支持版本条件请求。
-- `GET /financing/data/token`：取得当前 Neon Auth 会话签发的短期 Data API JWT；强制绕过身份缓存。
+- `GET /financing/data/token`：一次返回当前 Neon Auth 会话签发的短期 Data API JWT 与 HTTPS Data API URL；强制绕过身份缓存，并使用 `private, no-store`。
 - `GET /financing/projects/options`：按需返回项目表单选项。
 - `GET /financing/sop/reminders/more`：用 `(delivery_date, created_at, id)` 游标加载下一批最多 50 条发送历史。
 

@@ -12,36 +12,36 @@ type ListOptions = {
 type ApiErrorBody = { message?: string; details?: string; hint?: string; code?: string };
 
 export class NeonDataApi {
-	#url: string;
-	#token: string | null = null;
+	#session: { token: string; dataApiUrl: string } | null = null;
 
-	constructor(url: string) {
-		const parsed = new URL(url);
-		if (parsed.protocol !== 'https:') throw new Error('Neon Data API 必须使用 HTTPS');
-		this.#url = parsed.toString().replace(/\/$/, '');
-	}
-
-	async #getToken(force = false) {
-		if (this.#token && !force) return this.#token;
+	async #getSession(force = false) {
+		if (this.#session && !force) return this.#session;
+		if (force) this.#session = null;
 		const response = await fetch(withBase('/data/token'), { headers: { Accept: 'application/json' }, cache: 'no-store' });
 		if (!response.ok) throw new Error(response.status === 401 ? '登录已失效，请重新登录' : '无法取得数据后台访问令牌');
-		const body = await response.json() as { token?: string };
+		const body = await response.json() as { token?: string; dataApiUrl?: string };
 		if (!body.token) throw new Error('Neon Data API 令牌为空');
-		this.#token = body.token;
-		return body.token;
+		if (!body.dataApiUrl) throw new Error('Neon Data API 地址为空');
+		const parsed = new URL(body.dataApiUrl);
+		if (parsed.protocol !== 'https:') throw new Error('Neon Data API 必须使用 HTTPS');
+		this.#session = {
+			token: body.token,
+			dataApiUrl: parsed.toString().replace(/\/$/, '')
+		};
+		return this.#session;
 	}
 
 	async #request(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
-		const token = await this.#getToken();
+		const session = await this.#getSession();
 		const headers = new Headers(init.headers);
-		headers.set('Authorization', `Bearer ${token}`);
+		headers.set('Authorization', `Bearer ${session.token}`);
 		headers.set('Accept', 'application/json');
 		headers.set('Accept-Profile', 'financing');
 		headers.set('Content-Profile', 'financing');
 		if (init.body !== undefined) headers.set('Content-Type', 'application/json');
-		const response = await fetch(`${this.#url}/${path}`, { ...init, headers });
+		const response = await fetch(`${session.dataApiUrl}/${path}`, { ...init, headers });
 		if (response.status === 401 && retry) {
-			await this.#getToken(true);
+			await this.#getSession(true);
 			return this.#request(path, init, false);
 		}
 		if (!response.ok) {

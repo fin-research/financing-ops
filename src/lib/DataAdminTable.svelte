@@ -13,7 +13,6 @@
 	import { NeonDataApi } from './neon-data-api';
 
 	const features = tableFeatures({});
-	let { dataApiUrl }: { dataApiUrl: string } = $props();
 	let activeKey = $state(DATA_ENTITIES[0].key);
 	let rows = $state<DataRow[]>([]);
 	let total = $state(0);
@@ -29,7 +28,7 @@
 	let editingKey = $state<string | null>(null);
 	let originalRow = $state<DataRow | null>(null);
 	let formValues = $state<Record<string, unknown>>({});
-	const api = $derived(new NeonDataApi(dataApiUrl));
+	const api = new NeonDataApi();
 
 	const activeConfig = $derived(DATA_ENTITIES.find((item) => item.key === activeKey) ?? DATA_ENTITIES[0]);
 	const visibleFields = $derived(activeConfig.fields.filter((field) => field.table !== false));
