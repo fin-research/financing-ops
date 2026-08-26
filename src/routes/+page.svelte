@@ -115,6 +115,7 @@
 			limit: '10%', detailLabel: '净新增', detailValue: `${dashboard.metrics.cumulativeBorrowingYi > 0 ? '+' : ''}${dashboard.metrics.cumulativeBorrowingYi.toFixed(2)}亿元`
 		}
 	]);
+	const projectTableAmountYi = $derived(dashboard.projects.reduce((sum: number, item: any) => sum + item.amountYi, 0));
 	const compositionTotal = $derived(dashboard.composition.reduce((sum: number, item: any) => sum + item.amountYi, 0));
 	const maxMaturity = $derived(Math.max(1, ...dashboard.maturityDistribution.map((item: any) => item.amountYi)));
 	const maturityStep = $derived.by(() => {
@@ -274,7 +275,7 @@
 		<header><h2>推进中的融资项目</h2></header>
 		<table><thead><tr><th>融资方式</th><th>融资金额</th><th>期限</th><th>融资成本</th><th>落地时间</th></tr></thead><tbody>
 			{#each dashboard.projects as project}<tr><td><a href={withBase(`/projects/${project.id}`)}>{project.debtType}</a><small>{project.name}</small></td><td>{project.amountYi.toFixed(2)}</td><td>{project.tenor}</td><td>{project.cost}</td><td>{project.landingDate ? `${project.landingDate.replaceAll('-', '/')}簿记` : '待定'}</td></tr>{/each}
-		</tbody><tfoot><tr><th>合计</th><th>{dashboard.metrics.projectAmountYi.toFixed(2)}</th><th colspan="3"></th></tr></tfoot></table>
+		</tbody><tfoot><tr><th>合计</th><th>{projectTableAmountYi.toFixed(2)}</th><th colspan="3"></th></tr></tfoot></table>
 	</article>
 
 	<article class="dashboard-panel issuance-panel">

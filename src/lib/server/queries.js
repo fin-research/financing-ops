@@ -3,7 +3,9 @@ import { REPORTING_DEBT_TYPES } from '../debt-types.js';
 import { reminderPeriodLabel } from '../reminder-periods.js';
 import {
 	currentYearBorrowingPredicateSql,
+	projectAmountYiForTypes,
 	reportingTypeSql,
+	selectedDebtTypePredicateSql,
 	shortDebtPredicateSql
 } from './dashboard-metrics.js';
 import { getDatabase } from './db.js';
@@ -72,7 +74,7 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 			CROSS JOIN args
 			LEFT JOIN debt d ON (d.issue_date IS NULL OR d.issue_date <= dates.as_of_date)
 				AND (d.maturity_date IS NULL OR d.maturity_date > dates.as_of_date)
-				AND (cardinality(args.selected_types) = 0 OR ${REPORTING_TYPE_SQL()} = ANY(args.selected_types))
+				AND ${selectedDebtTypePredicateSql()}
 			GROUP BY dates.label
 		), snapshot_dates AS (
 			SELECT dates.label, MAX(b.as_of_date) AS as_of_date
@@ -87,7 +89,7 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 			SELECT d.* FROM debt d CROSS JOIN latest CROSS JOIN args
 			WHERE (d.issue_date IS NULL OR d.issue_date <= latest.as_of_date)
 				AND (d.maturity_date IS NULL OR d.maturity_date > latest.as_of_date)
-				AND (cardinality(args.selected_types) = 0 OR ${REPORTING_TYPE_SQL()} = ANY(args.selected_types))
+				AND ${selectedDebtTypePredicateSql()}
 		), composition AS (
 			SELECT CASE WHEN debt_type = '收益凭证' THEN debt_type ELSE COALESCE(NULLIF(subtype, ''), debt_type) END AS type,
 				SUM(amount) / 100000000.0 AS amount_yi
@@ -115,9 +117,8 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 				COALESCE(p.notes, CASE WHEN p.planned_maturity_date IS NOT NULL AND p.planned_issue_date IS NOT NULL
 					THEN ROUND((p.planned_maturity_date - p.planned_issue_date) / 365.0, 1)::text || 'Y' ELSE '待定' END) AS tenor,
 				p.planned_issue_date, p.status
-			FROM projects p CROSS JOIN args
+			FROM projects p
 			WHERE p.status IN ('planning', 'in_progress', 'at_risk')
-				AND (cardinality(args.selected_types) = 0 OR p.debt_type = ANY(args.selected_types))
 		), issue_months AS (
 			SELECT to_char(date_trunc('month', latest.as_of_date) - interval '1 month', 'YYYY-MM') AS current_month,
 				to_char(date_trunc('month', latest.as_of_date) - interval '1 year 1 month', 'YYYY-MM') AS comparison_month
@@ -146,16 +147,20 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 				), 0) / 100000000.0 AS short_debt_yi
 			FROM debt d CROSS JOIN latest CROSS JOIN args
 			WHERE (d.issue_date IS NULL OR d.issue_date <= latest.as_of_date)
-				AND (cardinality(args.selected_types) = 0 OR ${REPORTING_TYPE_SQL()} = ANY(args.selected_types))
+				AND ${selectedDebtTypePredicateSql()}
 		), completed_month AS (
 			SELECT date_trunc('month', latest.as_of_date)::date - 1 AS as_of_date FROM latest
 		), completed_balance AS (
-			SELECT COALESCE(SUM(b.amount), 0) / 100000000.0 AS balance_yi, MAX(b.as_of_date) AS as_of_date
-			FROM balance_snapshot b CROSS JOIN completed_month
+			SELECT COALESCE(SUM(b.amount) FILTER (
+					WHERE ${selectedDebtTypePredicateSql('b')}
+				), 0) / 100000000.0 AS balance_yi, MAX(b.as_of_date) AS as_of_date
+			FROM balance_snapshot b CROSS JOIN completed_month CROSS JOIN args
 			WHERE b.as_of_date = (SELECT MAX(as_of_date) FROM balance_snapshot WHERE as_of_date <= completed_month.as_of_date)
 		), previous_year_balance AS (
-			SELECT COALESCE(SUM(b.amount), 0) / 100000000.0 AS balance_yi
-			FROM balance_snapshot b CROSS JOIN latest
+			SELECT COALESCE(SUM(b.amount) FILTER (
+					WHERE ${selectedDebtTypePredicateSql('b')}
+				), 0) / 100000000.0 AS balance_yi
+			FROM balance_snapshot b CROSS JOIN latest CROSS JOIN args
 			WHERE b.as_of_date = (SELECT MAX(as_of_date) FROM balance_snapshot WHERE as_of_date <= make_date(EXTRACT(YEAR FROM latest.as_of_date)::integer - 1, 12, 31))
 		)
 		SELECT latest.as_of_date AS asOfDate,
@@ -232,7 +237,7 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 			remainingMonthChangeDays: weightedDays - previousMonthDays,
 			remainingYearChangeDays: weightedDays - previousYearDays,
 			due30Yi: number(overview.due30Yi),
-			projectAmountYi: projects.reduce((sum, item) => sum + item.amountYi, 0),
+			projectAmountYi: projectAmountYiForTypes(projects, selectedTypes),
 			shortDebtRatio: ratio(overview.shortDebtYi, netCapital),
 			largestBorrowingRatio: ratio(overview.largestBorrowingYi, securitiesNetAssets),
 			cumulativeSecuritiesRatio: ratio(cumulativeBorrowingYi, securitiesNetAssets),

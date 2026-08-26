@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import {
 	SHORT_DEBT_MAX_ORIGINAL_TERM_DAYS,
 	currentYearBorrowingPredicateSql,
+	projectAmountYiForTypes,
 	reportingTypeSql,
+	selectedDebtTypePredicateSql,
 	shortDebtPredicateSql
 } from '../src/lib/server/dashboard-metrics.js';
 
@@ -69,4 +72,60 @@ test('largest new borrowing only considers issues from the as-of calendar year',
 	`);
 
 	assert.equal(Number(result.rows[0].amount), 40);
+});
+
+test('dashboard type selection filters cumulative borrowing snapshots', async (t) => {
+	const db = new PGlite();
+	t.after(() => db.close());
+	await db.exec(`
+		CREATE TABLE balance_snapshot (
+			as_of_date date NOT NULL,
+			debt_type text NOT NULL,
+			subtype text,
+			amount numeric NOT NULL
+		);
+		INSERT INTO balance_snapshot VALUES
+			('2025-12-31', '债券', '短期融资券', 100),
+			('2025-12-31', '债券', '小公募', 200),
+			('2026-07-31', '债券', '短期融资券', 150),
+			('2026-07-31', '债券', '小公募', 260);
+	`);
+	const cumulativeFor = async (selectedTypesSql) => {
+		const result = await db.query(`
+			WITH args(selected_types) AS (VALUES (${selectedTypesSql})),
+			periods(label, as_of_date) AS (
+				VALUES ('current', DATE '2026-07-31'), ('previous', DATE '2025-12-31')
+			)
+			SELECT periods.label, COALESCE(SUM(b.amount) FILTER (
+				WHERE ${selectedDebtTypePredicateSql('b')}
+			), 0) AS amount
+			FROM periods CROSS JOIN args
+			LEFT JOIN balance_snapshot b ON b.as_of_date = periods.as_of_date
+			GROUP BY periods.label
+		`);
+		const balances = Object.fromEntries(result.rows.map((row) => [row.label, Number(row.amount)]));
+		return balances.current - balances.previous;
+	};
+
+	assert.equal(await cumulativeFor("ARRAY['短期融资券']::text[]"), 50);
+	assert.equal(await cumulativeFor('ARRAY[]::text[]'), 110);
+});
+
+test('project KPI follows dashboard types while the project table remains complete', async () => {
+	const projects = [
+		{ debtType: '小公募', amountYi: 10 },
+		{ debtType: '短期融资券', amountYi: 20 },
+		{ debtType: '同业拆借', amountYi: null }
+	];
+	assert.equal(projectAmountYiForTypes(projects), 30);
+	assert.equal(projectAmountYiForTypes(projects, ['小公募']), 10);
+
+	const [queries, page] = await Promise.all([
+		readFile(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/+page.svelte', import.meta.url), 'utf8')
+	]);
+	const activeProjects = queries.slice(queries.indexOf('), active_projects AS ('), queries.indexOf('), issue_months AS ('));
+	assert.doesNotMatch(activeProjects, /selected_types|CROSS JOIN args/);
+	assert.match(page, /projectTableAmountYi = \$derived\(dashboard\.projects\.reduce/);
+	assert.match(page, /\{projectTableAmountYi\.toFixed\(2\)\}/);
 });
