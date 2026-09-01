@@ -106,3 +106,17 @@ test('data administration gets its endpoint with the private token request', asy
 	assert.match(table, /new NeonDataApi\(\)/);
 	assert.doesNotMatch(page, /dataApiUrl/);
 });
+
+test('liability weekly report loads bounded collection queries without N+1 reads', async () => {
+	const [page, queries] = await Promise.all([
+		readFile(new URL('../src/routes/liability-weekly/+page.server.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8')
+	]);
+	assert.match(page, /getLiabilityWeeklyReportData\(\)/);
+	const start = queries.indexOf('export async function getLiabilityWeeklyReportData');
+	const end = queries.indexOf('export async function getProjectGanttData', start);
+	const weeklyQuery = queries.slice(start, end);
+	assert.equal((weeklyQuery.match(/database\.prepare\(/g) ?? []).length, 1);
+	assert.match(weeklyQuery, /getDebtLimitSummary\(database\)/);
+	assert.doesNotMatch(weeklyQuery, /for\s*\([^)]*\)\s*\{[^}]*database\.prepare/s);
+});

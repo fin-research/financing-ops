@@ -261,6 +261,237 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 	};
 }
 
+export async function getLiabilityWeeklyReportData(database = getDatabase()) {
+	const today = dateInShanghai();
+	const report = await database.prepare(`
+		WITH args AS (
+			SELECT ?::date AS today
+		), latest AS (
+			SELECT COALESCE(MAX(as_of_date), (SELECT today FROM args)) AS as_of_date
+			FROM balance_snapshot
+		), point_dates AS (
+			SELECT 'current'::text AS label, as_of_date FROM latest
+			UNION ALL SELECT 'month', date_trunc('month', as_of_date)::date - 1 FROM latest
+			UNION ALL SELECT 'year', make_date(EXTRACT(YEAR FROM as_of_date)::integer - 1, 12, 31) FROM latest
+		), snapshot_dates AS (
+			SELECT point_dates.label, MAX(snapshot.as_of_date) AS as_of_date
+			FROM point_dates
+			LEFT JOIN balance_snapshot snapshot ON snapshot.as_of_date <= point_dates.as_of_date
+			GROUP BY point_dates.label
+		), snapshot_totals AS (
+			SELECT snapshot_dates.label, snapshot_dates.as_of_date,
+				COALESCE(SUM(snapshot.amount), 0) / 100000000.0 AS balance_yi,
+				COALESCE(SUM(snapshot.amount) FILTER (WHERE snapshot.debt_type <> '互换便利'), 0) / 100000000.0 AS regulated_balance_yi
+			FROM snapshot_dates
+			LEFT JOIN balance_snapshot snapshot ON snapshot.as_of_date = snapshot_dates.as_of_date
+			GROUP BY snapshot_dates.label, snapshot_dates.as_of_date
+		), current_debt AS (
+			SELECT d.* FROM debt d CROSS JOIN latest
+			WHERE (d.issue_date IS NULL OR d.issue_date <= latest.as_of_date)
+				AND (d.maturity_date IS NULL OR d.maturity_date > latest.as_of_date)
+				AND d.closed_at IS NULL
+		), live_metrics AS (
+			SELECT COALESCE(SUM(amount), 0) / 100000000.0 AS live_balance_yi,
+				COALESCE(SUM(amount * annual_rate) FILTER (WHERE annual_rate IS NOT NULL)
+					/ NULLIF(SUM(amount) FILTER (WHERE annual_rate IS NOT NULL), 0), 0) AS weighted_rate,
+				COALESCE(SUM(amount * GREATEST(maturity_date - latest.as_of_date, 0)) FILTER (WHERE maturity_date IS NOT NULL)
+					/ NULLIF(SUM(amount) FILTER (WHERE maturity_date IS NOT NULL), 0), 0) AS weighted_days,
+				COALESCE(SUM(amount) FILTER (WHERE term_days > 365), 0) / 100000000.0 AS long_balance_yi,
+				COALESCE(SUM(amount) FILTER (WHERE term_days <= 365), 0) / 100000000.0 AS short_balance_yi,
+				COALESCE(SUM(amount) FILTER (
+					WHERE maturity_date > latest.as_of_date AND maturity_date <= latest.as_of_date + 30
+				), 0) / 100000000.0 AS due_30_yi,
+				COALESCE(SUM(amount) FILTER (
+					WHERE maturity_date > latest.as_of_date
+						AND maturity_date <= make_date(EXTRACT(YEAR FROM latest.as_of_date)::integer, 12, 31)
+				), 0) / 100000000.0 AS due_year_yi,
+				COALESCE(SUM(amount) FILTER (
+					WHERE ${REPORTING_TYPE_SQL()} IN ('短期融资券', '同业拆借')
+						OR (d.debt_type = '债券' AND d.term_days <= 365)
+				), 0) / 100000000.0 AS short_company_debt_yi,
+				COALESCE(SUM(amount) FILTER (WHERE ${shortDebtPredicateSql()}), 0) / 100000000.0 AS short_debt_yi,
+				COALESCE(SUM(amount) FILTER (WHERE annual_rate IS NOT NULL), 0)
+					/ NULLIF(SUM(amount), 0) AS rate_coverage,
+				COALESCE(SUM(amount) FILTER (WHERE issue_date IS NOT NULL AND maturity_date IS NOT NULL), 0)
+					/ NULLIF(SUM(amount), 0) AS lifecycle_coverage
+			FROM current_debt d CROSS JOIN latest
+		), largest_borrowing AS (
+			SELECT COALESCE(MAX(d.amount), 0) / 100000000.0 AS amount_yi
+			FROM debt d CROSS JOIN latest
+			WHERE ${currentYearBorrowingPredicateSql()}
+		), parameters AS (
+			SELECT COALESCE(jsonb_object_agg(code, jsonb_build_object(
+				'label', label, 'valueYi', value_yi, 'periodEnd', period_end, 'notes', notes
+			)), '{}'::jsonb) AS value
+			FROM finance_parameters
+		), composition AS (
+			SELECT CASE WHEN NULLIF(snapshot.subtype, '') IS NOT NULL THEN snapshot.subtype ELSE snapshot.debt_type END AS type,
+				SUM(snapshot.amount) / 100000000.0 AS amount_yi
+			FROM balance_snapshot snapshot CROSS JOIN latest
+			WHERE snapshot.as_of_date = latest.as_of_date
+			GROUP BY 1
+		), months AS (
+			SELECT (date_trunc('month', latest.as_of_date) + (value || ' months')::interval)::date AS month_start
+			FROM latest CROSS JOIN generate_series(0, 11) AS series(value)
+		), maturity AS (
+			SELECT date_trunc('month', maturity_date)::date AS month_start,
+				SUM(amount) / 100000000.0 AS amount_yi
+			FROM current_debt WHERE maturity_date IS NOT NULL GROUP BY 1
+		), week_bounds AS (
+			SELECT date_trunc('week', latest.as_of_date)::date AS week_start FROM latest
+		), event_rows AS (
+			SELECT 'maturity'::text AS kind, d.maturity_date AS date,
+				CASE WHEN d.maturity_date < week.week_start + 7 THEN 'current' ELSE 'next' END AS week,
+				d.id::text AS id, d.name, ${REPORTING_TYPE_SQL()} AS debt_type,
+				d.amount / 100000000.0 AS amount_yi, ('/debts/' || d.id::text) AS href
+			FROM current_debt d CROSS JOIN week_bounds week
+			WHERE d.maturity_date BETWEEN week.week_start AND week.week_start + 11
+				AND EXTRACT(ISODOW FROM d.maturity_date) <= 5
+			UNION ALL
+			SELECT 'interest', c.due_date,
+				CASE WHEN c.due_date < week.week_start + 7 THEN 'current' ELSE 'next' END,
+				(c.debt_id::text || ':' || c.sequence::text), d.name, ${REPORTING_TYPE_SQL()},
+				COALESCE(c.amount, 0) / 100000000.0, ('/debts/' || d.id::text)
+			FROM cashflow c JOIN current_debt d ON d.id = c.debt_id CROSS JOIN week_bounds week
+			WHERE c.cashflow_type = 'interest' AND c.due_date BETWEEN week.week_start AND week.week_start + 11
+				AND EXTRACT(ISODOW FROM c.due_date) <= 5
+				AND (d.maturity_date IS NULL OR d.maturity_date <> c.due_date)
+			UNION ALL
+			SELECT 'issue', d.issue_date,
+				CASE WHEN d.issue_date < week.week_start + 7 THEN 'current' ELSE 'next' END,
+				d.id::text, d.name, ${REPORTING_TYPE_SQL()}, d.amount / 100000000.0,
+				('/debts/' || d.id::text)
+			FROM debt d CROSS JOIN week_bounds week
+			WHERE d.issue_date BETWEEN week.week_start AND week.week_start + 11
+				AND EXTRACT(ISODOW FROM d.issue_date) <= 5
+				AND d.closed_at IS NULL
+			UNION ALL
+			SELECT 'project', project.planned_issue_date,
+				CASE WHEN project.planned_issue_date < week.week_start + 7 THEN 'current' ELSE 'next' END,
+				project.id, project.name, project.debt_type,
+				COALESCE(project.amount, 0) / 100000000.0, ('/projects/' || project.id)
+			FROM projects project CROSS JOIN week_bounds week
+			WHERE project.status IN ('planning', 'in_progress', 'at_risk')
+				AND project.planned_issue_date BETWEEN week.week_start AND week.week_start + 11
+				AND EXTRACT(ISODOW FROM project.planned_issue_date) <= 5
+		), due_detail AS (
+			SELECT d.id, d.name, ${REPORTING_TYPE_SQL()} AS debt_type, d.counterparty,
+				d.amount / 100000000.0 AS principal_yi, d.annual_rate, d.maturity_date
+			FROM current_debt d CROSS JOIN latest
+			WHERE d.maturity_date > latest.as_of_date AND d.maturity_date <= latest.as_of_date + 30
+				AND ${REPORTING_TYPE_SQL()} <> '浮动收益凭证'
+			ORDER BY d.maturity_date, d.amount DESC, d.name
+			LIMIT 30
+		), active_projects AS (
+			SELECT project.id, project.name, project.debt_type, project.amount / 100000000.0 AS amount_yi,
+				project.planned_issue_date, project.planned_maturity_date, project.status,
+				owner.name AS owner_name, project.notes
+			FROM projects project
+			LEFT JOIN people owner ON owner.id = project.owner_id
+			WHERE project.status IN ('planning', 'in_progress', 'at_risk')
+			ORDER BY project.planned_issue_date, project.name
+		)
+		SELECT latest.as_of_date AS asOfDate, args.today AS today,
+			(SELECT balance_yi FROM snapshot_totals WHERE label = 'current') AS balanceYi,
+			(SELECT balance_yi FROM snapshot_totals WHERE label = 'month') AS previousMonthBalanceYi,
+			(SELECT balance_yi FROM snapshot_totals WHERE label = 'year') AS previousYearBalanceYi,
+			(SELECT regulated_balance_yi FROM snapshot_totals WHERE label = 'month')
+				- (SELECT regulated_balance_yi FROM snapshot_totals WHERE label = 'year') AS cumulativeBorrowingYi,
+			(SELECT as_of_date FROM snapshot_totals WHERE label = 'month') AS cumulativeBorrowingDate,
+			live_metrics.live_balance_yi AS liveBalanceYi,
+			live_metrics.weighted_rate AS weightedRate,
+			live_metrics.weighted_days AS weightedDays,
+			live_metrics.long_balance_yi AS longBalanceYi,
+			live_metrics.short_balance_yi AS shortBalanceYi,
+			live_metrics.due_30_yi AS due30Yi, live_metrics.due_year_yi AS dueYearYi,
+			live_metrics.short_company_debt_yi AS shortCompanyDebtYi,
+			live_metrics.short_debt_yi AS shortDebtYi,
+			live_metrics.rate_coverage AS rateCoverage,
+			live_metrics.lifecycle_coverage AS lifecycleCoverage,
+			(SELECT amount_yi FROM largest_borrowing) AS largestBorrowingYi,
+			(SELECT value FROM parameters) AS parameters,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'type', type, 'amountYi', amount_yi
+			) ORDER BY amount_yi DESC, type) FROM composition), '[]'::jsonb) AS composition,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'month', to_char(months.month_start, 'YYYY-MM'), 'amountYi', COALESCE(maturity.amount_yi, 0)
+			) ORDER BY months.month_start) FROM months LEFT JOIN maturity USING (month_start)), '[]'::jsonb) AS maturityDistribution,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'kind', kind, 'date', date, 'week', week, 'id', id, 'name', name,
+				'debtType', debt_type, 'amountYi', amount_yi, 'href', href
+			) ORDER BY date, kind, name) FROM event_rows), '[]'::jsonb) AS events,
+			COALESCE((SELECT jsonb_agg(to_jsonb(due_detail) ORDER BY maturity_date, principal_yi DESC) FROM due_detail), '[]'::jsonb) AS dueDetails,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'id', id, 'name', name, 'debtType', debt_type, 'amountYi', amount_yi,
+				'plannedIssueDate', planned_issue_date, 'plannedMaturityDate', planned_maturity_date,
+				'status', status, 'ownerName', owner_name, 'notes', notes
+			) ORDER BY planned_issue_date, name) FROM active_projects), '[]'::jsonb) AS projects
+		FROM latest CROSS JOIN args CROSS JOIN live_metrics
+	`).get(today);
+
+	const limitData = await getDebtLimitSummary(database);
+	const parameters = financeParameters(report.parameters);
+	const valueYi = (value) => number(value);
+	const ratio = (numerator, denominator) => denominator ? valueYi(numerator) / denominator * 100 : null;
+	const asOfDate = report.asOfDate ?? today;
+	const staleDays = Math.max(0, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${asOfDate}T00:00:00Z`)) / 86_400_000));
+	const balanceYi = valueYi(report.balanceYi);
+	const liveBalanceYi = valueYi(report.liveBalanceYi);
+	const longBalanceYi = valueYi(report.longBalanceYi);
+	const shortBalanceYi = valueYi(report.shortBalanceYi);
+	const netCapital = parameters.prior_month_net_capital?.valueYi;
+	const securitiesNetAssets = parameters.securities_prior_year_net_assets?.valueYi;
+	const groupNetAssets = parameters.group_prior_year_net_assets?.valueYi;
+	const cumulativeBorrowingYi = valueYi(report.cumulativeBorrowingYi);
+
+	return {
+		asOfDate,
+		today,
+		staleDays,
+		metrics: {
+			balanceYi,
+			balanceMonthChangeYi: balanceYi - valueYi(report.previousMonthBalanceYi),
+			balanceYearChangeYi: balanceYi - valueYi(report.previousYearBalanceYi),
+			weightedRatePct: valueYi(report.weightedRate) * 100,
+			weightedRemainingDays: valueYi(report.weightedDays),
+			longBalanceYi,
+			shortBalanceYi,
+			longBalanceRatio: longBalanceYi + shortBalanceYi ? longBalanceYi / (longBalanceYi + shortBalanceYi) * 100 : null,
+			due30Yi: valueYi(report.due30Yi),
+			dueYearYi: valueYi(report.dueYearYi),
+			shortCompanyDebtYi: valueYi(report.shortCompanyDebtYi),
+			shortCompanyDebtRatio: ratio(report.shortCompanyDebtYi, netCapital),
+			shortDebtYi: valueYi(report.shortDebtYi),
+			shortDebtRatio: ratio(report.shortDebtYi, netCapital),
+			largestBorrowingYi: valueYi(report.largestBorrowingYi),
+			largestBorrowingRatio: ratio(report.largestBorrowingYi, securitiesNetAssets),
+			cumulativeBorrowingYi,
+			cumulativeBorrowingDate: report.cumulativeBorrowingDate,
+			cumulativeSecuritiesRatio: ratio(cumulativeBorrowingYi, securitiesNetAssets),
+			cumulativeGroupRatio: ratio(cumulativeBorrowingYi, groupNetAssets)
+		},
+		quality: {
+			liveBalanceYi,
+			reconciliationDeltaYi: liveBalanceYi - balanceYi,
+			rateCoveragePct: valueYi(report.rateCoverage) * 100,
+			lifecycleCoveragePct: valueYi(report.lifecycleCoverage) * 100,
+			liveDerivedReliable: Math.abs(liveBalanceYi - balanceYi) < 0.005
+		},
+		parameters,
+		composition: (report.composition ?? []).map((item) => ({ ...item, amountYi: valueYi(item.amountYi) })),
+		maturityDistribution: (report.maturityDistribution ?? []).map((item) => ({ ...item, amountYi: valueYi(item.amountYi) })),
+		events: (report.events ?? []).map((item) => ({ ...item, amountYi: valueYi(item.amountYi) })),
+		dueDetails: (report.dueDetails ?? []).map((item) => ({
+			...item,
+			principalYi: valueYi(item.principal_yi),
+			annualRatePct: item.annual_rate == null ? null : valueYi(item.annual_rate) * 100,
+			maturityDate: item.maturity_date
+		})),
+		projects: (report.projects ?? []).map((item) => ({ ...item, amountYi: valueYi(item.amountYi) })),
+		...limitData
+	};
+}
+
 export async function getProjectGanttData(filters = {}) {
 	const db = getDatabase();
 	const rows = await db.prepare(`

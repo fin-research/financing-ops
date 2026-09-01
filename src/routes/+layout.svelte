@@ -6,6 +6,7 @@
 	import {
 		BarChart3,
 		BriefcaseBusiness,
+		FileText,
 		FileSpreadsheet,
 		LayoutDashboard,
 		LogOut,
@@ -20,6 +21,7 @@
 
 	const workspaceItems = [
 		{ href: '/', label: '仪表盘', mobileLabel: '仪表盘', icon: LayoutDashboard },
+		{ href: '/liability-weekly', label: '负债周报', mobileLabel: '周报', icon: FileText },
 		{ href: '/projects', label: '项目进度', mobileLabel: '项目', icon: BriefcaseBusiness }
 	];
 
