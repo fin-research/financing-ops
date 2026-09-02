@@ -157,7 +157,14 @@ try {
 			AND existing.subtype IS NOT DISTINCT FROM source.subtype
 			AND existing.name = source.name
 			AND existing.counterparty IS NOT DISTINCT FROM source.counterparty
-			AND existing.issue_date IS NOT DISTINCT FROM source.issue_date
+			AND (
+				existing.issue_date IS NOT DISTINCT FROM source.issue_date
+				OR (
+					source.debt_type = '互换便利'
+					AND existing.debt_type = '互换便利'
+					AND existing.maturity_date IS NOT DISTINCT FROM source.maturity_date
+				)
+			)
 			AND existing.maturity_date IS NOT DISTINCT FROM source.maturity_date
 			AND existing.occurrence = source.occurrence
 	`);

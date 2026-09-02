@@ -8,7 +8,8 @@ const AUTHENTICATED_POST_ACTIONS = new Set([
 const REVIEWER_CREATE_ACTIONS = new Set([
 	'/people:createPerson',
 	'/projects:createProject',
-	'/sop:createSop'
+	'/sop:createSop',
+	'/liability-weekly:generate'
 ]);
 
 /** @param {string} method */

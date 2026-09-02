@@ -188,7 +188,7 @@ export function assertDebtBalanceSnapshot(snapshot) {
 	}
 	return { asOfDate: snapshot.asOfDate, totalYi: snapshot.totalYi, balances: snapshot.balances };
 }
-(value, maturityDate) {
+function mapStatus(value, maturityDate) {
 	const candidate = text(value)?.toLowerCase() ?? '';
 	if (/未到期|存续/.test(candidate)) return 'active';
 	if (/发行失败|作废|取消/.test(candidate)) return 'closed';

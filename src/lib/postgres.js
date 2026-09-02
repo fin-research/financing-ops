@@ -10,7 +10,9 @@ const FINANCING_TABLES = [
 	'project_tasks', 'debt', 'bond', 'income_certificate', 'income_right', 'refinancing',
 	'swap_facility', 'cashflow', 'balance_snapshot', 'reminder_rules', 'reminder_rule_nodes',
 	'reminder_rule_periods', 'reminder_deliveries',
-	'finance_parameters', 'debt_limit_configs', 'audit_logs', 'debt_overview',
+	'finance_parameters', 'debt_limit_configs', 'audit_logs',
+	'liability_market_observations', 'liability_peer_issuances',
+	'liability_registration_progress', 'liability_weekly_report_runs', 'debt_overview',
 	'cashflow_overview', 'data_overview'
 ];
 

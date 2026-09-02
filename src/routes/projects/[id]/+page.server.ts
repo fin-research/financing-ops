@@ -39,6 +39,9 @@ async function loadProject(projectId: string) {
 			p.status, p.planned_start_date AS plannedStartDate, p.planned_issue_date AS plannedIssueDate,
 			p.planned_maturity_date AS plannedMaturityDate, p.notes, p.created_at AS createdAt,
 			p.updated_at AS updatedAt, p.owner_id AS ownerId, owner.name AS ownerName,
+			p.expected_rate_min AS expectedRateMin, p.expected_rate_max AS expectedRateMax,
+			p.funding_cost_rate AS fundingCostRate, p.tenor_description AS tenorDescription,
+			p.amount_description AS amountDescription,
 			st.name AS sopName,
 			COALESCE((
 				SELECT jsonb_agg(jsonb_build_object(

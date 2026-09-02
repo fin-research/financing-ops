@@ -385,11 +385,40 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 		), active_projects AS (
 			SELECT project.id, project.name, project.debt_type, project.amount / 100000000.0 AS amount_yi,
 				project.planned_issue_date, project.planned_maturity_date, project.status,
-				owner.name AS owner_name, project.notes
+				owner.name AS owner_name, project.notes,
+				project.expected_rate_min, project.expected_rate_max,
+				project.funding_cost_rate, project.tenor_description, project.amount_description
 			FROM projects project
 			LEFT JOIN people owner ON owner.id = project.owner_id
 			WHERE project.status IN ('planning', 'in_progress', 'at_risk')
 			ORDER BY project.planned_issue_date, project.name
+		), market_observations AS (
+			SELECT series_id, series_name, category, tenor, observation_date, value, unit
+			FROM (
+				SELECT observation.series_id, observation.series_name, observation.category,
+					observation.tenor, observation.observation_date, observation.value, observation.unit,
+					ROW_NUMBER() OVER (
+						PARTITION BY observation.category, observation.series_id
+						ORDER BY observation.observation_date DESC
+					) AS row_number
+				FROM liability_market_observations observation CROSS JOIN latest
+				WHERE observation.observation_date <= latest.as_of_date
+			) latest_observation
+			WHERE row_number = 1
+		), peer_issuances AS (
+			SELECT security_code, bond_name, issuer_name, actual_issue_amount_yi,
+				issue_tenor, issue_date, maturity_date, market, coupon_rate_pct
+			FROM liability_peer_issuances peer CROSS JOIN latest
+			WHERE peer.issue_date IS NULL OR peer.issue_date <= latest.as_of_date
+			ORDER BY peer.issue_date DESC NULLS LAST, peer.bond_name
+			LIMIT 12
+		), registration_progress AS (
+			SELECT project_name, issuer_name, status, variety, amount_yi,
+				update_date, notice_number, lead_underwriter, venue
+			FROM liability_registration_progress registration CROSS JOIN latest
+			WHERE registration.update_date <= latest.as_of_date
+			ORDER BY registration.update_date DESC, registration.project_name
+			LIMIT 12
 		)
 		SELECT latest.as_of_date AS asOfDate, args.today AS today,
 			(SELECT balance_yi FROM snapshot_totals WHERE label = 'current') AS balanceYi,
@@ -424,14 +453,33 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			COALESCE((SELECT jsonb_agg(jsonb_build_object(
 				'id', id, 'name', name, 'debtType', debt_type, 'amountYi', amount_yi,
 				'plannedIssueDate', planned_issue_date, 'plannedMaturityDate', planned_maturity_date,
-				'status', status, 'ownerName', owner_name, 'notes', notes
-			) ORDER BY planned_issue_date, name) FROM active_projects), '[]'::jsonb) AS projects
+				'status', status, 'ownerName', owner_name, 'notes', notes,
+				'expectedRateMin', expected_rate_min, 'expectedRateMax', expected_rate_max,
+				'fundingCostRate', funding_cost_rate, 'tenorDescription', tenor_description,
+				'amountDescription', amount_description
+			) ORDER BY planned_issue_date, name) FROM active_projects), '[]'::jsonb) AS projects,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'seriesId', series_id, 'seriesName', series_name, 'category', category,
+				'tenor', tenor, 'observationDate', observation_date, 'value', value, 'unit', unit
+			) ORDER BY category, tenor, series_name) FROM market_observations), '[]'::jsonb) AS marketObservations,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'securityCode', security_code, 'bondName', bond_name, 'issuerName', issuer_name,
+				'actualIssueAmountYi', actual_issue_amount_yi, 'issueTenor', issue_tenor,
+				'issueDate', issue_date, 'maturityDate', maturity_date, 'market', market,
+				'couponRatePct', coupon_rate_pct
+			) ORDER BY issue_date DESC NULLS LAST, bond_name) FROM peer_issuances), '[]'::jsonb) AS peerIssuances,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'projectName', project_name, 'issuerName', issuer_name, 'status', status,
+				'variety', variety, 'amountYi', amount_yi, 'updateDate', update_date,
+				'noticeNumber', notice_number, 'leadUnderwriter', lead_underwriter, 'venue', venue
+			) ORDER BY update_date DESC, project_name) FROM registration_progress), '[]'::jsonb) AS registrationProgress
 		FROM latest CROSS JOIN args CROSS JOIN live_metrics
 	`).get(today);
 
 	const limitData = await getDebtLimitSummary(database);
 	const parameters = financeParameters(report.parameters);
 	const valueYi = (value) => number(value);
+	const nullableValueYi = (value) => value == null ? null : number(value);
 	const ratio = (numerator, denominator) => denominator ? valueYi(numerator) / denominator * 100 : null;
 	const asOfDate = report.asOfDate ?? today;
 	const staleDays = Math.max(0, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${asOfDate}T00:00:00Z`)) / 86_400_000));
@@ -488,6 +536,17 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			maturityDate: item.maturity_date
 		})),
 		projects: (report.projects ?? []).map((item) => ({ ...item, amountYi: valueYi(item.amountYi) })),
+		marketObservations: (report.marketObservations ?? []).map((item) => ({
+			...item, value: nullableValueYi(item.value)
+		})),
+		peerIssuances: (report.peerIssuances ?? []).map((item) => ({
+			...item,
+			actualIssueAmountYi: nullableValueYi(item.actualIssueAmountYi),
+			couponRatePct: nullableValueYi(item.couponRatePct)
+		})),
+		registrationProgress: (report.registrationProgress ?? []).map((item) => ({
+			...item, amountYi: nullableValueYi(item.amountYi)
+		})),
 		...limitData
 	};
 }
@@ -498,6 +557,9 @@ export async function getProjectGanttData(filters = {}) {
 		SELECT p.id, p.code, p.name, p.debt_type AS debtType, p.status,
 			p.planned_start_date AS plannedStartDate, p.planned_issue_date AS plannedIssueDate,
 			p.planned_maturity_date AS plannedMaturityDate, p.amount, p.notes,
+			p.expected_rate_min AS expectedRateMin, p.expected_rate_max AS expectedRateMax,
+			p.funding_cost_rate AS fundingCostRate, p.tenor_description AS tenorDescription,
+			p.amount_description AS amountDescription,
 			p.owner_id AS ownerId, owner.name AS ownerName,
 			pt.id AS taskId, pt.name AS taskName, pt.status AS taskStatus,
 			pt.planned_start_date AS taskPlannedStartDate, pt.due_date AS taskDueDate,
@@ -528,6 +590,10 @@ export async function getProjectGanttData(filters = {}) {
 				id: row.id, code: row.code, name: row.name, debtType: row.debtType, status: row.status,
 				plannedStartDate: row.plannedStartDate, plannedIssueDate: row.plannedIssueDate,
 				plannedMaturityDate: row.plannedMaturityDate, amount: row.amount == null ? null : number(row.amount),
+				expectedRateMin: row.expectedRateMin == null ? null : number(row.expectedRateMin),
+				expectedRateMax: row.expectedRateMax == null ? null : number(row.expectedRateMax),
+				fundingCostRate: row.fundingCostRate == null ? null : number(row.fundingCostRate),
+				tenorDescription: row.tenorDescription, amountDescription: row.amountDescription,
 				ownerId: row.ownerId, ownerName: row.ownerName, notes: row.notes,
 				tasks: []
 			});

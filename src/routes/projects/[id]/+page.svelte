@@ -349,6 +349,10 @@
 			</form>
 			<dl class="metadata">
 				<div><dt>融资规模</dt><dd>{data.project.amount ? `${(data.project.amount / 100000000).toFixed(2)} 亿元` : '暂未登记'}</dd></div>
+				<div><dt>规模说明</dt><dd>{data.project.amountDescription ?? '数据缺失'}</dd></div>
+				<div><dt>预计利率</dt><dd>{data.project.expectedRateMin == null || data.project.expectedRateMax == null ? '数据缺失' : `${(data.project.expectedRateMin * 100).toFixed(2)}%–${(data.project.expectedRateMax * 100).toFixed(2)}%`}</dd></div>
+				<div><dt>资金成本</dt><dd>{data.project.fundingCostRate == null ? '数据缺失' : `${(data.project.fundingCostRate * 100).toFixed(2)}%`}</dd></div>
+				<div><dt>期限说明</dt><dd>{data.project.tenorDescription ?? '数据缺失'}</dd></div>
 				<div><dt>计划到期日</dt><dd>{data.project.plannedMaturityDate ?? '暂未登记'}</dd></div>
 				<div><dt>币种</dt><dd>{data.project.currency}</dd></div>
 			</dl>

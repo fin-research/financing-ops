@@ -42,7 +42,8 @@ async function installSchema(db, { beforeReminderMigration } = {}) {
 		'0005_hide_derived_data_api_tables.sql',
 		'0006_enforce_single_debt_project.sql',
 		'0007_detach_projects_from_debt.sql',
-		'0008_sop_node_reminder_periods.sql'
+		'0008_sop_node_reminder_periods.sql',
+		'0009_liability_report_sources_and_snapshots.sql'
 	]) {
 		if (name === '0008_sop_node_reminder_periods.sql' && beforeReminderMigration) {
 			await beforeReminderMigration(db);

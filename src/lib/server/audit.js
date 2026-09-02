@@ -12,7 +12,8 @@ const ALLOWED_ENTITY_TYPES = new Set([
 	'debt_limit',
 	'debt',
 	'cashflow',
-	'balance_snapshot'
+	'balance_snapshot',
+	'liability_weekly_report'
 ]);
 const SENSITIVE_KEYS = /password|secret|token|api[_-]?key|authorization|cookie/i;
 
