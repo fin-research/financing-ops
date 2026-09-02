@@ -50,12 +50,22 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, choice 
 				('group_prior_year_net_assets'), ('total_assets'),
 				('total_liabilities'), ('agency_brokerage_funds'),
 				('asset_liability_ratio'), ('adjusted_asset_liability_ratio')
+		), missing_maturity AS (
+			SELECT id, name, counterparty, amount
+			FROM debt
+			WHERE activated_at IS NOT NULL AND activated_at <= ?::date
+				AND maturity_date IS NULL AND closed_at IS NULL
+				AND status IN ('active', 'matured')
 		)
 		SELECT
 			(SELECT COUNT(*) FROM liability_market_observations WHERE observation_date <= ?::date) AS market_count,
 			(SELECT COUNT(*) FROM liability_peer_issuances WHERE issue_date IS NULL OR issue_date <= ?::date) AS peer_count,
 			(SELECT COUNT(*) FROM liability_registration_progress WHERE update_date <= ?::date) AS registration_count,
 			(SELECT COUNT(*) FROM finance_parameters WHERE code IN (SELECT code FROM required_parameters) AND value_yi IS NOT NULL) AS parameter_count,
+			(SELECT COUNT(*) FROM missing_maturity) AS missing_maturity_count,
+			(SELECT COALESCE(SUM(amount), 0) / 100000000 FROM missing_maturity) AS missing_maturity_amount_yi,
+			(SELECT string_agg(item.name || ' · ' || COALESCE(item.counterparty, '对手方缺失') || ' · ' || round(item.amount / 100000000, 4)::text || '亿元', '；' ORDER BY item.amount DESC, item.id)
+				FROM (SELECT * FROM missing_maturity ORDER BY amount DESC, id LIMIT 5) item) AS missing_maturity_details,
 			(SELECT string_agg(required.code, ', ' ORDER BY required.code)
 				FROM required_parameters required
 				WHERE NOT EXISTS (
@@ -65,7 +75,7 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, choice 
 			(SELECT COUNT(*) FROM projects WHERE status IN ('planning', 'in_progress', 'at_risk') AND
 				(expected_rate_min IS NULL OR expected_rate_max IS NULL OR funding_cost_rate IS NULL
 					OR tenor_description IS NULL OR amount_description IS NULL)) AS incomplete_project_count
-	`).get(asOfDate, asOfDate, asOfDate);
+	`).get(asOfDate, asOfDate, asOfDate, asOfDate);
 	const missingModules = [];
 	if (Number(counts.market_count ?? 0) === 0 && choice.edb.status !== 'available') {
 		missingModules.push({ code: 'market_rates', title: '市场利率与信用利差', detail: '底稿与本次 Choice EDB 均未返回可用观测。' });
@@ -82,6 +92,13 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, choice 
 	missingModules.push({ code: 'choice_registration', title: 'Choice 注册进程', detail: '尚未验证可批量拉取的 Choice 注册进程报表；当前使用生产库中的底稿历史记录。' });
 	if (Number(counts.parameter_count ?? 0) < 8) {
 		missingModules.push({ code: 'finance_parameters', title: '净资本、净资产与资产负债规模', detail: `生产库缺少参数：${counts.missing_parameter_codes ?? '未识别'}。` });
+	}
+	if (Number(counts.missing_maturity_count ?? 0) > 0) {
+		missingModules.push({
+			code: 'debt_maturity',
+			title: '负债到期日字段',
+			detail: `${counts.missing_maturity_count} 条负债缺少到期日（合计 ${Number(counts.missing_maturity_amount_yi ?? 0).toFixed(4)} 亿元）：${counts.missing_maturity_details ?? '具体记录未识别'}。请确认后补录。`
+		});
 	}
 	if (Number(counts.incomplete_project_count ?? 0) > 0) {
 		missingModules.push({ code: 'project_fields', title: '推进中项目字段', detail: `${counts.incomplete_project_count} 个推进中项目缺少预计利率、资金成本、期限描述或规模说明中的一项。` });

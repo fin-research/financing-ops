@@ -64,6 +64,7 @@ test('weekly report snapshots overwrite the existing eastmoney liability-report 
 	const config = fs.readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8');
 	assert.match(service, /liability-report\/\$\{asOfDate\}\.json/);
 	assert.match(service, /WHERE as_of_date = \?/);
+	assert.match(service, /missing_maturity_details/);
 	assert.match(config, /"bucket_name": "eastmoney"/);
 });
 
