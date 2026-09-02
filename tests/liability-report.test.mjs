@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { fetchManualChoiceSources } from '../src/lib/server/liability-choice.js';
 
-test('liability report generation uses exactly one bounded EDB and CTR request', async () => {
+test('liability report generation uses bounded EDB and quant-calibrated CTR parameters', async () => {
 	const requests = [];
 	const result = await fetchManualChoiceSources({
 		dataApiUrl: 'https://data.example/data',
@@ -17,25 +17,33 @@ test('liability report generation uses exactly one bounded EDB and CTR request',
 	assert.equal(requests.filter((url) => url.includes('/choice/edb')).length, 1);
 	assert.equal(requests.filter((url) => url.includes('/choice/ctr')).length, 1);
 	assert.match(requests.find((url) => url.includes('/choice/edb')), /edbIds=E1707781/);
-	assert.match(requests.find((url) => url.includes('/choice/ctr')), /reportName=BondIssueDetail/);
+	const ctrRequest = requests.find((url) => url.includes('/choice/ctr'));
+	const ctrUrl = new URL(ctrRequest);
+	assert.equal(ctrUrl.searchParams.get('reportName'), 'BondIssueDetail');
+	const ctrOptions = ctrUrl.searchParams.get('options');
+	assert.match(ctrOptions, /Bond_Type=646003/);
+	assert.match(ctrOptions, /Frequency=1/);
+	assert.match(ctrOptions, /Issue_Date_Type=2/);
+	assert.match(ctrOptions, /Company_Type=-/);
 	assert.equal(result.window.startDate, '2026-08-24');
 	assert.equal(result.edb.status, 'available');
 	assert.equal(result.ctr.status, 'available');
 });
 
-test('Choice failure is recorded as missing data and does not trigger a retry', async () => {
+test('Choice failures are retried without changing the two logical request bound', async () => {
 	let calls = 0;
 	const result = await fetchManualChoiceSources({
 		dataApiUrl: 'https://data.example/data', asOfDate: '2026-08-31',
-		fetchImpl: async () => { calls += 1; return new Response('upstream failure', { status: 503 }); }
+		fetchImpl: async () => { calls += 1; return new Response('upstream failure', { status: 503 }); },
+		retryDelayMs: 0
 	});
-	assert.equal(calls, 2);
+	assert.equal(calls, 6);
 	assert.equal(result.edb.status, 'missing');
 	assert.equal(result.ctr.status, 'missing');
 });
 
 test('weekly page keeps data sections visible when reconciliation is unavailable', () => {
-	const source = fs.readFileSync(new URL('../src/routes/liability-weekly/+page.svelte', import.meta.url), 'utf8');
+	const source = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	assert.match(source, /数据缺失与来源状态/);
 	assert.match(source, /利率与信用利差/);
 	assert.match(source, /可比券商发行明细/);
@@ -46,15 +54,16 @@ test('weekly page keeps data sections visible when reconciliation is unavailable
 });
 
 test('page load never fetches quota-limited Choice sources', () => {
-	const page = fs.readFileSync(new URL('../src/routes/liability-weekly/+page.server.ts', import.meta.url), 'utf8');
+	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8');
 	assert.doesNotMatch(page, /fetchManualChoiceSources/);
 	assert.match(page, /action.*generate|generateLiabilityWeeklyReport/s);
 });
 
-test('weekly report snapshots use the existing eastmoney R2 debt-report prefix', () => {
+test('weekly report snapshots overwrite the existing eastmoney liability-report key by date', () => {
 	const service = fs.readFileSync(new URL('../src/lib/server/liability-weekly-reports.js', import.meta.url), 'utf8');
 	const config = fs.readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8');
-	assert.match(service, /debt-report\/\$\{asOfDate\}/);
+	assert.match(service, /liability-report\/\$\{asOfDate\}\.json/);
+	assert.match(service, /WHERE as_of_date = \?/);
 	assert.match(config, /"bucket_name": "eastmoney"/);
 });
 

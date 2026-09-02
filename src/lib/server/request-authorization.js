@@ -9,7 +9,7 @@ const REVIEWER_CREATE_ACTIONS = new Set([
 	'/people:createPerson',
 	'/projects:createProject',
 	'/sop:createSop',
-	'/liability-weekly:generate'
+	'/liability-report:generate'
 ]);
 
 /** @param {string} method */

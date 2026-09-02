@@ -43,7 +43,8 @@ async function installSchema(db, { beforeReminderMigration } = {}) {
 		'0006_enforce_single_debt_project.sql',
 		'0007_detach_projects_from_debt.sql',
 		'0008_sop_node_reminder_periods.sql',
-		'0009_liability_report_sources_and_snapshots.sql'
+		'0009_liability_report_sources_and_snapshots.sql',
+		'0010_liability_report_daily_overwrite.sql'
 	]) {
 		if (name === '0008_sop_node_reminder_periods.sql' && beforeReminderMigration) {
 			await beforeReminderMigration(db);
@@ -80,7 +81,8 @@ test('write authorization is enforced by role and named action', () => {
 	for (const [routeId, actionName] of [
 		['/people', 'createPerson'],
 		['/projects', 'createProject'],
-		['/sop', 'createSop']
+		['/sop', 'createSop'],
+		['/liability-report', 'generate']
 	]) {
 		assert.equal(isAuthorizedRequest('reviewer', routeId, 'POST', actionName), true);
 		assert.equal(isAuthorizedRequest('handler', routeId, 'POST', actionName), false);

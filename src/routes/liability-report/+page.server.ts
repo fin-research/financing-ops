@@ -50,7 +50,7 @@ export const actions = {
 	generate: async (event) => {
 		const data = await event.request.formData();
 		if (String(data.get('confirm') ?? '') !== 'yes') {
-			return fail(400, { message: '请确认手动生成；生成会各消耗一次 EDB 和 CTR 配额。' });
+			return fail(400, { message: '请确认手动生成；本次最多各发起一次 EDB 和 CTR 逻辑请求，失败请求可重试且不计配额。' });
 		}
 		try {
 			const result = await generateLiabilityWeeklyReport({

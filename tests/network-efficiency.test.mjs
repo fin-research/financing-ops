@@ -109,7 +109,7 @@ test('data administration gets its endpoint with the private token request', asy
 
 test('liability weekly report loads bounded collection queries without N+1 reads', async () => {
 	const [page, queries] = await Promise.all([
-		readFile(new URL('../src/routes/liability-weekly/+page.server.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8'),
 		readFile(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8')
 	]);
 	assert.match(page, /getLiabilityWeeklyReportData\(\)/);

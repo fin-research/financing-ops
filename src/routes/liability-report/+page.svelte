@@ -111,6 +111,17 @@
 </svelte:head>
 
 <div class="weekly-report">
+	<header class="template-header">
+		<div>
+			<h1>东方财富证券 · 资金管理部负债周报</h1>
+			<p>资金管理部 · 融资组</p>
+		</div>
+		<div class="template-meta">
+			<span>报表日期</span>
+			<strong>{dateLabel(report.asOfDate)}</strong>
+		</div>
+	</header>
+
 	<section class:warning={warnings.length > 0} class="report-status" aria-label="周报数据状态">
 		<div>
 			<Database size={20} />
@@ -129,7 +140,7 @@
 			<form method="POST" action="?/generate" class="generate-form" use:enhance={enhanceGeneration}>
 				<input type="hidden" name="confirm" value="yes" />
 				<button type="submit" disabled={generating}>{generating ? '生成中…' : '手动生成本期周报'}</button>
-				<small>点击后各发起 1 次 EDB 和 1 次 CTR 请求，并将完整 JSON 快照写入 R2。</small>
+				<small>点击后各发起 1 次 EDB 和 1 次 CTR 逻辑请求；失败请求最多有限重试，并将完整 JSON 快照写入 R2。</small>
 			</form>
 			{#if data.snapshotError}<p class="data-missing"><AlertTriangle size={16} />历史快照读取失败：{data.snapshotError}</p>{/if}
 			<div class="history-list">

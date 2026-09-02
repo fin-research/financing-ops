@@ -131,7 +131,7 @@ ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_entity_type_check CHECK (entity
 COMMENT ON TABLE liability_market_observations IS 'Imported or manually refreshed Choice/底稿 market series used by the liability weekly report.';
 COMMENT ON TABLE liability_peer_issuances IS 'Comparable broker bond issuance detail imported from the weekly source workbook or a manually requested Choice CTR snapshot.';
 COMMENT ON TABLE liability_registration_progress IS 'Comparable broker registration progress history; each update remains queryable for report replay.';
-COMMENT ON TABLE liability_weekly_report_runs IS 'Immutable report-run index. The corresponding JSON snapshot is stored under the eastmoney/debt-report R2 prefix.';
+COMMENT ON TABLE liability_weekly_report_runs IS 'Report-run index. The corresponding JSON snapshot is stored under the eastmoney/liability-report/yyyy-mm-dd.json R2 key.';
 COMMENT ON COLUMN liability_weekly_report_runs.source_manifest IS 'Records the exact source files, Choice calls, and missing-data statuses used for this manual generation.';
 
 COMMIT;

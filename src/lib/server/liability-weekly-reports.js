@@ -26,7 +26,7 @@ const CALIBER = {
 	activeDebt: '统计日以前已起息且未到期、未关闭的 financing.debt；无到期日记录保留并标记勾稽缺口。',
 	cumulativeBorrowing: '月末累计新增借款按已导入余额快照差额计算，并剔除互换便利。',
 	projects: '推进中融资计划只读 financing.projects 的 planning/in_progress/at_risk，项目字段缺失不隐藏。',
-	choice: '每次手动生成最多各请求一次 Choice EDB 与 CTR；失败不重试。',
+	choice: '每次手动生成各发起一次 Choice EDB 与 CTR 逻辑请求；失败请求可有限重试，页面访问不触发。',
 	parameters: '净资本、净资产和资产负债率沿用安装包报告期；月末字段按自然月末日期记录。'
 };
 
@@ -141,7 +141,7 @@ export async function generateLiabilityWeeklyReport({ database, env, actor, fetc
 		choice,
 		provenance: {
 			generation: 'manual',
-			choiceQuota: { edbRequests: 1, ctrRequests: 1, automaticRequests: 0 },
+			choiceQuota: { edbLogicalRequests: 1, ctrLogicalRequests: 1, maxAttemptsPerRequest: 3, automaticRequests: 0 },
 			sourceFiles: SOURCE_FILES,
 			caliber: CALIBER,
 			sourceCounts: sources.counts,
@@ -150,16 +150,38 @@ export async function generateLiabilityWeeklyReport({ database, env, actor, fetc
 	};
 	const content = JSON.stringify(snapshot);
 	const contentSha256 = await sha256(content);
-	const id = randomUUID();
-	const r2Key = `debt-report/${asOfDate}/${id}.json`;
+	const r2Key = `liability-report/${asOfDate}.json`;
+	let id;
+	let previousRun = null;
 	await database.transaction(async (transaction) => {
-		await transaction.prepare(`
-			INSERT INTO liability_weekly_report_runs (
-				id, as_of_date, generated_by_person_id, r2_key, content_sha256, status,
-				source_manifest, missing_modules
-			) VALUES (?, ?, ?, ?, ?, 'pending', ?::jsonb, ?::jsonb)
-		`).run(id, asOfDate, actor?.personId ?? null, r2Key, contentSha256,
-			JSON.stringify(snapshot.provenance), JSON.stringify(sources.missingModules));
+		previousRun = await transaction.prepare(`
+			SELECT id, as_of_date AS "asOfDate", generated_at AS "generatedAt",
+				generated_by_person_id AS "generatedByPersonId", r2_key AS "r2Key",
+				content_sha256 AS "contentSha256", status
+			FROM liability_weekly_report_runs
+			WHERE as_of_date = ?
+			FOR UPDATE
+		`).get(asOfDate);
+		id = previousRun?.id ?? randomUUID();
+		if (previousRun) {
+			await transaction.prepare(`
+			UPDATE liability_weekly_report_runs
+				SET generated_at = CURRENT_TIMESTAMP, generated_by_person_id = ?,
+					r2_key = ?, content_sha256 = ?, status = 'pending',
+					source_manifest = ?::jsonb, missing_modules = ?::jsonb, error_message = NULL,
+					updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`).run(actor?.personId ?? null, r2Key, contentSha256,
+				JSON.stringify(snapshot.provenance), JSON.stringify(sources.missingModules), id);
+		} else {
+			await transaction.prepare(`
+				INSERT INTO liability_weekly_report_runs (
+					id, as_of_date, generated_by_person_id, r2_key, content_sha256, status,
+					source_manifest, missing_modules
+				) VALUES (?, ?, ?, ?, ?, 'pending', ?::jsonb, ?::jsonb)
+			`).run(id, asOfDate, actor?.personId ?? null, r2Key, contentSha256,
+				JSON.stringify(snapshot.provenance), JSON.stringify(sources.missingModules));
+		}
 		await prepareAudit({
 			db: transaction,
 			actor,
@@ -167,12 +189,13 @@ export async function generateLiabilityWeeklyReport({ database, env, actor, fetc
 			entityType: 'liability_weekly_report',
 			entityId: id,
 			summary: `手动生成负债周报：${asOfDate}`,
-			after: { id, asOfDate, r2Key, contentSha256, provenance: snapshot.provenance }
+			before: previousRun,
+			after: { id, asOfDate, r2Key, contentSha256, provenance: snapshot.provenance, replaces: previousRun?.id ?? null }
 		}).run();
 	});
 	try {
 		await bucket.put(r2Key, content, {
-			httpMetadata: { contentType: 'application/json; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+			httpMetadata: { contentType: 'application/json; charset=utf-8', cacheControl: 'no-cache' },
 			customMetadata: { asOfDate, contentSha256, reportRunId: id }
 		});
 		await database.prepare(`
