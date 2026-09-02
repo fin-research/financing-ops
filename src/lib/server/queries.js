@@ -347,6 +347,7 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			FROM current_debt d CROSS JOIN week_bounds week
 			WHERE d.maturity_date BETWEEN week.week_start AND week.week_start + 11
 				AND EXTRACT(ISODOW FROM d.maturity_date) <= 5
+				AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
 			UNION ALL
 			SELECT 'interest', c.due_date,
 				CASE WHEN c.due_date < week.week_start + 7 THEN 'current' ELSE 'next' END,
@@ -356,6 +357,7 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			WHERE c.cashflow_type = 'interest' AND c.due_date BETWEEN week.week_start AND week.week_start + 11
 				AND EXTRACT(ISODOW FROM c.due_date) <= 5
 				AND (d.maturity_date IS NULL OR d.maturity_date <> c.due_date)
+				AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
 			UNION ALL
 			SELECT 'issue', d.issue_date,
 				CASE WHEN d.issue_date < week.week_start + 7 THEN 'current' ELSE 'next' END,
@@ -365,6 +367,7 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			WHERE d.issue_date BETWEEN week.week_start AND week.week_start + 11
 				AND EXTRACT(ISODOW FROM d.issue_date) <= 5
 				AND d.closed_at IS NULL
+				AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
 			UNION ALL
 			SELECT 'project', project.planned_issue_date,
 				CASE WHEN project.planned_issue_date < week.week_start + 7 THEN 'current' ELSE 'next' END,
@@ -374,6 +377,7 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			WHERE project.status IN ('planning', 'in_progress', 'at_risk')
 				AND project.planned_issue_date BETWEEN week.week_start AND week.week_start + 11
 				AND EXTRACT(ISODOW FROM project.planned_issue_date) <= 5
+				AND COALESCE(project.debt_type, '') NOT IN ('同业拆借', '浮动收益凭证')
 		), due_detail AS (
 			SELECT d.id, d.name, ${REPORTING_TYPE_SQL()} AS debt_type, d.counterparty,
 				d.amount / 100000000.0 AS principal_yi, d.annual_rate, d.maturity_date

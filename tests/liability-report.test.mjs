@@ -51,6 +51,18 @@ test('weekly page keeps data sections visible when reconciliation is unavailable
 	assert.doesNotMatch(source, /相关模块已隐藏数值/);
 	assert.doesNotMatch(source, /近期动态暂不展示/);
 	assert.doesNotMatch(source, /到期分布暂不展示/);
+	assert.equal((source.match(/class="a4-page"/g) ?? []).length, 6);
+	assert.match(source, /第 6 页 · 共 6 页/);
+});
+
+test('recent liability dynamics exclude interbank borrowing and floating income certificates', () => {
+	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
+	const eventRows = queries.slice(queries.indexOf('), event_rows AS'), queries.indexOf('), due_detail AS'));
+	assert.match(eventRows, /NOT IN \('同业拆借', '浮动收益凭证'\)/g);
+	assert.match(eventRows, /project\.debt_type/);
+	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
+	assert.match(page, /dynamicProjects = \$derived/);
+	assert.match(page, /dynamicProjects as project/);
 });
 
 test('page load never fetches quota-limited Choice sources', () => {
