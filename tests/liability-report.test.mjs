@@ -3,20 +3,19 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { fetchManualChoiceSources } from '../src/lib/server/liability-choice.js';
 
-test('liability report generation uses bounded EDB and quant-calibrated CTR parameters', async () => {
+test('liability report generation uses one quant-calibrated CTR request and never calls EDB', async () => {
 	const requests = [];
 	const result = await fetchManualChoiceSources({
 		dataApiUrl: 'https://data.example/data',
 		asOfDate: '2026-08-31',
 		fetchImpl: async (url) => {
 			requests.push(String(url));
-			return new Response(JSON.stringify({ function: url.pathname.endsWith('/edb') ? 'EDB' : 'CTR', fields: [], rows: [] }), { status: 200 });
+			return new Response(JSON.stringify({ function: 'CTR', fields: [], rows: [] }), { status: 200 });
 		}
 	});
-	assert.equal(requests.length, 2);
-	assert.equal(requests.filter((url) => url.includes('/choice/edb')).length, 1);
+	assert.equal(requests.length, 1);
+	assert.equal(requests.filter((url) => url.includes('/choice/edb')).length, 0);
 	assert.equal(requests.filter((url) => url.includes('/choice/ctr')).length, 1);
-	assert.match(requests.find((url) => url.includes('/choice/edb')), /edbIds=E1707781/);
 	const ctrRequest = requests.find((url) => url.includes('/choice/ctr'));
 	const ctrUrl = new URL(ctrRequest);
 	assert.equal(ctrUrl.searchParams.get('reportName'), 'BondIssueDetail');
@@ -26,19 +25,17 @@ test('liability report generation uses bounded EDB and quant-calibrated CTR para
 	assert.match(ctrOptions, /Issue_Date_Type=2/);
 	assert.match(ctrOptions, /Company_Type=-/);
 	assert.equal(result.window.startDate, '2026-08-24');
-	assert.equal(result.edb.status, 'available');
 	assert.equal(result.ctr.status, 'available');
 });
 
-test('Choice failures are retried without changing the two logical request bound', async () => {
+test('Choice CTR failures are retried without adding another logical request', async () => {
 	let calls = 0;
 	const result = await fetchManualChoiceSources({
 		dataApiUrl: 'https://data.example/data', asOfDate: '2026-08-31',
 		fetchImpl: async () => { calls += 1; return new Response('upstream failure', { status: 503 }); },
 		retryDelayMs: 0
 	});
-	assert.equal(calls, 6);
-	assert.equal(result.edb.status, 'missing');
+	assert.equal(calls, 3);
 	assert.equal(result.ctr.status, 'missing');
 });
 
@@ -58,6 +55,10 @@ test('weekly page renders the complete report directly in the workspace', () => 
 	assert.match(source, /ReportIssuanceChart/);
 	assert.match(source, /ReportStackedBarChart/);
 	assert.match(source, /ReportLineChart/);
+	assert.match(source, /ReportGaugeChart/);
+	assert.match(source, /ReportDonutChart/);
+	assert.match(source, /ReportProgressChart/);
+	assert.doesNotMatch(source, /<svg|<path|conic-gradient|progress-bar/);
 	assert.doesNotMatch(source, /相关模块已隐藏数值/);
 	assert.doesNotMatch(source, /近期动态暂不展示/);
 	assert.doesNotMatch(source, /到期分布暂不展示/);
@@ -90,6 +91,9 @@ test('weekly report query supplies every chart data contract', () => {
 	assert.match(queries, /'bondType', bond_type/);
 	assert.match(queries, /principal_yi/);
 	assert.match(queries, /interest_yi/);
+	assert.match(queries, /FROM public\.edb/);
+	assert.match(queries, /market_spread_history/);
+	assert.doesNotMatch(queries.slice(queries.indexOf('export async function getLiabilityWeeklyReportData'), queries.indexOf('export async function getProjectGanttData')), /FROM liability_market_observations/);
 });
 
 test('recent liability dynamics exclude interbank borrowing and floating income certificates', () => {
@@ -102,10 +106,59 @@ test('recent liability dynamics exclude interbank borrowing and floating income 
 	assert.match(page, /dynamicProjects as project/);
 });
 
+test('future 30-day maturity metric and details exclude interbank borrowing and floating income certificates', () => {
+	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
+	const weeklyQuery = queries.slice(queries.indexOf('export async function getLiabilityWeeklyReportData'), queries.indexOf('export async function getProjectGanttData'));
+	const liveMetrics = weeklyQuery.slice(weeklyQuery.indexOf('), live_metrics AS'), weeklyQuery.indexOf('), largest_borrowing AS'));
+	const dueDetails = weeklyQuery.slice(weeklyQuery.indexOf('), due_detail_rows AS'), weeklyQuery.indexOf('), due_detail AS'));
+	assert.match(liveMetrics, /NOT IN \('同业拆借', '浮动收益凭证'\)[\s\S]*AS due_30_yi/);
+	assert.equal((dueDetails.match(/NOT IN \('同业拆借', '浮动收益凭证'\)/g) ?? []).length, 2);
+	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
+	assert.match(page, /不含同业拆借及浮动收益凭证/);
+});
+
+test('weekly broker pricing and registration tables are independent left-right columns without continuation', () => {
+	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
+	const peerSection = page.slice(page.indexOf('section-6-title'), page.indexOf('section-7-title'));
+	assert.match(peerSection, /class="peer-grid"/);
+	assert.match(peerSection, /report\.peerIssuances as item/);
+	assert.match(peerSection, /report\.registrationProgress as item/);
+	assert.doesNotMatch(peerSection, /续|registrationColumns|peerIssuances\.slice/);
+});
+
+test('all liability report charts use the shared ECharts host instead of hand-drawn markup', () => {
+	const chartFiles = [
+		'ReportBalanceRateChart.svelte', 'ReportIssuanceChart.svelte', 'ReportLineChart.svelte',
+		'ReportStackedBarChart.svelte', 'ReportGaugeChart.svelte', 'ReportDonutChart.svelte',
+		'ReportProgressChart.svelte'
+	];
+	for (const file of chartFiles) {
+		const source = fs.readFileSync(new URL(`../src/routes/liability-report/${file}`, import.meta.url), 'utf8');
+		assert.match(source, /EChart/);
+		assert.doesNotMatch(source, /<svg|<path|<rect|conic-gradient/);
+	}
+	const charting = fs.readFileSync(new URL('../src/lib/charts/echarts.ts', import.meta.url), 'utf8');
+	assert.match(charting, /from 'echarts\/core'/);
+	assert.match(charting, /GaugeChart/);
+	assert.match(charting, /PieChart/);
+});
+
 test('page load never fetches quota-limited Choice sources', () => {
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8');
 	assert.doesNotMatch(page, /fetchManualChoiceSources/);
 	assert.match(page, /action.*generate|generateLiabilityWeeklyReport/s);
+});
+
+test('liability market rates come from scheduled public.edb data, not manual Choice EDB', () => {
+	const [service, choice, page] = [
+		fs.readFileSync(new URL('../src/lib/server/liability-weekly-reports.js', import.meta.url), 'utf8'),
+		fs.readFileSync(new URL('../src/lib/server/liability-choice.js', import.meta.url), 'utf8'),
+		fs.readFileSync(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8')
+	];
+	assert.match(service, /public\.edb/);
+	assert.match(service, /edbLogicalRequests: 0/);
+	assert.doesNotMatch(choice, /\/choice\/edb|edbIds/);
+	assert.match(page, /利率数据读取 public\.edb/);
 });
 
 test('weekly report snapshots overwrite the existing eastmoney liability-report key by date', () => {

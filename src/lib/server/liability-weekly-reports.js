@@ -5,13 +5,6 @@ import { prepareAudit } from './audit.js';
 import { fetchManualChoiceSources } from './liability-choice.js';
 
 const SOURCE_FILES = {
-	market: [
-		'底稿/【每周五替换】利率看板底稿/AAA-券商与国债信用利差(1年）.xlsx',
-		'底稿/【每周五替换】利率看板底稿/AAA-券商与国债信用利差(3年）.xlsx',
-		'底稿/【每周五替换】利率看板底稿/AAA-券商与国债信用利差(5年）.xlsx',
-		'底稿/【每周五替换】利率看板底稿/国有行存单发行利率.xlsx',
-		'底稿/【每周五替换】利率看板底稿/中债证券公司债到期收益率(AAA-).xlsx'
-	],
 	peer: '底稿/【每周五替换】可比券商底稿/债券发行明细.xlsx',
 	registration: '底稿/【每周五替换】可比券商底稿/项目注册进程2026-08-28.xlsx',
 	parameters: [
@@ -21,12 +14,20 @@ const SOURCE_FILES = {
 	]
 };
 
+const LIABILITY_REPORT_EDB_CODES = [
+	'E1707781', 'E1707782', 'E1707783', 'E1707785',
+	'E1000172', 'E1000174', 'E1000176',
+	'E1704281', 'E1704282', 'E1704283', 'E1704284'
+];
+
 const CALIBER = {
 	balance: '主动负债余额与结构使用 financing.balance_snapshot；明细台账仅用于实时指标和勾稽提示。',
 	activeDebt: '统计日以前已起息且未到期、未关闭的 financing.debt；无到期日记录保留并标记勾稽缺口。',
 	cumulativeBorrowing: '月末累计新增借款按已导入余额快照差额计算，并剔除互换便利。',
 	projects: '推进中融资计划只读 financing.projects 的 planning/in_progress/at_risk，项目字段缺失不隐藏。',
-	choice: '每次手动生成各发起一次 Choice EDB 与 CTR 逻辑请求；失败请求可有限重试，页面访问不触发。',
+	market: '利率走势只读 Neon public.edb；Choice EDB 由 dashboard 每日定时增量更新，页面访问和手动生成都不调用 EDB。',
+	choice: '每次手动生成只发起一次 Choice CTR 逻辑请求，用于可比券商发行明细；失败请求可有限重试。',
+	due30: '未来30天到期本金及明细均排除同业拆借和浮动收益凭证。',
 	parameters: '净资本、净资产和资产负债率沿用安装包报告期；月末字段按自然月末日期记录。'
 };
 
@@ -40,27 +41,44 @@ async function sha256(value) {
 
 
 export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, choice = {
-	edb: { status: 'missing', error: '本次尚未手动拉取 Choice EDB。' },
 	ctr: { status: 'missing', error: '本次尚未手动拉取 Choice CTR。' }
 }) {
 	const counts = await db.prepare(`
-		WITH required_parameters(code) AS (
+		WITH args AS (
+			SELECT ?::date AS as_of_date
+		), required_parameters(code) AS (
 			VALUES
 				('prior_month_net_capital'), ('securities_prior_year_net_assets'),
 				('group_prior_year_net_assets'), ('total_assets'),
 				('total_liabilities'), ('agency_brokerage_funds'),
 				('asset_liability_ratio'), ('adjusted_asset_liability_ratio')
+		), required_market_series(code) AS (
+			SELECT unnest(?::text[])
 		), missing_maturity AS (
 			SELECT id, name, counterparty, amount
-			FROM debt
-			WHERE activated_at IS NOT NULL AND activated_at <= ?::date
+			FROM debt CROSS JOIN args
+			WHERE activated_at IS NOT NULL AND activated_at <= args.as_of_date
 				AND maturity_date IS NULL AND closed_at IS NULL
 				AND status IN ('active', 'matured')
 		)
 		SELECT
-			(SELECT COUNT(*) FROM liability_market_observations WHERE observation_date <= ?::date) AS market_count,
-			(SELECT COUNT(*) FROM liability_peer_issuances WHERE issue_date IS NULL OR issue_date <= ?::date) AS peer_count,
-			(SELECT COUNT(*) FROM liability_registration_progress WHERE update_date <= ?::date) AS registration_count,
+			(SELECT COUNT(*) FROM required_market_series required
+				WHERE EXISTS (
+					SELECT 1 FROM public.edb observation CROSS JOIN args
+					WHERE observation.indicator_code = required.code
+						AND observation.observation_date BETWEEN date_trunc('year', args.as_of_date)::date AND args.as_of_date
+				)) AS market_series_count,
+			(SELECT string_agg(required.code, ', ' ORDER BY required.code)
+				FROM required_market_series required
+				WHERE NOT EXISTS (
+					SELECT 1 FROM public.edb observation CROSS JOIN args
+					WHERE observation.indicator_code = required.code
+						AND observation.observation_date BETWEEN date_trunc('year', args.as_of_date)::date AND args.as_of_date
+				)) AS missing_market_series,
+			(SELECT MAX(observation.synced_at) FROM public.edb observation
+				WHERE observation.indicator_code IN (SELECT code FROM required_market_series)) AS market_synced_at,
+			(SELECT COUNT(*) FROM liability_peer_issuances CROSS JOIN args WHERE issue_date IS NULL OR issue_date <= args.as_of_date) AS peer_count,
+			(SELECT COUNT(*) FROM liability_registration_progress CROSS JOIN args WHERE update_date <= args.as_of_date) AS registration_count,
 			(SELECT COUNT(*) FROM finance_parameters WHERE code IN (SELECT code FROM required_parameters) AND value_yi IS NOT NULL) AS parameter_count,
 			(SELECT COUNT(*) FROM missing_maturity) AS missing_maturity_count,
 			(SELECT COALESCE(SUM(amount), 0) / 100000000 FROM missing_maturity) AS missing_maturity_amount_yi,
@@ -75,10 +93,14 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, choice 
 			(SELECT COUNT(*) FROM projects WHERE status IN ('planning', 'in_progress', 'at_risk') AND
 				(expected_rate_min IS NULL OR expected_rate_max IS NULL OR funding_cost_rate IS NULL
 					OR tenor_description IS NULL OR amount_description IS NULL)) AS incomplete_project_count
-	`).get(asOfDate, asOfDate, asOfDate, asOfDate);
+	`).get(asOfDate, LIABILITY_REPORT_EDB_CODES);
 	const missingModules = [];
-	if (Number(counts.market_count ?? 0) === 0 && choice.edb.status !== 'available') {
-		missingModules.push({ code: 'market_rates', title: '市场利率与信用利差', detail: '底稿与本次 Choice EDB 均未返回可用观测。' });
+	if (Number(counts.market_series_count ?? 0) < LIABILITY_REPORT_EDB_CODES.length) {
+		missingModules.push({
+			code: 'market_rates',
+			title: 'public.edb 市场利率与信用利差',
+			detail: `定时同步数据缺少指标：${counts.missing_market_series ?? '未识别'}。`
+		});
 	}
 	if (Number(counts.peer_count ?? 0) === 0 && choice.ctr.status !== 'available') {
 		missingModules.push({ code: 'peer_issuance', title: '可比券商发行明细', detail: '底稿与本次 Choice CTR 均未返回可用发行明细。' });
@@ -102,9 +124,6 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, choice 
 	}
 	if (Number(counts.incomplete_project_count ?? 0) > 0) {
 		missingModules.push({ code: 'project_fields', title: '推进中项目字段', detail: `${counts.incomplete_project_count} 个推进中项目缺少预计利率、资金成本、期限描述或规模说明中的一项。` });
-	}
-	if (choice.edb.status !== 'available') {
-		missingModules.push({ code: 'choice_edb', title: '本次 Choice EDB', detail: choice.edb.error });
 	}
 	if (choice.ctr.status !== 'available') {
 		missingModules.push({ code: 'choice_ctr', title: '本次 Choice CTR', detail: choice.ctr.error });
@@ -151,14 +170,15 @@ export async function generateLiabilityWeeklyReport({ database, env, actor, fetc
 	}
 	const generatedAt = new Date().toISOString();
 	const snapshot = {
-		version: 1,
+		version: 2,
 		generatedAt,
 		asOfDate,
 		report: baseReport,
 		choice,
 		provenance: {
 			generation: 'manual',
-			choiceQuota: { edbLogicalRequests: 1, ctrLogicalRequests: 1, maxAttemptsPerRequest: 3, automaticRequests: 0 },
+			choiceQuota: { edbLogicalRequests: 0, ctrLogicalRequests: 1, maxAttemptsPerRequest: 3 },
+			databaseSources: { marketRates: 'public.edb', marketRatesSyncedAt: sources.counts.market_synced_at ?? null },
 			sourceFiles: SOURCE_FILES,
 			caliber: CALIBER,
 			sourceCounts: sources.counts,

@@ -268,6 +268,27 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 	const report = await database.prepare(`
 		WITH args AS (
 			SELECT ?::date AS today
+		), liability_rate_series(series_id, series_name, category, tenor, unit) AS (
+			VALUES
+				('E1707781', '中债证券公司债到期收益率(AAA-):1年', 'chinabond_broker_aaa_minus_yield', '1年', '%'),
+				('E1707782', '中债证券公司债到期收益率(AAA-):2年', 'chinabond_broker_aaa_minus_yield', '2年', '%'),
+				('E1707783', '中债证券公司债到期收益率(AAA-):3年', 'chinabond_broker_aaa_minus_yield', '3年', '%'),
+				('E1707785', '中债证券公司债到期收益率(AAA-):5年', 'chinabond_broker_aaa_minus_yield', '5年', '%'),
+				('E1704284', '同业存单发行利率(国有银行):1年', 'state_owned_bank_ncd', '1年', '%'),
+				('E1704283', '同业存单发行利率(国有银行):9个月', 'state_owned_bank_ncd', '9个月', '%'),
+				('E1704282', '同业存单发行利率(国有银行):6个月', 'state_owned_bank_ncd', '6个月', '%'),
+				('E1704281', '同业存单发行利率(国有银行):3个月', 'state_owned_bank_ncd', '3个月', '%'),
+				('E1707781', 'AAA-券商债:1年', 'credit_spread_broker_govt_1y', '1年', '%'),
+				('E1000172', '国债:1年', 'credit_spread_broker_govt_1y', '1年', '%'),
+				('E1707783', 'AAA-券商债:3年', 'credit_spread_broker_govt_3y', '3年', '%'),
+				('E1000174', '国债:3年', 'credit_spread_broker_govt_3y', '3年', '%'),
+				('E1707785', 'AAA-券商债:5年', 'credit_spread_broker_govt_5y', '5年', '%'),
+				('E1000176', '国债:5年', 'credit_spread_broker_govt_5y', '5年', '%')
+		), liability_spread_pairs(category, tenor, broker_series_id, government_series_id) AS (
+			VALUES
+				('credit_spread_broker_govt_1y', '1年', 'E1707781', 'E1000172'),
+				('credit_spread_broker_govt_3y', '3年', 'E1707783', 'E1000174'),
+				('credit_spread_broker_govt_5y', '5年', 'E1707785', 'E1000176')
 		), latest AS (
 			SELECT COALESCE(MAX(as_of_date), (SELECT today FROM args)) AS as_of_date
 			FROM balance_snapshot
@@ -302,6 +323,7 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				COALESCE(SUM(amount) FILTER (WHERE term_days <= 365), 0) / 100000000.0 AS short_balance_yi,
 				COALESCE(SUM(amount) FILTER (
 					WHERE maturity_date > latest.as_of_date AND maturity_date <= latest.as_of_date + 30
+						AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
 				), 0) / 100000000.0 AS due_30_yi,
 				COALESCE(SUM(amount) FILTER (
 					WHERE maturity_date > latest.as_of_date
@@ -440,7 +462,7 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				d.annual_rate, d.maturity_date AS due_date
 			FROM current_debt d CROSS JOIN latest
 			WHERE d.maturity_date > latest.as_of_date AND d.maturity_date <= latest.as_of_date + 30
-				AND ${REPORTING_TYPE_SQL()} <> '浮动收益凭证'
+				AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
 			UNION ALL
 			SELECT 'interest', (d.id::text || ':' || c.sequence::text), d.name,
 				${REPORTING_TYPE_SQL()} || '-利息', d.counterparty,
@@ -449,7 +471,7 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			WHERE c.cashflow_type = 'interest'
 				AND c.due_date > latest.as_of_date AND c.due_date <= latest.as_of_date + 30
 				AND (d.maturity_date IS NULL OR d.maturity_date <> c.due_date)
-				AND ${REPORTING_TYPE_SQL()} <> '浮动收益凭证'
+				AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
 		), due_detail AS (
 			SELECT * FROM due_detail_rows
 			ORDER BY due_date, principal_yi DESC, interest_yi DESC, name
@@ -464,24 +486,41 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			LEFT JOIN people owner ON owner.id = project.owner_id
 			WHERE project.status IN ('planning', 'in_progress', 'at_risk')
 			ORDER BY project.planned_issue_date, project.name
+		), raw_market_history AS (
+			SELECT definition.series_id, definition.series_name, definition.category,
+				definition.tenor, observation.observation_date,
+				observation.value::double precision AS value, definition.unit
+			FROM public.edb observation
+			JOIN liability_rate_series definition ON definition.series_id = observation.indicator_code
+			CROSS JOIN latest
+			WHERE observation.observation_date BETWEEN date_trunc('year', latest.as_of_date)::date AND latest.as_of_date
+		), market_spread_history AS (
+			SELECT pair.broker_series_id || '-' || pair.government_series_id AS series_id,
+				pair.tenor || '信用利差' AS series_name, pair.category, pair.tenor,
+				broker.observation_date,
+				(broker.value - government.value)::double precision * 100 AS value,
+				'bp'::text AS unit
+			FROM liability_spread_pairs pair
+			JOIN public.edb broker ON broker.indicator_code = pair.broker_series_id
+			JOIN public.edb government ON government.indicator_code = pair.government_series_id
+				AND government.observation_date = broker.observation_date
+			CROSS JOIN latest
+			WHERE broker.observation_date BETWEEN date_trunc('year', latest.as_of_date)::date AND latest.as_of_date
+		), market_history AS (
+			SELECT * FROM raw_market_history
+			UNION ALL
+			SELECT * FROM market_spread_history
 		), market_observations AS (
 			SELECT series_id, series_name, category, tenor, observation_date, value, unit
 			FROM (
-				SELECT observation.series_id, observation.series_name, observation.category,
-					observation.tenor, observation.observation_date, observation.value, observation.unit,
+				SELECT history.*,
 					ROW_NUMBER() OVER (
-						PARTITION BY observation.category, observation.series_id
-						ORDER BY observation.observation_date DESC
+						PARTITION BY history.category, history.series_id
+						ORDER BY history.observation_date DESC
 					) AS row_number
-				FROM liability_market_observations observation CROSS JOIN latest
-				WHERE observation.observation_date <= latest.as_of_date
+				FROM market_history history
 			) latest_observation
 			WHERE row_number = 1
-		), market_history AS (
-			SELECT observation.series_id, observation.series_name, observation.category,
-				observation.tenor, observation.observation_date, observation.value, observation.unit
-			FROM liability_market_observations observation CROSS JOIN latest
-			WHERE observation.observation_date BETWEEN date_trunc('year', latest.as_of_date)::date AND latest.as_of_date
 		), peer_issuances AS (
 			SELECT security_code, bond_name, issuer_name, bond_type, actual_issue_amount_yi,
 				issue_tenor, issue_date, maturity_date, market, coupon_rate_pct

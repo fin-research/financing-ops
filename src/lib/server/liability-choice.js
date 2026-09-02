@@ -1,11 +1,5 @@
 // @ts-nocheck
 
-const EDB_SERIES = [
-	'E1707781', 'E1707782', 'E1707783', 'E1707785',
-	'E1000172', 'E1000174', 'E1000176',
-	'E1704281', 'E1704282', 'E1704283', 'E1704284'
-];
-
 const CTR_REPORT = 'BondIssueDetail';
 const CTR_INDICATORS = [
 	'SECUCODE', 'BOND_NAME_ABBR', 'BOND_TYPE', 'ISSUE_DATE',
@@ -75,10 +69,9 @@ async function fetchChoiceTable(base, pathname, params, fetchImpl = fetch, {
 }
 
 /**
- * Choice is intentionally queried only from the explicit report-generation action.
- * The two logical requests are bounded to one short EDB window and one CTR
- * window; page loads never call this function. Failed requests can be retried
- * because the Choice gateway does not consume quota for failed upstream calls.
+ * Comparable issuance data is queried only from the explicit report-generation
+ * action. Market-rate EDB series are not requested here: the shared dashboard
+ * scheduler owns their incremental refresh into public.edb.
  */
 export async function fetchManualChoiceSources({
 	dataApiUrl,
@@ -89,32 +82,23 @@ export async function fetchManualChoiceSources({
 }) {
 	if (!dataApiUrl) throw new Error('未配置 Choice 数据 API 地址');
 	const startDate = dateShift(asOfDate, -7);
-	const edbRequest = {
-		edbIds: EDB_SERIES.join(','), startDate, endDate: asOfDate,
-		options: 'IsPublishDate=0'
-	};
 	const ctrRequest = {
 		reportName: CTR_REPORT,
 		indicators: CTR_INDICATORS,
 		options: ctrOptions(startDate, asOfDate)
 	};
-	const [edb, ctr] = await Promise.allSettled([
-		fetchChoiceTable(dataApiUrl, '/choice/edb', edbRequest, fetchImpl, { maxAttempts, retryDelayMs }),
-		fetchChoiceTable(dataApiUrl, '/choice/ctr', ctrRequest, fetchImpl, { maxAttempts, retryDelayMs })
-	]);
+	const ctr = await Promise.resolve(fetchChoiceTable(
+		dataApiUrl,
+		'/choice/ctr',
+		ctrRequest,
+		fetchImpl,
+		{ maxAttempts, retryDelayMs }
+	)).then(
+		(value) => ({ status: 'fulfilled', value }),
+		(reason) => ({ status: 'rejected', reason })
+	);
 	return {
 		window: { startDate, endDate: asOfDate },
-		edb: edb.status === 'fulfilled'
-			? {
-				status: 'available', path: '/choice/edb',
-				request: edbRequest,
-				function: edb.value.function, fields: edb.value.fields, rows: edb.value.rows
-			}
-			: {
-				status: 'missing', path: '/choice/edb',
-				request: edbRequest,
-				error: String(edb.reason?.message ?? edb.reason)
-			},
 		ctr: ctr.status === 'fulfilled'
 			? {
 				status: 'available', path: '/choice/ctr',

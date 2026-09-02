@@ -12,11 +12,6 @@ const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl && !dryRun) throw new Error('缺少 DATABASE_URL；生产数据导入必须从本地直连 Neon');
 
 const files = {
-	credit1: '【每周五替换】利率看板底稿/AAA-券商与国债信用利差(1年）.xlsx',
-	credit3: '【每周五替换】利率看板底稿/AAA-券商与国债信用利差(3年）.xlsx',
-	credit5: '【每周五替换】利率看板底稿/AAA-券商与国债信用利差(5年）.xlsx',
-	ncd: '【每周五替换】利率看板底稿/国有行存单发行利率.xlsx',
-	chinaBond: '【每周五替换】利率看板底稿/中债证券公司债到期收益率(AAA-).xlsx',
 	peer: '【每周五替换】可比券商底稿/债券发行明细.xlsx',
 	registration: '【每周五替换】可比券商底稿/项目注册进程2026-08-28.xlsx',
 	netCapital: '【每月初替换】负债测算/净资本数据.xlsx',
@@ -48,28 +43,6 @@ function readRows(relative, sheetName) {
 	const sheet = workbook.Sheets[sheetName ?? workbook.SheetNames[0]];
 	if (!sheet) throw new Error(`找不到工作表：${relative} / ${sheetName}`);
 	return XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
-}
-
-function parseMarketFile(relative, category) {
-	const rows = readRows(relative, '指标');
-	const ids = rows[2] ?? [];
-	const names = rows[1] ?? rows[0] ?? [];
-	const observations = [];
-	for (let rowIndex = 10; rowIndex < rows.length; rowIndex += 1) {
-		const observationDate = date(rows[rowIndex]?.[1]);
-		if (!observationDate) continue;
-		for (let column = 2; column < ids.length; column += 1) {
-			const value = number(rows[rowIndex]?.[column]);
-			const seriesId = text(ids[column]);
-			if (!seriesId || value === null) continue;
-			observations.push({
-				seriesId, seriesName: text(names[column]) ?? seriesId, category,
-				tenor: text(names[column])?.match(/(\d+年|\d+个月|\d+月)/)?.[1] ?? null,
-				observationDate, value, source: relative, sourceReference: `${relative}!${rowIndex + 1}`
-			});
-		}
-	}
-	return observations;
 }
 
 function parsePeerFile(relative) {
@@ -155,18 +128,11 @@ function parseParameters() {
 }
 
 async function main() {
-	const market = [
-		...parseMarketFile(files.credit1, 'credit_spread_broker_govt_1y'),
-		...parseMarketFile(files.credit3, 'credit_spread_broker_govt_3y'),
-		...parseMarketFile(files.credit5, 'credit_spread_broker_govt_5y'),
-		...parseMarketFile(files.ncd, 'state_owned_bank_ncd'),
-		...parseMarketFile(files.chinaBond, 'chinabond_broker_aaa_minus_yield')
-	];
 	const peer = parsePeerFile(files.peer);
 	const registration = parseRegistrationFile(files.registration);
 	const parameters = parseParameters();
 	const summary = {
-		root, dryRun, marketRows: market.length, peerRows: peer.length,
+		root, dryRun, marketSource: 'public.edb (managed by dashboard scheduled sync)', peerRows: peer.length,
 		registrationRows: registration.length, parameters
 	};
 	if (dryRun) {
@@ -177,21 +143,6 @@ async function main() {
 	await client.connect();
 	try {
 		await client.query('BEGIN');
-		await client.query(`
-			INSERT INTO financing.liability_market_observations
-			(series_id, series_name, category, tenor, observation_date, value, source, source_reference)
-			SELECT series_id, series_name, category, tenor, observation_date, value, source, source_reference
-			FROM jsonb_to_recordset($1::jsonb) AS source(
-				series_id text, series_name text, category text, tenor text, observation_date date,
-				value numeric, source text, source_reference text
-			)
-			ON CONFLICT (series_id, category, observation_date) DO UPDATE SET
-			series_name = EXCLUDED.series_name, tenor = EXCLUDED.tenor, value = EXCLUDED.value,
-			 source = EXCLUDED.source, source_reference = EXCLUDED.source_reference, updated_at = CURRENT_TIMESTAMP
-		`, [JSON.stringify(market.map((row) => ({
-			series_id: row.seriesId, series_name: row.seriesName, category: row.category, tenor: row.tenor,
-			observation_date: row.observationDate, value: row.value, source: row.source, source_reference: row.sourceReference
-		})))]);
 		await client.query(`
 			INSERT INTO financing.liability_peer_issuances (
 				id, security_code, bond_name, issuer_name, company_nature, issue_date, payment_date, bond_type,

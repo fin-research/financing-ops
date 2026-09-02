@@ -139,7 +139,6 @@
 .p1sub b { color: var(--report-navy); }
 .p1-gauge-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.75rem; margin-top: 0.75rem; }
 .p1gauge { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 0.35rem; padding: 0.625rem; border: 0.0625rem solid #e3e8ef; border-radius: 0.625rem; background: #fff; }
-.p1gauge svg { width: min(100%, 8rem); height: auto; }
 .p1gauge-t { color: #374151; font-size: 0.75rem; font-weight: 650; line-height: 1.4; text-align: center; }
 .p1gauge-s { margin-top: auto; color: #6b7280; font-size: 0.75rem; line-height: 1.45; text-align: center; }
 .p1gauge-s b { color: var(--report-navy); }
@@ -158,14 +157,7 @@
 .quota-name { font-weight: 750; }
 .quota-name i { display: inline-block; width: 0.55rem; height: 0.55rem; margin-right: 0.4rem; border-radius: 0.125rem; vertical-align: middle; background: var(--quota-color); }
 .negative { color: var(--report-red); font-weight: 800; }
-.progress-cell { display: flex; min-width: 8.5rem; align-items: center; gap: 0.5rem; }
-.progress-bar-bg { position: relative; height: 0.4rem; flex: 1; overflow: hidden; border-radius: 999rem; background: #e2e8f0; }
-.progress-bar-fill { display: block; height: 100%; border-radius: inherit; background: var(--report-green); }
-.progress-cell.warning .progress-bar-fill { background: var(--report-amber); }
-.progress-cell.risk .progress-bar-fill { background: var(--report-red); }
-.progress-cell.warning .progress-txt { color: var(--report-amber); }
-.progress-cell.risk .progress-txt { color: var(--report-red); }
-.progress-txt { min-width: 3.2rem; color: var(--report-green); font-size: 0.75rem; font-weight: 750; text-align: right; }
+.quota-progress { min-width: 9rem; }
 
 .chart-container { margin-top: 0.75rem; padding: 0.875rem 1rem 0.65rem; }
 .chart-container h3 { margin: 0 0 0.5rem; color: var(--report-navy); font-size: 0.875rem; font-weight: 800; text-align: center; }
@@ -173,9 +165,7 @@
 .chart-foot { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.5rem; padding-top: 0.4rem; border-top: 0.0625rem solid #f1f5f9; color: var(--report-muted); font-size: 0.75rem; font-weight: 650; }
 .chart-scope-line { margin-bottom: 0.5rem; color: #6b7280; font-size: 0.75rem; font-weight: 650; }
 .composition-layout { display: grid; grid-template-columns: minmax(18rem, 0.85fr) minmax(25rem, 1.15fr); align-items: center; gap: 1.5rem; }
-.composition-donut { display: grid; width: min(18rem, 75%); aspect-ratio: 1; margin: 0 auto; place-items: center; border-radius: 50%; }
-.donut-center { display: grid; width: 58%; aspect-ratio: 1; place-items: center; align-content: center; border-radius: 50%; color: var(--report-navy); background: #fff; font-size: clamp(1.2rem, 2.2vw, 1.8rem); font-weight: 850; font-variant-numeric: tabular-nums; }
-.donut-center small { color: var(--report-muted); font-size: 0.75rem; font-weight: 650; }
+.composition-donut { width: min(19rem, 100%); min-width: 0; margin: 0 auto; }
 .composition-table td:first-child i { display: inline-block; width: 0.55rem; height: 0.55rem; margin-right: 0.4rem; border-radius: 0.125rem; background: var(--legend-color); }
 .total-row { font-weight: 800; background: #f8fafc; }
 .inner-section-head { margin-top: 1rem; }
@@ -186,14 +176,14 @@
 .maturity-table a { color: var(--report-navy); font-weight: 700; text-decoration: none; }
 .maturity-table a:hover { text-decoration: underline; }
 
-.peer-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; margin-top: 0.75rem; align-items: start; }
+.peer-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; margin-top: 0.75rem; align-items: stretch; }
+.peer-grid > .bento-card { min-width: 0; }
 .peer-pricing-table,
 .registration-table { min-width: 32rem; table-layout: fixed; font-size: 0.75rem; }
 .peer-pricing-table th,
 .peer-pricing-table td,
 .registration-table th,
 .registration-table td { padding-right: 0.375rem; padding-left: 0.375rem; text-align: center; }
-.peer-subtitle { margin-top: 0.75rem; }
 .status-badge { display: inline-flex; padding: 0.1rem 0.4rem; border: 0.0625rem solid #a7f3d0; border-radius: 0.25rem; color: #065f46; background: #d1fae5; font-size: 0.75rem; font-weight: 750; white-space: nowrap; }
 .rate-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
 .rate-card { padding: 0.75rem; }

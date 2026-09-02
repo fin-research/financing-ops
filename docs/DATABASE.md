@@ -9,6 +9,8 @@
 - `DATABASE_URL` 只保存在 gitignored `.env.database`，供本地初始化、迁移、Excel 和提醒脚本使用。
 - 禁止 Worker 全局 `Pool`、跨请求 client、未参数化 SQL 和 N+1 查询。
 
+融资业务表继续只写 `financing` schema。负债周报可通过同一 Hyperdrive 只读跨应用共享的 `public.edb`；该表由 dashboard 的每日 Workflow 统一维护，financing 不新增迁移、不写入、不建立平行市场利率表。
+
 ## 负债模型
 
 - `financing.debt` 是基类；`id bigint` 来自 `debt_id_seq`。

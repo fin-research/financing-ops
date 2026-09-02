@@ -1,4 +1,6 @@
 <script lang="ts">
+	import EChart from '$lib/charts/EChart.svelte';
+
 	let {
 		title,
 		rows = [],
@@ -16,78 +18,51 @@
 	} = $props();
 
 	const colors = ['#3e5c9a', '#4fa3d1', '#e06a74', '#8aa0b8', '#e0a24e', '#54bfa0', '#8b7bd9', '#7fd1b0'];
-	const width = 900;
-	const groups = $derived(labels.map((label) => ({
-		label,
-		values: types.map((type) => Number(rows.find((row) => row.label === label && row.type === type)?.value ?? 0))
-	})));
-	const totals = $derived(groups.map((group) => group.values.reduce((sum, value) => sum + value, 0)));
-	const maxTotal = $derived(Math.max(1, ...totals));
-	const verticalPad = { left: 58, right: 18, top: 26, bottom: 54 };
-	const horizontalPad = { left: 128, right: 54, top: 18, bottom: 42 };
-	const ticks = $derived(Array.from({ length: 5 }, (_, index) => maxTotal * (4 - index) / 4));
-
-	function verticalY(value: number) {
-		return verticalPad.top + (maxTotal - value) / maxTotal * (height - verticalPad.top - verticalPad.bottom);
-	}
+	const totals = $derived(labels.map((label) => rows.filter((row) => row.label === label).reduce((sum, row) => sum + Number(row.value ?? 0), 0)));
+	const option = $derived({
+		aria: { enabled: true, decal: { show: true } },
+		color: colors,
+		tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (value: unknown) => `${Number(value).toFixed(2)} 亿元` },
+		legend: { type: 'scroll', top: 0, textStyle: { color: '#475569', fontSize: 12 } },
+		grid: horizontal
+			? { left: 12, right: 28, top: 50, bottom: 12, containLabel: true }
+			: { left: 16, right: 10, top: 52, bottom: 18, containLabel: true },
+		xAxis: horizontal
+			? { type: 'value', name: '亿元', axisLabel: { color: '#64748b' }, nameTextStyle: { color: '#64748b' }, splitLine: { lineStyle: { color: '#e8edf3' } } }
+			: { type: 'category', data: labels, axisLabel: { color: '#64748b', formatter: compactLabel }, axisTick: { show: false }, axisLine: { lineStyle: { color: '#cbd5e1' } } },
+		yAxis: horizontal
+			? { type: 'category', data: labels, axisLabel: { color: '#475569', width: 118, overflow: 'truncate' }, axisTick: { show: false }, axisLine: { show: false } }
+			: { type: 'value', name: '亿元', axisLabel: { color: '#64748b' }, nameTextStyle: { color: '#64748b' }, splitLine: { lineStyle: { color: '#e8edf3' } } },
+		series: types.map((type, index) => ({
+			name: type,
+			type: 'bar',
+			stack: 'total',
+			barMaxWidth: horizontal ? 24 : 44,
+			itemStyle: { color: colors[index % colors.length], borderRadius: index === types.length - 1 ? (horizontal ? [0, 3, 3, 0] : [3, 3, 0, 0]) : 0 },
+			emphasis: { focus: 'series' },
+			label: index === types.length - 1 ? {
+				show: true,
+				position: horizontal ? 'right' : 'top',
+				color: '#334155',
+				fontSize: 11,
+				formatter: (params: any) => totals[params.dataIndex]?.toFixed(1) ?? ''
+			} : { show: false },
+			data: labels.map((label) => Number(rows.find((row) => row.label === label && row.type === type)?.value ?? 0))
+		})),
+		media: [{ query: { maxWidth: 520 }, option: { grid: { left: 4, right: horizontal ? 20 : 4, top: 74, bottom: 10, containLabel: true }, legend: { top: 0, textStyle: { fontSize: 11 } } } }]
+	});
 
 	function compactLabel(label: string) {
 		return label.includes('-') ? `${label.slice(2, 4)}/${Number(label.slice(5, 7))}` : label;
 	}
 </script>
 
-<div class="stacked-chart">
-	{#if groups.length && totals.some((value) => value > 0)}
-		<svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
-			<title>{title}</title>
-			{#if horizontal}
-				{#each groups as group, groupIndex}
-					{@const rowHeight = (height - horizontalPad.top - horizontalPad.bottom) / groups.length}
-					{@const barHeight = Math.min(25, rowHeight * 0.58)}
-					<text x={horizontalPad.left - 12} y={horizontalPad.top + groupIndex * rowHeight + rowHeight / 2 + 5} class="category-label" text-anchor="end">{group.label}</text>
-					{@const prior = { value: 0 }}
-					{#each group.values as value, typeIndex}
-						<rect x={horizontalPad.left + prior.value / maxTotal * (width - horizontalPad.left - horizontalPad.right)} y={horizontalPad.top + groupIndex * rowHeight + (rowHeight - barHeight) / 2} width={value / maxTotal * (width - horizontalPad.left - horizontalPad.right)} height={barHeight} fill={colors[typeIndex % colors.length]} rx="1.5" />
-						{@const ignored = prior.value += value}
-					{/each}
-					<text x={horizontalPad.left + totals[groupIndex] / maxTotal * (width - horizontalPad.left - horizontalPad.right) + 8} y={horizontalPad.top + groupIndex * rowHeight + rowHeight / 2 + 5} class="value-label">{totals[groupIndex].toFixed(0)}</text>
-				{/each}
-			{:else}
-				{#each ticks as tick}
-					<line x1={verticalPad.left} x2={width - verticalPad.right} y1={verticalY(tick)} y2={verticalY(tick)} class="grid-line" />
-					<text x={verticalPad.left - 10} y={verticalY(tick) + 4} class="axis-label" text-anchor="end">{tick.toFixed(0)}</text>
-				{/each}
-				{#each groups as group, groupIndex}
-					{@const slot = (width - verticalPad.left - verticalPad.right) / groups.length}
-					{@const barWidth = Math.min(48, slot * 0.62)}
-					{@const prior = { value: 0 }}
-					{#each group.values as value, typeIndex}
-						<rect x={verticalPad.left + groupIndex * slot + (slot - barWidth) / 2} y={verticalY(prior.value + value)} width={barWidth} height={Math.max(0, verticalY(prior.value) - verticalY(prior.value + value))} fill={colors[typeIndex % colors.length]} rx="1.5" />
-						{@const ignored = prior.value += value}
-					{/each}
-					<text x={verticalPad.left + groupIndex * slot + slot / 2} y={verticalY(totals[groupIndex]) - 8} class="value-label" text-anchor="middle">{totals[groupIndex].toFixed(1)}</text>
-					<text x={verticalPad.left + groupIndex * slot + slot / 2} y={height - 18} class="category-label" text-anchor="middle">{compactLabel(group.label)}</text>
-				{/each}
-			{/if}
-		</svg>
-		<div class="chart-legend" aria-label="图例">
-			{#each types as type, index}<span><i style={`--legend-color:${colors[index % colors.length]}`}></i>{type}</span>{/each}
-		</div>
-	{:else}
-		<div class="chart-empty">暂无可靠分类数据</div>
-	{/if}
-</div>
+{#if labels.length && totals.some((value) => value > 0)}
+	<EChart {option} ariaLabel={`${title}，按 ${types.join('、')} 堆叠展示`} height={height / 16} />
+{:else}
+	<div class="chart-empty">暂无可靠分类数据</div>
+{/if}
 
 <style>
-	.stacked-chart { min-width: 0; }
-	svg { display: block; width: 100%; height: auto; overflow: visible; }
-	.grid-line { stroke: #e2e8f0; stroke-width: 1; }
-	.axis-label, .category-label, .value-label { font-weight: 650; }
-	.axis-label { fill: #64748b; font-size: 0.75rem; }
-	.category-label { fill: #475569; font-size: 0.75rem; }
-	.value-label { fill: #334155; font-size: 0.75rem; }
-	.chart-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.35rem 0.9rem; margin-top: 0.25rem; color: #475569; font-size: 0.75rem; line-height: 1.35; }
-	.chart-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
-	.chart-legend i { width: 0.65rem; height: 0.65rem; border-radius: 0.125rem; background: var(--legend-color); }
 	.chart-empty { display: grid; min-height: 13rem; place-items: center; color: #64748b; font-size: 0.875rem; }
 </style>
