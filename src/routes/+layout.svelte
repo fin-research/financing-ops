@@ -9,7 +9,6 @@
 		BriefcaseBusiness,
 		FileText,
 		FileSpreadsheet,
-		History,
 		LayoutDashboard,
 		LoaderCircle,
 		LogOut,
@@ -20,6 +19,7 @@
 	} from '@lucide/svelte';
 	import { roleLabel } from '$lib/roles';
 	import GlobalMessages from '$lib/GlobalMessages.svelte';
+	import { globalMessages } from '$lib/global-messages';
 
 	let { children, data } = $props();
 
@@ -83,9 +83,33 @@
 	const isLiabilityReport = () => withoutBase(page.url.pathname) === '/liability-report';
 	const enhanceReportGeneration = () => {
 		reportGenerating = true;
-		return async ({ update }: any) => {
+		return async ({ result, update }: any) => {
 			try {
-				await update({ reset: false });
+				await update({ reset: false, invalidateAll: result.type === 'success' });
+				if (result.type === 'success') {
+					globalMessages.success(String(result.data?.message ?? '周报已生成'), {
+						key: 'liability-report-generation',
+						title: '周报生成完成'
+					});
+					const missingModules = Array.isArray(result.data?.missingModules) ? result.data.missingModules : [];
+					if (missingModules.length > 0) {
+						globalMessages.warning(
+							missingModules.map((item: any) => `${item.title}：${item.detail}`).join('；'),
+							{
+								key: 'liability-report-missing-modules',
+								title: `本次周报有 ${missingModules.length} 项待核对`,
+								duration: 12000
+							}
+						);
+					}
+				} else {
+					const message = result.type === 'failure'
+						? String(result.data?.message ?? '周报生成失败，请检查后重试。')
+						: result.type === 'error' && result.error?.message
+							? result.error.message
+							: '周报生成失败，请稍后重试。';
+					globalMessages.error(message, { key: 'liability-report-generation' });
+				}
 			} finally {
 				reportGenerating = false;
 			}
@@ -168,9 +192,6 @@
 			<div class="top-actions">
 				{#if isLiabilityReport()}
 					<div class="report-header-actions" aria-label="负债周报操作">
-						<a class="header-action" href={withBase('/liability-report#history')} aria-label="历史快照" title="历史快照">
-							<History size={17} /><span class="header-action-label">历史快照</span>
-						</a>
 						<button class="header-action" type="button" onclick={() => window.print()} aria-label="导出 PDF" title="导出 PDF">
 							<Printer size={17} /><span class="header-action-label">导出 PDF</span>
 						</button>

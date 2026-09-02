@@ -46,7 +46,8 @@ async function installSchema(db, { beforeReminderMigration } = {}) {
 		'0009_liability_report_sources_and_snapshots.sql',
 		'0010_liability_report_daily_overwrite.sql',
 		'0015_income_certificate_dates_and_names.sql',
-		'0016_income_certificate_name_edge_cases.sql'
+		'0016_income_certificate_name_edge_cases.sql',
+		'0017_normalize_refinancing_name.sql'
 	]) {
 		if (name === '0008_sop_node_reminder_periods.sql' && beforeReminderMigration) {
 			await beforeReminderMigration(db);
@@ -316,6 +317,13 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 	assert.equal(new Date(certificate.maturity_date).toISOString().slice(0, 10), '2026-09-04');
 	assert.equal(new Date(certificate.subscription_date).toISOString().slice(0, 10), '2026-09-01');
 	assert.equal(new Date(certificate.redemption_date).toISOString().slice(0, 10), '2026-09-07');
+	await db.query(`INSERT INTO financing.refinancing (
+		id, debt_type, name, counterparty, amount, issue_date, maturity_date, activated_at
+	) VALUES (104, '转融资', '转融资·不应保留的对手方·2026-01-01', '测试对手方', 200000,
+		'2026-01-01', '2026-12-31', '2026-01-01')`);
+	const refinancing = (await db.query('SELECT name, counterparty FROM financing.refinancing WHERE id = 104')).rows[0];
+	assert.equal(refinancing.name, '转融资');
+	assert.equal(refinancing.counterparty, '测试对手方');
 	await db.query("INSERT INTO financing.cashflow (debt_id, cashflow_type, due_date, amount) VALUES (101, 'interest', '2026-12-31', 25)");
 	assert.equal((await db.query('SELECT sequence FROM financing.cashflow')).rows[0].sequence, 1);
 	await assert.rejects(db.query("INSERT INTO financing.cashflow (debt_id, cashflow_type, due_date, amount) VALUES (999, 'principal', '2026-12-31', 100)"), /debt does not exist/i);
@@ -339,7 +347,7 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 		['delivery-debt']
 	);
 	assert.equal(await deleteProjectWithReminders(db, 'project'), null);
-	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.debt')).rows[0].count, 3);
+	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.debt')).rows[0].count, 4);
 	await db.query('DELETE FROM financing.bond WHERE id = 101');
 	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.cashflow')).rows[0].count, 0);
 });

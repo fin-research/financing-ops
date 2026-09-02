@@ -17,6 +17,7 @@
 - `bond`、`income_certificate`、`income_right`、`refinancing`、`swap_facility` 使用 PostgreSQL 原生 `INHERITS`。
 - 同业拆借与集团借款没有有效专属字段，直接存基类。
 - `income_certificate.subscription_date` 与 `redemption_date` 分别保存认购日和兑付日；`maturity_date` 缺失时由数据库按兑付日前一工作日（周一至周五）兜底。简称使用产品名称，去除发行人全称；“吉祥/财气东来 + 序号”统一为“吉祥231号收益凭证”“财气东来1918号收益凭证”格式。
+- `refinancing.name` 由数据库触发器和约束固定为“转融资”；对手方、市场、起息日等信息不得拼入简称。
 - `total_amount = amount + interest_payable`、`term_days` 和 `status` 是 stored generated columns。
 - 负债与融资项目已解除关联；最终 schema 不应包含有效的项目外键。
 - 禁止重新引入 import 字段、外部业务键、重复类别字段、可写状态、原始 Excel 行或单元格字段。

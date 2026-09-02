@@ -58,7 +58,12 @@ export const actions = {
 				env: event.platform?.env,
 				actor: event.locals.user
 			});
-			return { success: true, reportRunId: result.id, message: `已生成 ${result.asOfDate} 周报快照` };
+			return {
+				success: true,
+				reportRunId: result.id,
+				missingModules: result.missingModules,
+				message: `已生成 ${result.asOfDate} 周报快照`
+			};
 		} catch (error: any) {
 			return fail(503, { message: `周报生成失败：${String(error?.message ?? error)}` });
 		}

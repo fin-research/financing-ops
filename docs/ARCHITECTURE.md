@@ -32,7 +32,7 @@ Local scripts → direct DATABASE_URL → Neon financing
 - `src/lib/server/reminders.js` 承载提醒候选、Resend 调用和发送日志。
 - `src/worker.ts` 在 SvelteKit fetch 入口外增加每小时 Cron；`src/lib/server/reminder-scheduler.js` 为每次调度创建并关闭一个 Hyperdrive 连接。
 - `src/lib/server/project-deletion.js` 负责项目、任务和提醒的原子删除。
-- `src/lib/server/liability-weekly-reports.js` 负责负债周报数据来源状态、显式手动生成和历史快照索引；生成 action 只调用一次 Choice CTR，利率走势由集合查询只读统一 `public.edb`。
+- `src/lib/server/liability-weekly-reports.js` 负责负债周报数据来源状态、显式手动生成和历史快照索引；生成 action 只调用一次 Choice CTR，并把缺失项返回给全局系统消息，利率走势由集合查询只读统一 `public.edb`。
 - `src/lib/server/auth.js` 与 `neon-auth-client.js` 封装 Neon Auth；业务页面不直接拼 Auth 请求。
 
 ## 数据路径
@@ -57,7 +57,7 @@ Excel / SQLite / 手工提醒脚本 → gitignored `.env.database` 直连 Neon�
 - 项目列表首屏 1 次集合查询；人员与启用 SOP 在弹窗打开时通过 `/projects/options` 1 次按需加载。
 - 提醒历史使用三字段 keyset 游标，每批最多 50 条，加载更多不重复全量汇总。
 - 负债周报首屏使用 1 次负债/快照/现金流/项目集合查询和 1 次额度集合查询；查询同时返回快照与明细勾稽状态，前端不自行重算业务口径。
-- 负债周报生成不是页面 load 或 Cron 的副作用：页面和生成动作都从 `public.edb` 读取利率序列，只有用户确认点击后才读取一次 Choice CTR。完整报告 JSON 写入现有 `eastmoney` R2 桶的 `liability-report/yyyy-mm-dd.json` 固定 key；同一日重新生成会覆盖该对象和对应索引行，Neon `liability_weekly_report_runs` 保存基准日、来源清单、缺失模块和内容哈希；历史页只读 R2 快照。`public.edb` 的增量写入由 dashboard 每日定时 Workflow 统一负责，financing Worker 不建立第二套 EDB 调度。
+- 负债周报生成不是页面 load 或 Cron 的副作用：页面和生成动作都从 `public.edb` 读取利率序列，只有用户确认点击后才读取一次 Choice CTR。完整报告 JSON 写入现有 `eastmoney` R2 桶的 `liability-report/yyyy-mm-dd.json` 固定 key；同一日重新生成会覆盖该对象和对应索引行，Neon `liability_weekly_report_runs` 保存基准日、来源清单、缺失模块和内容哈希；页眉历史日期选择框只读 R2 快照，生成 action 返回缺失模块供全局系统消息提示。`public.edb` 的增量写入由 dashboard 每日定时 Workflow 统一负责，financing Worker 不建立第二套 EDB 调度。
 
 增加查询时必须说明请求级 SQL 次数是否变化，并更新网络效率测试。
 

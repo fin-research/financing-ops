@@ -15,35 +15,54 @@
 		maxLabel: string;
 	} = $props();
 
-	const safeValue = $derived(value == null || !Number.isFinite(Number(value)) ? 0 : Math.max(0, Number(value)));
-	const tone = $derived(value == null ? '#94a3b8' : safeValue >= limit ? '#dc2626' : safeValue >= warning ? '#d97706' : '#059669');
-	const display = $derived(value == null ? '缺失' : `${safeValue.toFixed(1)}%`);
+	const hasValue = $derived(value != null && Number.isFinite(Number(value)));
+	const safeValue = $derived(hasValue ? Math.max(0, Number(value)) : 0);
+	const tone = $derived(!hasValue ? '#64748b' : safeValue >= limit ? '#dc2626' : safeValue >= warning ? '#d97706' : '#059669');
+	const stateLabel = $derived(!hasValue ? '待配置' : safeValue >= limit ? '超上限' : safeValue >= warning ? '需关注' : '安全');
+	const display = $derived(hasValue ? `${safeValue.toFixed(1)}%` : '—');
+	const chartMax = $derived(Math.max(limit * 1.2, safeValue * 1.08, 1));
 	const option = $derived({
 		aria: { enabled: true },
+		tooltip: {
+			trigger: 'item',
+			formatter: `${label}<br/>当前：${display}<br/>预警：${warning.toFixed(1)}% ｜ 上限：${maxLabel}`
+		},
 		series: [{
 			type: 'gauge',
-			startAngle: 180,
-			endAngle: 0,
-			center: ['50%', '70%'],
-			radius: '92%',
+			startAngle: 215,
+			endAngle: -35,
+			center: ['50%', '56%'],
+			radius: '88%',
 			min: 0,
-			max: limit,
-			progress: { show: true, width: 12, roundCap: true, itemStyle: { color: tone } },
-			axisLine: { roundCap: true, lineStyle: { width: 12, color: [[1, '#e8edf4']] } },
+			max: chartMax,
+			progress: { show: hasValue, width: 14, roundCap: true, itemStyle: { color: tone } },
+			axisLine: {
+				roundCap: true,
+				lineStyle: {
+					width: 14,
+					color: [
+						[Math.min(warning / chartMax, 1), '#d7f4e9'],
+						[Math.min(limit / chartMax, 1), '#fcecc8'],
+						[1, '#f8d9dc']
+					]
+				}
+			},
 			axisTick: { show: false },
 			splitLine: { show: false },
-			axisLabel: {
-				distance: -34,
-				color: '#94a3b8',
-				fontSize: 10,
-				formatter: (axisValue: number) => axisValue === 0 ? '0' : axisValue === limit ? maxLabel : ''
-			},
+			axisLabel: { show: false },
 			pointer: { show: false },
 			anchor: { show: false },
-			detail: { valueAnimation: true, offsetCenter: [0, '-4%'], color: tone, fontSize: 18, fontWeight: 750, formatter: display },
-			data: [{ value: Math.min(safeValue, limit) }]
+			detail: {
+				valueAnimation: true,
+				offsetCenter: [0, '2%'],
+				color: '#163553',
+				fontSize: 20,
+				fontWeight: 800,
+				formatter: display
+			},
+			data: [{ value: safeValue, name: stateLabel }]
 		}]
 	});
 </script>
 
-<EChart {option} ariaLabel={`${label}，当前 ${display}，上限 ${maxLabel}`} height={6.6} />
+<EChart {option} ariaLabel={`${label}，当前 ${display}，状态 ${stateLabel}，预警 ${warning}% ，上限 ${maxLabel}`} height={6.8} />

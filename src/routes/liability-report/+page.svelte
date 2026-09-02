@@ -11,7 +11,6 @@
 
 	let { data } = $props();
 	let report = $derived(data.report);
-	let missingModules = $derived((report.provenance?.missingModules ?? []) as any[]);
 	let currentEvents = $derived(report.events.filter((item: any) => item.week === 'current' && isDynamicEvent(item)));
 	let nextEvents = $derived(report.events.filter((item: any) => item.week === 'next' && isDynamicEvent(item)));
 	let dynamicProjects = $derived(report.projects.filter((item: any) => !['同业拆借', '浮动收益凭证'].includes(String(item.debtType ?? ''))));
@@ -73,13 +72,42 @@
 	function projectRate(project: any) { if (project.expectedRateMin == null || project.expectedRateMax == null) return '数据缺失'; const min = amount(Number(project.expectedRateMin) * 100, 2); const max = amount(Number(project.expectedRateMax) * 100, 2); const interval = min === max ? `${min}%` : `${min}%–${max}%`; return project.fundingCostRate == null ? interval : `${interval}（资金成本 ${amount(Number(project.fundingCostRate) * 100, 2)}%）`; }
 	function quotaPercent(issued: number | null | undefined, limit: number | null | undefined) { return limit ? Number(issued ?? 0) / Number(limit) * 100 : null; }
 	function marketRows(category: string) { return (report.marketHistory ?? []).filter((item: any) => item.category === category); }
+	function submitHistorySelection(event: Event) { (event.currentTarget as HTMLSelectElement).form?.requestSubmit(); }
+	function gaugeState(value: number | null | undefined, warning: number, limit: number) {
+		if (value == null || !Number.isFinite(Number(value))) return { key: 'missing', label: '待配置' };
+		if (Number(value) >= limit) return { key: 'danger', label: '超上限' };
+		if (Number(value) >= warning) return { key: 'warning', label: '需关注' };
+		return { key: 'safe', label: '安全' };
+	}
 </script>
 
 <svelte:head><title>东方财富证券 · 资金管理部负债周报</title></svelte:head>
 
-<header class="bento-header"><h1>东方财富证券 · 资金管理部负债周报</h1><div class="header-meta-row"><div class="report-period"><span>报表日期：{headerDate(report.asOfDate)}</span><span>编制：资金管理部 融资组</span></div></div></header>
+<header class="bento-header">
+	<h1>东方财富证券 · 资金管理部负债周报</h1>
+	<div class="header-meta-row">
+		<form class="history-picker" method="GET">
+			<label for="report-history-date">历史日期</label>
+			<select
+				id="report-history-date"
+				name="run"
+				value={data.selectedRunId ?? ''}
+				disabled={(data.reportHistory ?? []).length === 0}
+				onchange={submitHistorySelection}
+			>
+				{#each data.reportHistory ?? [] as run}
+					<option value={run.id}>{headerDate(run.asOfDate)}</option>
+				{:else}
+					<option value="">暂无历史周报</option>
+				{/each}
+			</select>
+		</form>
+		<div class="report-period"><span>报表日期：{headerDate(report.asOfDate)}</span><span>编制：资金管理部 融资组</span></div>
+	</div>
+</header>
 
-<div class="report-facts" aria-label="数据口径与来源状态"><span><b>数据基准日</b>{dateLabel(report.asOfDate)}</span><span><b>数据滞后</b>{report.staleDays}天</span><span><b>明细勾稽差额</b>{signed(report.quality.reconciliationDeltaYi, 4)}亿元</span><span class:fact-warning={missingModules.length > 0}><b>来源状态</b>{missingModules.length ? `${missingModules.length} 项待核对` : '已核对'}</span></div>
+<div class="report-facts" aria-label="数据口径"><span><b>数据基准日</b>{dateLabel(report.asOfDate)}</span><span><b>数据滞后</b>{report.staleDays}天</span><span><b>明细勾稽差额</b>{signed(report.quality.reconciliationDeltaYi, 4)}亿元</span></div>
+{#if data.snapshotError}<p class="snapshot-error" role="alert">{data.snapshotError}</p>{/if}
 
 <section class="report-section" aria-labelledby="section-1-title">
 	<div class="card-head"><div class="section-title-wrap"><span class="section-tag">第一部分</span><h2 id="section-1-title" class="section-title">近期负债发行与到期动态</h2></div></div>
@@ -88,8 +116,19 @@
 
 <section class="report-section" aria-labelledby="section-2-title">
 	<div class="card-head"><div class="section-title-wrap"><span class="section-tag">第二部分</span><h2 id="section-2-title" class="section-title">负债核心数据总览与指标监控</h2></div></div>
-	<div class="core-panel"><div class="p1-grid"><div class="p1card accent-cyan"><div class="p1tag">资产负债规模</div><div class="dual-value"><span>总资产</span><strong>{amount(report.parameters.total_assets?.valueYi)}<em>亿元</em></strong></div><div class="dual-value"><span>总负债</span><strong>{amount(report.parameters.total_liabilities?.valueYi)}<em>亿元</em></strong></div><div class="p1sub">{dateLabel(report.parameters.total_assets?.periodEnd)}口径</div></div><div class="p1card"><div class="p1tag">主动负债余额</div><div class="p1num">{amount(report.metrics.balanceYi)}<em>亿元</em></div><div class="p1sub">较上月末 <b>{signed(report.metrics.balanceMonthChangeYi)}</b> 亿元<br />较上年末 <b>{signed(report.metrics.balanceYearChangeYi)}</b> 亿元</div></div><div class="p1card accent-cyan"><div class="p1tag">资产负债率</div><div class="p1num">{report.parameters.adjusted_asset_liability_ratio?.valueYi == null ? '数据缺失' : percent(report.parameters.adjusted_asset_liability_ratio.valueYi * 100, 2)}</div><div class="p1sub">扣代理买卖<br />{dateLabel(report.parameters.adjusted_asset_liability_ratio?.periodEnd)}口径</div></div><div class="p1card accent-amber"><div class="p1tag">加权融资利率</div><div class="p1num">{report.metrics.weightedRatePct == null ? '数据缺失' : `${amount(report.metrics.weightedRatePct, 2)}%`}</div><div class="p1sub">较上月末 <b>{signed(report.metrics.weightedRateMonthBp, 1)}</b> bp<br />金额覆盖 {amount(report.quality.rateCoveragePct, 1)}%</div></div><div class="p1card accent-amber"><div class="p1tag">加权剩余期限</div><div class="p1num">{#if report.metrics.weightedRemainingDays == null}数据缺失{:else}{amount(report.metrics.weightedRemainingDays, 0)}<em>天</em>{/if}</div><div class="p1sub">起息与到期字段覆盖 {amount(report.quality.lifecycleCoveragePct, 1)}%</div></div><div class="p1card accent-amber"><div class="p1tag">长期负债占比</div><div class="p1num">{percent(report.metrics.longBalanceRatio)}</div><div class="p1sub">发行期限口径<br />长期 <b>{amount(report.metrics.longBalanceYi, 0)}</b> 亿元、短期 <b>{amount(report.metrics.shortBalanceYi, 0)}</b> 亿元</div></div><div class="p1card accent-red"><div class="p1tag">未来30天到期</div><div class="p1num danger">{amount(report.metrics.due30Yi)}<em>亿元</em></div><div class="p1sub">统计日后 1–30 天到期规模<br />不含同业拆借及浮动收益凭证</div></div><div class="p1card accent-red"><div class="p1tag">年内到期</div><div class="p1num danger">{amount(report.metrics.dueYearYi)}<em>亿元</em></div><div class="p1sub">到期日 ≤ 当年12月31日<br />占主动负债 {report.metrics.balanceYi ? percent(report.metrics.dueYearYi / report.metrics.balanceYi * 100, 1) : '数据缺失'}</div></div></div></div>
-	<div class="p1-gauge-row">{#each [{ label: '（短融+短期公司债+同业拆借）/上月末净资本', value: report.metrics.shortCompanyDebtRatio, numerator: report.metrics.shortCompanyDebtYi, denominator: report.parameters.prior_month_net_capital?.valueYi, warning: 48, limit: 60, maxLabel: '60%' }, { label: '发行期限1年以内短期负债 / 净资本', value: report.metrics.shortDebtRatio, numerator: report.metrics.shortDebtYi, denominator: report.parameters.prior_month_net_capital?.valueYi, warning: 80, limit: 100, maxLabel: '100%' }, { label: '新增单笔借款 / 证券上年末净资产', value: report.metrics.largestBorrowingRatio, numerator: report.metrics.largestBorrowingYi, denominator: report.parameters.securities_prior_year_net_assets?.valueYi, warning: 16, limit: 20, maxLabel: '20%' }, { label: '月末累计新增借款 / 证券上年末净资产', value: report.metrics.cumulativeSecuritiesRatio, numerator: report.metrics.cumulativeBorrowingYi, denominator: report.parameters.securities_prior_year_net_assets?.valueYi, warning: 40, limit: 50, maxLabel: '50%' }, { label: '月末累计新增借款 / 集团上年末净资产', value: report.metrics.cumulativeGroupRatio, numerator: report.metrics.cumulativeBorrowingYi, denominator: report.parameters.group_prior_year_net_assets?.valueYi, warning: 8, limit: 10, maxLabel: '10%' }] as gauge}<div class="p1gauge"><ReportGaugeChart label={gauge.label} value={gauge.value} warning={gauge.warning} limit={gauge.limit} maxLabel={gauge.maxLabel} /><div class="p1gauge-t">{gauge.label}</div><div class="p1gauge-s"><b>{numberOrDash(gauge.numerator)}</b> / {numberOrDash(gauge.denominator)} 亿元</div><div class="p1gauge-warn">上限 {gauge.maxLabel}</div></div>{/each}</div>
+	<div class="core-panel"><div class="p1-grid"><div class="p1card accent-cyan"><div class="p1tag">资产负债规模</div><div class="dual-value"><span>总资产</span><strong>{amount(report.parameters.total_assets?.valueYi)}<em>亿元</em></strong></div><div class="dual-value"><span>总负债</span><strong>{amount(report.parameters.total_liabilities?.valueYi)}<em>亿元</em></strong></div><div class="p1sub">{dateLabel(report.parameters.total_assets?.periodEnd)}口径</div></div><div class="p1card"><div class="p1tag">主动负债余额</div><div class="p1num">{amount(report.metrics.balanceYi)}<em>亿元</em></div><div class="p1sub">较上月末 <b>{signed(report.metrics.balanceMonthChangeYi)}</b> 亿元<br />较上年末 <b>{signed(report.metrics.balanceYearChangeYi)}</b> 亿元</div></div><div class="p1card accent-cyan"><div class="p1tag">资产负债率</div><div class="p1num">{report.parameters.adjusted_asset_liability_ratio?.valueYi == null ? '数据缺失' : percent(report.parameters.adjusted_asset_liability_ratio.valueYi * 100, 2)}</div><div class="p1sub">扣代理买卖<br />{dateLabel(report.parameters.adjusted_asset_liability_ratio?.periodEnd)}口径</div></div><div class="p1card accent-amber"><div class="p1tag">加权融资利率</div><div class="p1num">{report.metrics.weightedRatePct == null ? '数据缺失' : `${amount(report.metrics.weightedRatePct, 2)}%`}</div><div class="p1sub">较上月末 <b>{signed(report.metrics.weightedRateMonthBp, 1)}</b> bp<br />金额覆盖 {amount(report.quality.rateCoveragePct, 1)}%</div></div><div class="p1card accent-amber"><div class="p1tag">加权剩余期限</div><div class="p1num">{#if report.metrics.weightedRemainingDays == null}数据缺失{:else}{amount(report.metrics.weightedRemainingDays, 0)}<em>天</em>{/if}</div><div class="p1sub">起息与到期字段覆盖 {amount(report.quality.lifecycleCoveragePct, 1)}%</div></div><div class="p1card accent-amber"><div class="p1tag">长期负债占比</div><div class="p1num">{percent(report.metrics.longBalanceRatio)}</div><div class="p1sub">发行期限口径<br />长期 <b>{amount(report.metrics.longBalanceYi, 0)}</b> 亿元、短期 <b>{amount(report.metrics.shortBalanceYi, 0)}</b> 亿元</div></div><div class="p1card accent-red"><div class="p1tag">未来30天到期</div><div class="p1num danger">{amount(report.metrics.due30Yi)}<em>亿元</em></div><div class="p1sub">全量负债，含已安排未发行<br />统计日后 1–30 天到期规模</div></div><div class="p1card accent-red"><div class="p1tag">年内到期</div><div class="p1num danger">{amount(report.metrics.dueYearYi)}<em>亿元</em></div><div class="p1sub">全量负债，含已安排未发行<br />到期日 ≤ 当年12月31日</div></div></div></div>
+	<div class="p1-gauge-row">
+		{#each [{ label: '（短融+短期公司债+同业拆借）/上月末净资本', value: report.metrics.shortCompanyDebtRatio, numerator: report.metrics.shortCompanyDebtYi, denominator: report.parameters.prior_month_net_capital?.valueYi, warning: 48, limit: 60, maxLabel: '60%' }, { label: '发行期限1年以内短期负债 / 净资本', value: report.metrics.shortDebtRatio, numerator: report.metrics.shortDebtYi, denominator: report.parameters.prior_month_net_capital?.valueYi, warning: 80, limit: 100, maxLabel: '100%' }, { label: '新增单笔借款 / 证券上年末净资产', value: report.metrics.largestBorrowingRatio, numerator: report.metrics.largestBorrowingYi, denominator: report.parameters.securities_prior_year_net_assets?.valueYi, warning: 16, limit: 20, maxLabel: '20%' }, { label: '月末累计新增借款 / 证券上年末净资产', value: report.metrics.cumulativeSecuritiesRatio, numerator: report.metrics.cumulativeBorrowingYi, denominator: report.parameters.securities_prior_year_net_assets?.valueYi, warning: 40, limit: 50, maxLabel: '50%' }, { label: '月末累计新增借款 / 集团上年末净资产', value: report.metrics.cumulativeGroupRatio, numerator: report.metrics.cumulativeBorrowingYi, denominator: report.parameters.group_prior_year_net_assets?.valueYi, warning: 8, limit: 10, maxLabel: '10%' }] as gauge}
+			{@const state = gaugeState(gauge.value, gauge.warning, gauge.limit)}
+			<div class={`p1gauge gauge-${state.key}`}>
+				<div class="p1gauge-head"><span>监管监控</span><strong>{state.label}</strong></div>
+				<div class="p1gauge-t">{gauge.label}</div>
+				<ReportGaugeChart label={gauge.label} value={gauge.value} warning={gauge.warning} limit={gauge.limit} maxLabel={gauge.maxLabel} />
+				<div class="p1gauge-s"><b>{numberOrDash(gauge.numerator)}</b><span>/ {numberOrDash(gauge.denominator)} 亿元</span></div>
+				<div class="p1gauge-warn"><span>预警 {gauge.warning}%</span><b>上限 {gauge.maxLabel}</b></div>
+			</div>
+		{/each}
+	</div>
 </section>
 
 <section class="report-section" aria-labelledby="section-3-title">
@@ -117,8 +156,4 @@
 	</div>
 </section>
 
-<section class="report-section" aria-labelledby="section-7-title"><div class="card-head"><div class="section-title-wrap"><span class="section-tag">第七部分</span><h2 id="section-7-title" class="section-title">利率走势看板</h2></div><span class="badge-tag">数据源：public.edb ｜ 每日更新</span></div><div class="chart-container large-chart"><h3>{String(report.asOfDate).slice(0, 4)}年中债证券公司债（AAA-）期限利率走势</h3><ReportLineChart title="中债证券公司债AAA-期限利率走势" rows={marketRows('chinabond_broker_aaa_minus_yield')} height={330} /></div><div class="rate-grid">{#each marketCategories as category}<div class="chart-container rate-card"><h3>{String(report.asOfDate).slice(0, 4)}年{category.title}</h3><ReportLineChart title={category.title} rows={marketRows(category.key)} height={250} compact /></div>{/each}</div></section>
-
-<section class="report-appendix" aria-labelledby="source-status-title"><div class="card-head"><div class="section-title-wrap"><span class="section-tag">数据</span><h2 id="source-status-title" class="section-title">数据缺失与来源状态</h2></div><span class="badge-tag">{missingModules.length} 项</span></div>{#if data.snapshotError}<p class="snapshot-error" role="alert">{data.snapshotError}</p>{/if}<div class="missing-grid">{#each missingModules as item}<article><span class="missing-mark" aria-hidden="true">!</span><div><strong>{item.title}</strong><p>{item.detail}</p></div></article>{:else}<article class="data-ok"><span class="missing-mark" aria-hidden="true">✓</span><div><strong>当前快照未发现数据缺失</strong><p>生产参数、public.edb 定时同步数据与本次手动 Choice CTR 均有记录。</p></div></article>{/each}</div></section>
-
-<section class="report-appendix" id="history" aria-labelledby="history-title"><div class="card-head"><div class="section-title-wrap"><span class="section-tag">回溯</span><h2 id="history-title" class="section-title">历史周报快照</h2></div><span class="badge-tag">R2 / 数据库索引</span></div><div class="history-grid">{#each data.reportHistory ?? [] as run}<a class:current={run.id === data.selectedRunId} href={`?run=${encodeURIComponent(run.id)}`}><strong>{dateLabel(run.asOfDate)}</strong><span>生成于 {dateLabel(String(run.generatedAt).slice(0, 10))}</span><em>{run.missingModules?.length ? `待核对 ${run.missingModules.length} 项` : '数据齐全'}</em></a>{:else}<p class="table-empty">尚未生成历史快照。</p>{/each}</div></section>
+<section class="report-section" aria-labelledby="section-7-title"><div class="card-head"><div class="section-title-wrap"><span class="section-tag">第七部分</span><h2 id="section-7-title" class="section-title">利率走势看板</h2></div></div><div class="chart-container large-chart"><h3>{String(report.asOfDate).slice(0, 4)}年中债证券公司债（AAA-）期限利率走势</h3><ReportLineChart title="中债证券公司债AAA-期限利率走势" rows={marketRows('chinabond_broker_aaa_minus_yield')} height={330} /></div><div class="rate-grid">{#each marketCategories as category}<div class="chart-container rate-card"><h3>{String(report.asOfDate).slice(0, 4)}年{category.title}</h3><ReportLineChart title={category.title} rows={marketRows(category.key)} height={250} compact /></div>{/each}</div></section>

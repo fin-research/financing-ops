@@ -18,6 +18,7 @@
 ## Mutation
 
 - action 负责输入解析、业务校验、权限和事务调用。
+- 负债周报 `generate` action 成功时返回快照 ID、报告基准日对应的成功文案和缺失模块清单；全局顶栏据此分别显示生成结果与待核对系统消息。
 - 写权限精确到 named action：`reviewer` 仅开放人员主档、项目和 SOP 的创建 action；所有启用角色的本人任务 action 只接收 `taskId` 与 `status`，并在查询和更新时双重校验 `assignee_id`。
 - 成功响应只返回一个新增/更新实体或删除 ID；浏览器就地合并。
 - 禁止在 action 成功后返回当前页面完整列表，禁止前端 `invalidateAll`。

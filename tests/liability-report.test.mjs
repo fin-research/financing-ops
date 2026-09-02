@@ -41,7 +41,6 @@ test('Choice CTR failures are retried without adding another logical request', a
 
 test('weekly page renders the complete report directly in the workspace', () => {
 	const source = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
-	assert.match(source, /数据缺失与来源状态/);
 	assert.match(source, /近期负债发行与到期动态/);
 	assert.match(source, /负债核心数据总览与指标监控/);
 	assert.match(source, /融资额度及余额情况/);
@@ -72,15 +71,20 @@ test('weekly page renders the complete report directly in the workspace', () => 
 	assert.doesNotMatch(source, /近期动态口径/);
 	assert.doesNotMatch(source, /详见第七部分/);
 	assert.doesNotMatch(source, /生成本期周报/);
+	assert.doesNotMatch(source, /数据缺失与来源状态|数据源：public\.edb ｜ 每日更新|历史周报快照/);
 	assert.equal((source.match(/class="report-section"/g) ?? []).length, 7);
 });
 
-test('weekly report controls live in the application header', () => {
+test('weekly report actions stay in the application header and history moves to a page-header select', () => {
 	const layout = fs.readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8');
+	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	assert.match(layout, /report-header-actions/);
 	assert.match(layout, /生成本期周报/);
 	assert.match(layout, /window\.print\(\)/);
-	assert.match(layout, /liability-report#history/);
+	assert.doesNotMatch(layout, /liability-report#history|历史快照/);
+	assert.match(page, /class="history-picker"/);
+	assert.match(page, /<label for="report-history-date">历史日期<\/label>/);
+	assert.match(page, /<select[\s\S]*name="run"[\s\S]*data\.reportHistory/);
 });
 
 test('weekly report query supplies every chart data contract', () => {
@@ -96,30 +100,57 @@ test('weekly report query supplies every chart data contract', () => {
 	assert.doesNotMatch(queries.slice(queries.indexOf('export async function getLiabilityWeeklyReportData'), queries.indexOf('export async function getProjectGanttData')), /FROM liability_market_observations/);
 });
 
-test('recent liability dynamics exclude interbank borrowing and floating income certificates', () => {
+test('recent liability dynamics keep the agreed weekly exclusions while plans remain separate', () => {
 	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
-	const eventRows = queries.slice(queries.indexOf('), event_rows AS'), queries.indexOf('), due_detail AS'));
-	assert.match(eventRows, /NOT IN \('同业拆借', '浮动收益凭证'\)/g);
+	const eventRows = queries.slice(queries.indexOf('), event_rows AS'), queries.indexOf('), due_detail_rows AS'));
+	assert.equal((eventRows.match(/NOT IN \('同业拆借', '浮动收益凭证'\)/g) ?? []).length, 3);
 	assert.doesNotMatch(eventRows, /SELECT 'project'|project\.planned_issue_date/);
 	assert.match(eventRows, /certificate\.subscription_date/);
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	assert.doesNotMatch(page, /sumEvents\(group\.items, \['issue', 'project'\]\)/);
-	assert.match(page, /dynamicProjects = \$derived/);
+	assert.match(page, /isDynamicEvent/);
 	assert.match(page, /dynamicProjects as project/);
 });
 
-test('future 30-day maturity metric and details exclude interbank borrowing and floating income certificates', () => {
+test('core maturity metrics include all arranged debt while only 30-day details apply exclusions', () => {
 	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
 	const weeklyQuery = queries.slice(queries.indexOf('export async function getLiabilityWeeklyReportData'), queries.indexOf('export async function getProjectGanttData'));
-	const liveMetrics = weeklyQuery.slice(weeklyQuery.indexOf('), live_metrics AS'), weeklyQuery.indexOf('), largest_borrowing AS'));
+	const scheduledMetrics = weeklyQuery.slice(weeklyQuery.indexOf('), scheduled_maturity_metrics AS'), weeklyQuery.indexOf('), largest_borrowing AS'));
 	const dueDetails = weeklyQuery.slice(weeklyQuery.indexOf('), due_detail_rows AS'), weeklyQuery.indexOf('), due_detail AS'));
-	assert.match(liveMetrics, /NOT IN \('同业拆借', '浮动收益凭证'\)[\s\S]*AS due_30_yi/);
+	assert.match(scheduledMetrics, /FROM debt d CROSS JOIN latest/);
+	assert.match(scheduledMetrics, /AS due_30_yi/);
+	assert.match(scheduledMetrics, /AS due_year_yi/);
+	assert.doesNotMatch(scheduledMetrics, /issue_date|NOT IN \('同业拆借', '浮动收益凭证'\)/);
+	assert.match(dueDetails, /FROM debt d CROSS JOIN latest/);
 	assert.equal((dueDetails.match(/NOT IN \('同业拆借', '浮动收益凭证'\)/g) ?? []).length, 1);
 	assert.doesNotMatch(dueDetails, /cashflow_type = 'interest'|-利息/);
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
-	assert.match(page, /不含同业拆借及浮动收益凭证/);
+	assert.match(page, /全量负债，含已安排未发行/);
+	assert.equal((page.match(/全量负债，含已安排未发行/g) ?? []).length, 2);
 	assert.match(page, /仅列负债本金到期/);
+	assert.match(page, /不含同业拆借及浮动收益凭证/);
 	assert.doesNotMatch(page, /付息\/到期日|未来30天无到期或付息明细/);
+});
+
+test('generation publishes missing-data reminders through global system messages', () => {
+	const layout = fs.readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8');
+	const server = fs.readFileSync(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8');
+	assert.match(layout, /globalMessages\.warning\(/);
+	assert.match(layout, /liability-report-missing-modules/);
+	assert.match(layout, /本次周报有 \$\{missingModules\.length\} 项待核对/);
+	assert.match(server, /missingModules: result\.missingModules/);
+});
+
+test('monitoring gauges use polished ECharts status arcs without texture', () => {
+	const chart = fs.readFileSync(new URL('../src/routes/liability-report/ReportGaugeChart.svelte', import.meta.url), 'utf8');
+	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
+	assert.match(chart, /type: 'gauge'/);
+	assert.match(chart, /progress: \{ show: hasValue, width: 14, roundCap: true/);
+	assert.match(chart, /stateLabel/);
+	assert.match(chart, /tooltip:/);
+	assert.doesNotMatch(chart, /decal|LinearGradient|RadialGradient/);
+	assert.match(page, /gaugeState\(/);
+	assert.match(page, /监管监控/);
 });
 
 test('weekly peer tables follow the installation-package weekly filters and coupon field', () => {

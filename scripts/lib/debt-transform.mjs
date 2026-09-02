@@ -113,7 +113,7 @@ function displayName({ oldType, instrumentName, instrumentCode, counterparty, is
 		return text(value(main, '期数')) ?? instrumentName ?? `收益权·${issueDate ?? '未定期'}`;
 	}
 	if (oldType === '同业拆借') return `同业拆借·${counterparty ?? '未登记对手'}·${issueDate ?? '未定期'}`;
-	if (oldType === '转融资') return `转融资·${counterparty ?? text(value(main, '市场')) ?? '未登记对手'}·${issueDate ?? '未定期'}`;
+	if (oldType === '转融资') return '转融资';
 	if (oldType === '集团借款') return `集团借款·${text(value(main, '借款对象')) ?? counterparty ?? '未登记对手'}·${issueDate ?? '未定期'}`;
 	if (oldType === '互换便利') return `互换便利·${issueDate ?? date(value(main, '首次正回购日期')) ?? '未定期'}`;
 	return instrumentName ?? instrumentCode ?? `${oldType}·${issueDate ?? '未定期'}`;

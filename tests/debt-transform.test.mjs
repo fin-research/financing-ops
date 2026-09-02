@@ -46,3 +46,19 @@ test('income-certificate transform keeps subscription and redemption dates and f
 	assert.equal(debt.extension.subscriptionDate, '2025-10-14');
 	assert.equal(debt.extension.redemptionDate, '2026-04-14');
 });
+
+test('refinancing transform keeps the canonical short name without counterparty or date', () => {
+	const parsed = {
+		definitions: [],
+		debts: [[
+			2, 'refinancing-1', '转融资', '转融资', null,
+			null, null, null, '中国证券金融股份有限公司',
+			100000000, 100000000, 'CNY', 0.018, '2026-01-06', '2026-07-06', 'active'
+		]],
+		recordGroups: [['refinancing-1', []]],
+		cashflows: [], balances: [], snapshot: { asOfDate: '2026-08-31', totalYi: 0 }
+	};
+	const [debt] = transformWorkbook(parsed).debts;
+	assert.equal(debt.name, '转融资');
+	assert.equal(debt.counterparty, '中国证券金融股份有限公司');
+});

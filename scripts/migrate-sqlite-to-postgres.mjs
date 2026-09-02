@@ -155,7 +155,7 @@ function makeDebtRows(idByOldId) {
 			: source.debt_type === '收益凭证' ? normalizeIncomeCertificateName(details?.product_name || source.instrument_name || details?.series_name)
 				: source.debt_type === '收益权转让' ? details?.period_label
 					: source.debt_type === '同业拆借' ? `同业拆借·${counterparty || '未登记对手'}·${source.issue_date || '未定期'}`
-						: source.debt_type === '转融资' ? `转融资·${counterparty || details?.market || '未登记对手'}·${source.issue_date || '未定期'}`
+						: source.debt_type === '转融资' ? '转融资'
 							: source.debt_type === '集团借款' ? `集团借款·${counterparty || '未登记对手'}·${source.issue_date || '未定期'}`
 								: source.debt_type === '互换便利' ? `互换便利·${details?.first_repo_date || source.issue_date || '未定期'}`
 									: source.instrument_name;

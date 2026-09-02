@@ -322,14 +322,6 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				COALESCE(SUM(amount) FILTER (WHERE term_days > 365), 0) / 100000000.0 AS long_balance_yi,
 				COALESCE(SUM(amount) FILTER (WHERE term_days <= 365), 0) / 100000000.0 AS short_balance_yi,
 				COALESCE(SUM(amount) FILTER (
-					WHERE maturity_date > latest.as_of_date AND maturity_date <= latest.as_of_date + 30
-						AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
-				), 0) / 100000000.0 AS due_30_yi,
-				COALESCE(SUM(amount) FILTER (
-					WHERE maturity_date > latest.as_of_date
-						AND maturity_date <= make_date(EXTRACT(YEAR FROM latest.as_of_date)::integer, 12, 31)
-				), 0) / 100000000.0 AS due_year_yi,
-				COALESCE(SUM(amount) FILTER (
 					WHERE ${REPORTING_TYPE_SQL()} IN ('短期融资券', '同业拆借')
 						OR (d.debt_type = '债券' AND d.term_days <= 365)
 				), 0) / 100000000.0 AS short_company_debt_yi,
@@ -339,6 +331,18 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				COALESCE(SUM(amount) FILTER (WHERE issue_date IS NOT NULL AND maturity_date IS NOT NULL), 0)
 					/ NULLIF(SUM(amount), 0) AS lifecycle_coverage
 			FROM current_debt d CROSS JOIN latest
+		), scheduled_maturity_metrics AS (
+			SELECT COALESCE(SUM(d.amount) FILTER (
+					WHERE d.maturity_date <= latest.as_of_date + 30
+				), 0) / 100000000.0 AS due_30_yi,
+				COALESCE(SUM(d.amount) FILTER (
+					WHERE d.maturity_date <= make_date(EXTRACT(YEAR FROM latest.as_of_date)::integer, 12, 31)
+				), 0) / 100000000.0 AS due_year_yi
+			FROM debt d CROSS JOIN latest
+			WHERE d.maturity_date > latest.as_of_date
+				AND d.amount > 0
+				AND (d.settled_at IS NULL OR d.settled_at > latest.as_of_date)
+				AND (d.closed_at IS NULL OR d.closed_at > latest.as_of_date)
 		), largest_borrowing AS (
 			SELECT COALESCE(MAX(d.amount), 0) / 100000000.0 AS amount_yi
 			FROM debt d CROSS JOIN latest
@@ -459,8 +463,11 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				d.amount / 100000000.0 AS principal_yi,
 				d.interest_payable / 100000000.0 AS interest_yi,
 				d.annual_rate, d.maturity_date AS due_date
-			FROM current_debt d CROSS JOIN latest
+			FROM debt d CROSS JOIN latest
 			WHERE d.maturity_date > latest.as_of_date AND d.maturity_date <= latest.as_of_date + 30
+				AND d.amount > 0
+				AND (d.settled_at IS NULL OR d.settled_at > latest.as_of_date)
+				AND (d.closed_at IS NULL OR d.closed_at > latest.as_of_date)
 				AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
 		), due_detail AS (
 			SELECT * FROM due_detail_rows
@@ -567,7 +574,8 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			live_metrics.weighted_days AS weightedDays,
 			live_metrics.long_balance_yi AS longBalanceYi,
 			live_metrics.short_balance_yi AS shortBalanceYi,
-			live_metrics.due_30_yi AS due30Yi, live_metrics.due_year_yi AS dueYearYi,
+			scheduled_maturity_metrics.due_30_yi AS due30Yi,
+			scheduled_maturity_metrics.due_year_yi AS dueYearYi,
 			live_metrics.short_company_debt_yi AS shortCompanyDebtYi,
 			live_metrics.short_debt_yi AS shortDebtYi,
 			live_metrics.rate_coverage AS rateCoverage,
@@ -629,7 +637,7 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				'variety', variety, 'amountYi', amount_yi, 'updateDate', update_date,
 				'noticeNumber', notice_number, 'leadUnderwriter', lead_underwriter, 'venue', venue
 			) ORDER BY update_date DESC, project_name) FROM registration_progress), '[]'::jsonb) AS registrationProgress
-		FROM latest CROSS JOIN args CROSS JOIN live_metrics
+		FROM latest CROSS JOIN args CROSS JOIN live_metrics CROSS JOIN scheduled_maturity_metrics
 	`).get(today);
 
 	const limitData = await getDebtLimitSummary(database);
