@@ -129,3 +129,15 @@ test('project KPI follows dashboard types while the project table remains comple
 	assert.match(page, /projectTableAmountYi = \$derived\(dashboard\.projects\.reduce/);
 	assert.match(page, /\{projectTableAmountYi\.toFixed\(2\)\}/);
 });
+
+test('dashboard metric cards keep an isolated two-row, three-column layout', async () => {
+	const [page, styles] = await Promise.all([
+		readFile(new URL('../src/routes/+page.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/dashboard.css', import.meta.url), 'utf8')
+	]);
+
+	assert.match(page, /<section class="financing-metric-grid" aria-label="融资指标">/);
+	assert.match(page, /class={`financing-metric-card financing-accent-\$\{metric\.accent\}`}/);
+	assert.match(styles, /\.financing-metric-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);[\s\S]*?grid-template-rows:\s*repeat\(2,\s*minmax\(10rem,\s*auto\)\);/);
+	assert.doesNotMatch(page, /class="metric-grid"|class={`metric-card/);
+});

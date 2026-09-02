@@ -181,26 +181,26 @@
 
 <DebtPresetFilter options={dashboard.typeOptions} {presets} bind:preset bind:values={selectedTypes} note={`数据截至 ${dashboard.asOfDate}`} />
 
-<section class="metric-grid" aria-label="融资指标">
+<section class="financing-metric-grid" aria-label="融资指标">
 	{#each metricCards as metric}
-		<article class={`metric-card accent-${metric.accent}`}>
-			<div class="metric-icon" aria-hidden="true"><metric.icon size={30} strokeWidth={1.8} /></div>
-			<div class="metric-content">
-				<div class="metric-title-row">
+		<article class={`financing-metric-card financing-accent-${metric.accent}`}>
+			<div class="financing-metric-icon" aria-hidden="true"><metric.icon size={30} strokeWidth={1.8} /></div>
+			<div class="financing-metric-content">
+				<div class="financing-metric-title-row">
 					<h2>{metric.label}</h2>
 					{#if metric.tone !== 'normal'}
-						<span class={`status-light ${metric.tone}`} role="img" aria-label={toneLabel(metric.tone)} title={toneLabel(metric.tone)}></span>
+						<span class={`financing-status-light ${metric.tone}`} role="img" aria-label={toneLabel(metric.tone)} title={toneLabel(metric.tone)}></span>
 					{/if}
 				</div>
-				<strong class:muted-value={metric.value === '待配置'}>{metric.value}</strong>
+				<strong class:financing-muted-value={metric.value === '待配置'}>{metric.value}</strong>
 				{#if metric.comparisons.length}
-					<div class="metric-comparisons">
+					<div class="financing-metric-comparisons">
 						{#each metric.comparisons as item}
 							<span>{item.label}<b class:increase={item.direction === 'increase'} class:decrease={item.direction === 'decrease'}>{item.text}</b></span>
 						{/each}
 					</div>
 				{:else if metric.details.length}
-					<div class="metric-details">
+					<div class="financing-metric-details">
 						{#each metric.details as item}
 							<span>{item.label} <b class={metric.tone}>{item.value}</b></span>
 						{/each}
@@ -216,9 +216,9 @@
 				<div class="regulatory-cell">
 					<div class="regulatory-title">
 						<span>{item.label}</span>
-						<span class={`status-light ${item.tone}`} role="img" aria-label={toneLabel(item.tone)} title={toneLabel(item.tone)}></span>
+						<span class={`financing-status-light ${item.tone}`} role="img" aria-label={toneLabel(item.tone)} title={toneLabel(item.tone)}></span>
 					</div>
-					<strong class:muted-value={item.value === '待配置'}>{item.value}</strong>
+					<strong class:financing-muted-value={item.value === '待配置'}>{item.value}</strong>
 					<div class="regulatory-details">
 						<span>上限 <b class={item.tone}>{item.limit}</b></span>
 						<span>{item.detailLabel} <b class={item.tone}>{item.detailValue}</b></span>
