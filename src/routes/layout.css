@@ -339,6 +339,64 @@ textarea:focus-visible {
   display: contents;
 }
 
+.report-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.header-action {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  color: #475467;
+  background: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    color 180ms ease;
+}
+
+.header-action:hover {
+  border-color: #b8c7e0;
+  color: #1d4ed8;
+  background: #f8faff;
+}
+
+.header-primary-action {
+  border-color: #175cd3;
+  color: #fff;
+  background: #2f6fed;
+}
+
+.header-primary-action:hover {
+  border-color: #1849a9;
+  color: #fff;
+  background: #175cd3;
+}
+
+.header-primary-action:disabled {
+  border-color: #84adff;
+  color: #eaf1ff;
+  background: #528bff;
+  cursor: wait;
+}
+
+.spinning { animation: report-action-spin 0.8s linear infinite; }
+
+@keyframes report-action-spin {
+  to { transform: rotate(360deg); }
+}
+
 .icon-button,
 .profile-button {
   display: inline-flex;
@@ -628,6 +686,21 @@ textarea:focus-visible {
     font-size: 1rem;
   }
 
+  .role-chip,
+  .header-action-label {
+    display: none;
+  }
+
+  .header-action {
+    width: 2.75rem;
+    padding: 0;
+  }
+
+  .header-primary-action {
+    width: auto;
+    padding: 0 0.65rem;
+  }
+
   .mobile-nav {
     position: sticky;
     top: 3.625rem;
@@ -688,6 +761,24 @@ textarea:focus-visible {
   }
 
   .profile-name {
+    display: none;
+  }
+
+  .report-header-actions {
+    gap: 0.25rem;
+  }
+
+  .header-action {
+    width: 2.5rem;
+    min-height: 2.5rem;
+  }
+
+  .header-primary-action {
+    width: 2.5rem;
+    padding: 0;
+  }
+
+  .header-primary-action span {
     display: none;
   }
 

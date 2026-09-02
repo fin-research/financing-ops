@@ -1,5 +1,6 @@
 <script lang="ts">
 	import './layout.css';
+	import { enhance } from '$app/forms';
 	import { preloadData } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import { withBase, withoutBase } from '$lib/app-paths';
@@ -8,9 +9,12 @@
 		BriefcaseBusiness,
 		FileText,
 		FileSpreadsheet,
+		History,
 		LayoutDashboard,
+		LoaderCircle,
 		LogOut,
 		Megaphone,
+		Printer,
 		ShieldCheck,
 		Workflow
 	} from '@lucide/svelte';
@@ -50,6 +54,7 @@
 		void preloadData(withBase(href)).catch(() => undefined);
 	};
 	let navigationSlow = $state(false);
+	let reportGenerating = $state(false);
 	$effect(() => {
 		if (!navigating.to) {
 			navigationSlow = false;
@@ -74,6 +79,17 @@
 		if (pathname === '/sop/reminders') return '提醒发送历史';
 		if (pathname.startsWith('/debts/')) return '负债详情';
 		return navItems.find((item) => isActive(item.href))?.label ?? '仪表盘';
+	};
+	const isLiabilityReport = () => withoutBase(page.url.pathname) === '/liability-report';
+	const enhanceReportGeneration = () => {
+		reportGenerating = true;
+		return async ({ update }: any) => {
+			try {
+				await update({ reset: false });
+			} finally {
+				reportGenerating = false;
+			}
+		};
 	};
 </script>
 
@@ -150,6 +166,23 @@
 				</span>
 			</div>
 			<div class="top-actions">
+				{#if isLiabilityReport()}
+					<div class="report-header-actions" aria-label="负债周报操作">
+						<a class="header-action" href={withBase('/liability-report#history')} aria-label="历史快照" title="历史快照">
+							<History size={17} /><span class="header-action-label">历史快照</span>
+						</a>
+						<button class="header-action" type="button" onclick={() => window.print()} aria-label="导出 PDF" title="导出 PDF">
+							<Printer size={17} /><span class="header-action-label">导出 PDF</span>
+						</button>
+						<form method="POST" action={withBase('/liability-report?/generate')} use:enhance={enhanceReportGeneration}>
+							<input type="hidden" name="confirm" value="yes" />
+							<button class="header-action header-primary-action" type="submit" disabled={reportGenerating} aria-label={reportGenerating ? '正在生成本期周报' : '生成本期周报'} title="生成本期周报">
+								<LoaderCircle class={reportGenerating ? 'spinning' : ''} size={17} />
+								<span>{reportGenerating ? '生成中…' : '生成本期周报'}</span>
+							</button>
+						</form>
+					</div>
+				{/if}
 				<a class="profile-button" href={withBase('/settings')} aria-label="打开个人设置">
 					{#if data.user.hasAvatar}
 						<img class="avatar" src={avatarUrl(data.user)} alt="" />

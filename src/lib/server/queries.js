@@ -339,6 +339,58 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			SELECT date_trunc('month', maturity_date)::date AS month_start,
 				SUM(amount) / 100000000.0 AS amount_yi
 			FROM current_debt WHERE maturity_date IS NOT NULL GROUP BY 1
+		), maturity_by_type AS (
+			SELECT date_trunc('month', d.maturity_date)::date AS month_start,
+				${REPORTING_TYPE_SQL()} AS type, SUM(d.amount) / 100000000.0 AS amount_yi
+			FROM current_debt d CROSS JOIN latest
+			WHERE d.maturity_date >= date_trunc('month', latest.as_of_date)
+				AND d.maturity_date < date_trunc('month', latest.as_of_date) + INTERVAL '12 months'
+			GROUP BY 1, 2
+		), annual_maturity AS (
+			SELECT CASE
+					WHEN EXTRACT(YEAR FROM d.maturity_date)::integer = EXTRACT(YEAR FROM latest.as_of_date)::integer
+						THEN EXTRACT(YEAR FROM latest.as_of_date)::integer::text || '年剩余'
+					WHEN EXTRACT(YEAR FROM d.maturity_date)::integer <= EXTRACT(YEAR FROM latest.as_of_date)::integer + 4
+						THEN EXTRACT(YEAR FROM d.maturity_date)::integer::text || '年'
+					ELSE (EXTRACT(YEAR FROM latest.as_of_date)::integer + 5)::text || '年以后'
+				END AS bucket,
+				CASE
+					WHEN EXTRACT(YEAR FROM d.maturity_date)::integer <= EXTRACT(YEAR FROM latest.as_of_date)::integer + 4
+						THEN EXTRACT(YEAR FROM d.maturity_date)::integer - EXTRACT(YEAR FROM latest.as_of_date)::integer
+					ELSE 5
+				END AS bucket_order,
+				${REPORTING_TYPE_SQL()} AS type, SUM(d.amount) / 100000000.0 AS amount_yi
+			FROM current_debt d CROSS JOIN latest
+			WHERE d.maturity_date > latest.as_of_date
+			GROUP BY 1, 2, 3
+		), trend_months AS (
+			SELECT (month_start + INTERVAL '1 month - 1 day')::date AS month_end
+			FROM latest CROSS JOIN LATERAL generate_series(
+				DATE '2021-01-01', date_trunc('month', latest.as_of_date), INTERVAL '1 month'
+			) AS series(month_start)
+		), balance_rate_trend AS (
+			SELECT trend_months.month_end,
+				COALESCE(SUM(d.amount), 0) / 100000000.0 AS balance_yi,
+				SUM(d.amount * d.annual_rate) FILTER (WHERE d.annual_rate IS NOT NULL)
+					/ NULLIF(SUM(d.amount) FILTER (WHERE d.annual_rate IS NOT NULL), 0) * 100 AS weighted_rate_pct
+			FROM trend_months
+			LEFT JOIN debt d ON COALESCE(d.issue_date, d.activated_at) <= trend_months.month_end
+				AND (d.maturity_date IS NULL OR d.maturity_date > trend_months.month_end)
+				AND (d.closed_at IS NULL OR d.closed_at > trend_months.month_end)
+			GROUP BY trend_months.month_end
+		), issuance_months AS (
+			SELECT date_trunc('month', latest.as_of_date)::date - (value || ' months')::interval AS month_start
+			FROM latest CROSS JOIN generate_series(11, 0, -1) AS series(value)
+		), issuance_trend AS (
+			SELECT issuance_months.month_start::date AS month_start,
+				${REPORTING_TYPE_SQL()} AS type,
+				SUM(d.amount) / 100000000.0 AS amount_yi,
+				SUM(d.amount * d.annual_rate) FILTER (WHERE d.annual_rate IS NOT NULL)
+					/ NULLIF(SUM(d.amount) FILTER (WHERE d.annual_rate IS NOT NULL), 0) * 100 AS weighted_rate_pct
+			FROM issuance_months
+			JOIN debt d ON date_trunc('month', d.issue_date) = issuance_months.month_start
+			WHERE d.debt_type = '债券'
+			GROUP BY 1, 2
 		), week_bounds AS (
 			SELECT date_trunc('week', latest.as_of_date)::date AS week_start FROM latest
 		), event_rows AS (
@@ -380,13 +432,27 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				AND project.planned_issue_date BETWEEN week.week_start AND week.week_start + 11
 				AND EXTRACT(ISODOW FROM project.planned_issue_date) <= 5
 				AND COALESCE(project.debt_type, '') NOT IN ('同业拆借', '浮动收益凭证')
-		), due_detail AS (
-			SELECT d.id, d.name, ${REPORTING_TYPE_SQL()} AS debt_type, d.counterparty,
-				d.amount / 100000000.0 AS principal_yi, d.annual_rate, d.maturity_date
+		), due_detail_rows AS (
+			SELECT 'maturity'::text AS kind, d.id::text AS id, d.name,
+				${REPORTING_TYPE_SQL()} AS debt_type, d.counterparty,
+				d.amount / 100000000.0 AS principal_yi,
+				d.interest_payable / 100000000.0 AS interest_yi,
+				d.annual_rate, d.maturity_date AS due_date
 			FROM current_debt d CROSS JOIN latest
 			WHERE d.maturity_date > latest.as_of_date AND d.maturity_date <= latest.as_of_date + 30
 				AND ${REPORTING_TYPE_SQL()} <> '浮动收益凭证'
-			ORDER BY d.maturity_date, d.amount DESC, d.name
+			UNION ALL
+			SELECT 'interest', (d.id::text || ':' || c.sequence::text), d.name,
+				${REPORTING_TYPE_SQL()} || '-利息', d.counterparty,
+				0, COALESCE(c.amount, 0) / 100000000.0, d.annual_rate, c.due_date
+			FROM cashflow c JOIN current_debt d ON d.id = c.debt_id CROSS JOIN latest
+			WHERE c.cashflow_type = 'interest'
+				AND c.due_date > latest.as_of_date AND c.due_date <= latest.as_of_date + 30
+				AND (d.maturity_date IS NULL OR d.maturity_date <> c.due_date)
+				AND ${REPORTING_TYPE_SQL()} <> '浮动收益凭证'
+		), due_detail AS (
+			SELECT * FROM due_detail_rows
+			ORDER BY due_date, principal_yi DESC, interest_yi DESC, name
 			LIMIT 30
 		), active_projects AS (
 			SELECT project.id, project.name, project.debt_type, project.amount / 100000000.0 AS amount_yi,
@@ -411,13 +477,35 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				WHERE observation.observation_date <= latest.as_of_date
 			) latest_observation
 			WHERE row_number = 1
+		), market_history AS (
+			SELECT observation.series_id, observation.series_name, observation.category,
+				observation.tenor, observation.observation_date, observation.value, observation.unit
+			FROM liability_market_observations observation CROSS JOIN latest
+			WHERE observation.observation_date BETWEEN date_trunc('year', latest.as_of_date)::date AND latest.as_of_date
 		), peer_issuances AS (
-			SELECT security_code, bond_name, issuer_name, actual_issue_amount_yi,
+			SELECT security_code, bond_name, issuer_name, bond_type, actual_issue_amount_yi,
 				issue_tenor, issue_date, maturity_date, market, coupon_rate_pct
 			FROM liability_peer_issuances peer CROSS JOIN latest
 			WHERE peer.issue_date IS NULL OR peer.issue_date <= latest.as_of_date
 			ORDER BY peer.issue_date DESC NULLS LAST, peer.bond_name
 			LIMIT 12
+		), peer_issuer_totals AS (
+			SELECT issuer_name, SUM(actual_issue_amount_yi) AS total_yi
+			FROM liability_peer_issuances peer CROSS JOIN latest
+			WHERE peer.issue_date BETWEEN date_trunc('year', latest.as_of_date)::date AND latest.as_of_date
+				AND peer.issuer_name IS NOT NULL AND peer.actual_issue_amount_yi IS NOT NULL
+			GROUP BY issuer_name
+			ORDER BY total_yi DESC, issuer_name
+			LIMIT 15
+		), peer_issue_summary AS (
+			SELECT peer.issuer_name, COALESCE(peer.bond_type, '其他') AS bond_type,
+				SUM(peer.actual_issue_amount_yi) AS amount_yi
+			FROM liability_peer_issuances peer
+			JOIN peer_issuer_totals issuer ON issuer.issuer_name = peer.issuer_name
+			CROSS JOIN latest
+			WHERE peer.issue_date BETWEEN date_trunc('year', latest.as_of_date)::date AND latest.as_of_date
+				AND peer.actual_issue_amount_yi IS NOT NULL
+			GROUP BY peer.issuer_name, COALESCE(peer.bond_type, '其他')
 		), registration_progress AS (
 			SELECT project_name, issuer_name, status, variety, amount_yi,
 				update_date, notice_number, lead_underwriter, venue
@@ -452,10 +540,23 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				'month', to_char(months.month_start, 'YYYY-MM'), 'amountYi', COALESCE(maturity.amount_yi, 0)
 			) ORDER BY months.month_start) FROM months LEFT JOIN maturity USING (month_start)), '[]'::jsonb) AS maturityDistribution,
 			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'month', to_char(month_start, 'YYYY-MM'), 'type', type, 'amountYi', amount_yi
+			) ORDER BY month_start, type) FROM maturity_by_type), '[]'::jsonb) AS maturityByType,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'bucket', bucket, 'bucketOrder', bucket_order, 'type', type, 'amountYi', amount_yi
+			) ORDER BY bucket_order, type) FROM annual_maturity), '[]'::jsonb) AS annualMaturity,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'date', month_end, 'balanceYi', balance_yi, 'weightedRatePct', weighted_rate_pct
+			) ORDER BY month_end) FROM balance_rate_trend), '[]'::jsonb) AS balanceRateTrend,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'month', to_char(month_start, 'YYYY-MM'), 'type', type,
+				'amountYi', amount_yi, 'weightedRatePct', weighted_rate_pct
+			) ORDER BY month_start, type) FROM issuance_trend), '[]'::jsonb) AS issuanceTrend,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
 				'kind', kind, 'date', date, 'week', week, 'id', id, 'name', name,
 				'debtType', debt_type, 'amountYi', amount_yi, 'href', href
 			) ORDER BY date, kind, name) FROM event_rows), '[]'::jsonb) AS events,
-			COALESCE((SELECT jsonb_agg(to_jsonb(due_detail) ORDER BY maturity_date, principal_yi DESC) FROM due_detail), '[]'::jsonb) AS dueDetails,
+			COALESCE((SELECT jsonb_agg(to_jsonb(due_detail) ORDER BY due_date, principal_yi DESC) FROM due_detail), '[]'::jsonb) AS dueDetails,
 			COALESCE((SELECT jsonb_agg(jsonb_build_object(
 				'id', id, 'name', name, 'debtType', debt_type, 'amountYi', amount_yi,
 				'plannedIssueDate', planned_issue_date, 'plannedMaturityDate', planned_maturity_date,
@@ -469,11 +570,19 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				'tenor', tenor, 'observationDate', observation_date, 'value', value, 'unit', unit
 			) ORDER BY category, tenor, series_name) FROM market_observations), '[]'::jsonb) AS marketObservations,
 			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'seriesId', series_id, 'seriesName', series_name, 'category', category,
+				'tenor', tenor, 'observationDate', observation_date, 'value', value, 'unit', unit
+			) ORDER BY category, series_id, observation_date) FROM market_history), '[]'::jsonb) AS marketHistory,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
 				'securityCode', security_code, 'bondName', bond_name, 'issuerName', issuer_name,
+				'bondType', bond_type,
 				'actualIssueAmountYi', actual_issue_amount_yi, 'issueTenor', issue_tenor,
 				'issueDate', issue_date, 'maturityDate', maturity_date, 'market', market,
 				'couponRatePct', coupon_rate_pct
 			) ORDER BY issue_date DESC NULLS LAST, bond_name) FROM peer_issuances), '[]'::jsonb) AS peerIssuances,
+			COALESCE((SELECT jsonb_agg(jsonb_build_object(
+				'issuerName', issuer_name, 'bondType', bond_type, 'amountYi', amount_yi
+			) ORDER BY issuer_name, bond_type) FROM peer_issue_summary), '[]'::jsonb) AS peerIssueSummary,
 			COALESCE((SELECT jsonb_agg(jsonb_build_object(
 				'projectName', project_name, 'issuerName', issuer_name, 'status', status,
 				'variety', variety, 'amountYi', amount_yi, 'updateDate', update_date,
@@ -497,6 +606,12 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 	const securitiesNetAssets = parameters.securities_prior_year_net_assets?.valueYi;
 	const groupNetAssets = parameters.group_prior_year_net_assets?.valueYi;
 	const cumulativeBorrowingYi = valueYi(report.cumulativeBorrowingYi);
+	const balanceRateTrend = (report.balanceRateTrend ?? []).map((item) => ({
+		...item, balanceYi: valueYi(item.balanceYi), weightedRatePct: nullableValueYi(item.weightedRatePct)
+	}));
+	const observedRates = balanceRateTrend.filter((item) => item.weightedRatePct != null);
+	const previousObservedRate = observedRates.length > 1 ? observedRates.at(-2)?.weightedRatePct : null;
+	const weightedRatePct = nullableValueYi(report.weightedRate) == null ? null : valueYi(report.weightedRate) * 100;
 
 	return {
 		asOfDate,
@@ -506,7 +621,10 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			balanceYi,
 			balanceMonthChangeYi: balanceYi - valueYi(report.previousMonthBalanceYi),
 			balanceYearChangeYi: balanceYi - valueYi(report.previousYearBalanceYi),
-			weightedRatePct: valueYi(report.weightedRate) * 100,
+			weightedRatePct,
+			weightedRateMonthBp: weightedRatePct == null || previousObservedRate == null
+				? null
+				: (weightedRatePct - previousObservedRate) * 100,
 			weightedRemainingDays: valueYi(report.weightedDays),
 			longBalanceYi,
 			shortBalanceYi,
@@ -534,21 +652,34 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 		parameters,
 		composition: (report.composition ?? []).map((item) => ({ ...item, amountYi: valueYi(item.amountYi) })),
 		maturityDistribution: (report.maturityDistribution ?? []).map((item) => ({ ...item, amountYi: valueYi(item.amountYi) })),
+		maturityByType: (report.maturityByType ?? []).map((item) => ({ ...item, amountYi: valueYi(item.amountYi) })),
+		annualMaturity: (report.annualMaturity ?? []).map((item) => ({ ...item, amountYi: valueYi(item.amountYi) })),
+		balanceRateTrend,
+		issuanceTrend: (report.issuanceTrend ?? []).map((item) => ({
+			...item, amountYi: valueYi(item.amountYi), weightedRatePct: nullableValueYi(item.weightedRatePct)
+		})),
 		events: (report.events ?? []).map((item) => ({ ...item, amountYi: valueYi(item.amountYi) })),
 		dueDetails: (report.dueDetails ?? []).map((item) => ({
 			...item,
 			principalYi: valueYi(item.principal_yi),
+			interestYi: valueYi(item.interest_yi),
 			annualRatePct: item.annual_rate == null ? null : valueYi(item.annual_rate) * 100,
-			maturityDate: item.maturity_date
+			dueDate: item.due_date
 		})),
 		projects: (report.projects ?? []).map((item) => ({ ...item, amountYi: valueYi(item.amountYi) })),
 		marketObservations: (report.marketObservations ?? []).map((item) => ({
+			...item, value: nullableValueYi(item.value)
+		})),
+		marketHistory: (report.marketHistory ?? []).map((item) => ({
 			...item, value: nullableValueYi(item.value)
 		})),
 		peerIssuances: (report.peerIssuances ?? []).map((item) => ({
 			...item,
 			actualIssueAmountYi: nullableValueYi(item.actualIssueAmountYi),
 			couponRatePct: nullableValueYi(item.couponRatePct)
+		})),
+		peerIssueSummary: (report.peerIssueSummary ?? []).map((item) => ({
+			...item, amountYi: valueYi(item.amountYi)
 		})),
 		registrationProgress: (report.registrationProgress ?? []).map((item) => ({
 			...item, amountYi: nullableValueYi(item.amountYi)
