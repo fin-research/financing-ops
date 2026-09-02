@@ -49,9 +49,11 @@ async function loadProject(projectId: string) {
 					'assigneeId', pt.assignee_id, 'assigneeName', assignee.name,
 					'plannedStartDate', pt.planned_start_date, 'dueDate', pt.due_date,
 					'completedAt', pt.completed_at, 'sortOrder', pt.sort_order,
-					'notes', pt.notes, 'updatedAt', pt.updated_at
+					'notes', COALESCE(pt.notes, node.description), 'updatedAt', pt.updated_at
 				) ORDER BY pt.sort_order, pt.due_date, pt.name)
-				FROM project_tasks pt LEFT JOIN people assignee ON assignee.id = pt.assignee_id
+				FROM project_tasks pt
+				LEFT JOIN sop_nodes node ON node.id = pt.sop_node_id
+				LEFT JOIN people assignee ON assignee.id = pt.assignee_id
 				WHERE pt.project_id = p.id
 			), '[]'::jsonb) AS tasks,
 			COALESCE((

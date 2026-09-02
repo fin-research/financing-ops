@@ -82,7 +82,7 @@ export const actions: Actions = {
 		const projectId = randomUUID();
 		const code = `FIN-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${projectId.slice(0, 8).toUpperCase()}`;
 		const nodes = await db.prepare(`
-			SELECT id, name, sort_order AS sortOrder, default_offset_days AS offsetDays,
+			SELECT id, name, description, sort_order AS sortOrder, default_offset_days AS offsetDays,
 				default_owner_role AS ownerRole
 			FROM sop_nodes WHERE template_id = ? ORDER BY sort_order
 		`).all(sop.id);
@@ -108,9 +108,12 @@ export const actions: Actions = {
 				await transaction.prepare(`
 					INSERT INTO project_tasks (
 						id, project_id, sop_node_id, name, status, assignee_id,
-						planned_start_date, due_date, sort_order
-					) VALUES (?, ?, ?, ?, 'not_started', ?, ?, ?, ?)
-				`).run(randomUUID(), projectId, node.id, node.name, assignee?.id ?? null, startDate, dueDate, node.sortOrder);
+						planned_start_date, due_date, sort_order, notes
+					) VALUES (?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?)
+				`).run(
+					randomUUID(), projectId, node.id, node.name, assignee?.id ?? null,
+					startDate, dueDate, node.sortOrder, node.description || null
+				);
 			}
 			await prepareAudit({
 				...auditRequestMeta(event),

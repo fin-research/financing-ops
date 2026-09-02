@@ -234,6 +234,7 @@
 						<div class="task-copy">
 							<strong>{task.name}</strong>
 							<small>{task.completedAt ? `完成于 ${formatDateTime(task.completedAt)}` : `第 ${task.sortOrder} 个节点`}</small>
+							{#if task.notes}<small class="task-note">{task.notes}</small>{/if}
 						</div>
 						<label>
 							<span>状态</span>
@@ -549,6 +550,10 @@
 		margin-top: 0.25rem;
 		font-size: 0.75rem;
 		color: var(--subtle);
+	}
+	.task-copy .task-note {
+		color: var(--muted);
+		line-height: 1.5;
 	}
 	label {
 		display: grid;
