@@ -114,8 +114,10 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 			) values_due
 		), active_projects AS (
 			SELECT p.id, p.name, p.debt_type, p.borrower AS counterparty, p.amount,
-				COALESCE(p.notes, CASE WHEN p.planned_maturity_date IS NOT NULL AND p.planned_issue_date IS NOT NULL
+				COALESCE(NULLIF(BTRIM(p.tenor_description), ''), CASE WHEN p.planned_maturity_date IS NOT NULL AND p.planned_issue_date IS NOT NULL
 					THEN ROUND((p.planned_maturity_date - p.planned_issue_date) / 365.0, 1)::text || 'Y' ELSE '待定' END) AS tenor,
+				CASE WHEN p.funding_cost_rate IS NULL THEN '待定'
+					ELSE to_char(p.funding_cost_rate * 100, 'FM999990.00') || '%' END AS cost,
 				p.planned_issue_date, p.status
 			FROM projects p
 			WHERE p.status IN ('planning', 'in_progress', 'at_risk')
@@ -185,7 +187,7 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 				FROM months LEFT JOIN maturity USING (month)) AS maturityDistribution,
 			COALESCE((SELECT jsonb_agg(jsonb_build_object('id', id, 'name', name, 'debtType', debt_type,
 				'counterparty', COALESCE(counterparty, '/'), 'amountYi', amount / 100000000.0, 'tenor', tenor,
-				'cost', '待定', 'landingDate', planned_issue_date, 'status', status) ORDER BY planned_issue_date, name)
+				'cost', cost, 'landingDate', planned_issue_date, 'status', status) ORDER BY planned_issue_date, name)
 				FROM active_projects), '[]'::jsonb) AS projects,
 			(SELECT jsonb_build_object('currentMonth', current_month, 'comparisonMonth', comparison_month,
 				'rows', (SELECT jsonb_agg(jsonb_build_object('label', label, 'currentYi', current_yi, 'comparisonYi', comparison_yi) ORDER BY label) FROM issuance))

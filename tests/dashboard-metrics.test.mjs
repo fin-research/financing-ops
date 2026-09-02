@@ -126,6 +126,10 @@ test('project KPI follows dashboard types while the project table remains comple
 	]);
 	const activeProjects = queries.slice(queries.indexOf('), active_projects AS ('), queries.indexOf('), issue_months AS ('));
 	assert.doesNotMatch(activeProjects, /selected_types|CROSS JOIN args/);
+	assert.match(activeProjects, /NULLIF\(BTRIM\(p\.tenor_description\), ''\)/);
+	assert.doesNotMatch(activeProjects, /COALESCE\(p\.notes,/);
+	assert.match(activeProjects, /p\.funding_cost_rate/);
+	assert.match(queries, /'cost', cost/);
 	assert.match(page, /projectTableAmountYi = \$derived\(dashboard\.projects\.reduce/);
 	assert.match(page, /\{projectTableAmountYi\.toFixed\(2\)\}/);
 });
