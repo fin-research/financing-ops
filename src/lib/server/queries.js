@@ -420,9 +420,10 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				CASE WHEN d.maturity_date < week.week_start + 7 THEN 'current' ELSE 'next' END AS week,
 				d.id::text AS id, d.name, ${REPORTING_TYPE_SQL()} AS debt_type,
 				d.amount / 100000000.0 AS amount_yi, ('/debts/' || d.id::text) AS href
-			FROM current_debt d CROSS JOIN week_bounds week
+			FROM debt d CROSS JOIN week_bounds week
 			WHERE d.maturity_date BETWEEN week.week_start AND week.week_start + 11
 				AND EXTRACT(ISODOW FROM d.maturity_date) <= 5
+				AND d.amount > 0
 				AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
 			UNION ALL
 			SELECT 'interest', c.due_date,
@@ -435,25 +436,23 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				AND (d.maturity_date IS NULL OR d.maturity_date <> c.due_date)
 				AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
 			UNION ALL
-			SELECT 'issue', d.issue_date,
-				CASE WHEN d.issue_date < week.week_start + 7 THEN 'current' ELSE 'next' END,
+			SELECT 'issue', CASE WHEN d.debt_type = '收益凭证'
+					THEN COALESCE(certificate.subscription_date, d.issue_date) ELSE d.issue_date END,
+				CASE WHEN (CASE WHEN d.debt_type = '收益凭证'
+					THEN COALESCE(certificate.subscription_date, d.issue_date) ELSE d.issue_date END) < week.week_start + 7
+					THEN 'current' ELSE 'next' END,
 				d.id::text, d.name, ${REPORTING_TYPE_SQL()}, d.amount / 100000000.0,
 				('/debts/' || d.id::text)
-			FROM debt d CROSS JOIN week_bounds week
-			WHERE d.issue_date BETWEEN week.week_start AND week.week_start + 11
-				AND EXTRACT(ISODOW FROM d.issue_date) <= 5
+			FROM debt d
+			LEFT JOIN ONLY financing.income_certificate certificate ON certificate.id = d.id
+			CROSS JOIN week_bounds week
+			WHERE (CASE WHEN d.debt_type = '收益凭证'
+					THEN COALESCE(certificate.subscription_date, d.issue_date) ELSE d.issue_date END)
+					BETWEEN week.week_start AND week.week_start + 11
+				AND EXTRACT(ISODOW FROM (CASE WHEN d.debt_type = '收益凭证'
+					THEN COALESCE(certificate.subscription_date, d.issue_date) ELSE d.issue_date END)) <= 5
 				AND d.closed_at IS NULL
 				AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
-			UNION ALL
-			SELECT 'project', project.planned_issue_date,
-				CASE WHEN project.planned_issue_date < week.week_start + 7 THEN 'current' ELSE 'next' END,
-				project.id, project.name, project.debt_type,
-				COALESCE(project.amount, 0) / 100000000.0, ('/projects/' || project.id)
-			FROM projects project CROSS JOIN week_bounds week
-			WHERE project.status IN ('planning', 'in_progress', 'at_risk')
-				AND project.planned_issue_date BETWEEN week.week_start AND week.week_start + 11
-				AND EXTRACT(ISODOW FROM project.planned_issue_date) <= 5
-				AND COALESCE(project.debt_type, '') NOT IN ('同业拆借', '浮动收益凭证')
 		), due_detail_rows AS (
 			SELECT 'maturity'::text AS kind, d.id::text AS id, d.name,
 				${REPORTING_TYPE_SQL()} AS debt_type, d.counterparty,
@@ -462,15 +461,6 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				d.annual_rate, d.maturity_date AS due_date
 			FROM current_debt d CROSS JOIN latest
 			WHERE d.maturity_date > latest.as_of_date AND d.maturity_date <= latest.as_of_date + 30
-				AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
-			UNION ALL
-			SELECT 'interest', (d.id::text || ':' || c.sequence::text), d.name,
-				${REPORTING_TYPE_SQL()} || '-利息', d.counterparty,
-				0, COALESCE(c.amount, 0) / 100000000.0, d.annual_rate, c.due_date
-			FROM cashflow c JOIN current_debt d ON d.id = c.debt_id CROSS JOIN latest
-			WHERE c.cashflow_type = 'interest'
-				AND c.due_date > latest.as_of_date AND c.due_date <= latest.as_of_date + 30
-				AND (d.maturity_date IS NULL OR d.maturity_date <> c.due_date)
 				AND ${REPORTING_TYPE_SQL()} NOT IN ('同业拆借', '浮动收益凭证')
 		), due_detail AS (
 			SELECT * FROM due_detail_rows
@@ -522,12 +512,21 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			) latest_observation
 			WHERE row_number = 1
 		), peer_issuances AS (
-			SELECT security_code, bond_name, issuer_name, bond_type, actual_issue_amount_yi,
+			SELECT security_code, bond_name,
+				regexp_replace(issuer_name, '(股份有限公司|有限责任公司|有限公司)$', '') AS issuer_name,
+				CASE bond_type
+					WHEN '证券公司债' THEN '公募债'
+					WHEN '证券公司次级债' THEN '次级债'
+					WHEN '证券公司短期融资券' THEN '短期融资券'
+					ELSE bond_type
+				END AS bond_type,
+				actual_issue_amount_yi,
 				issue_tenor, issue_date, maturity_date, market, coupon_rate_pct
-			FROM liability_peer_issuances peer CROSS JOIN latest
-			WHERE peer.issue_date IS NULL OR peer.issue_date <= latest.as_of_date
+			FROM liability_peer_issuances peer CROSS JOIN week_bounds week
+			WHERE peer.issue_date BETWEEN week.week_start - 7 AND week.week_start - 3
+				AND peer.issuer_name LIKE '%证券%'
+				AND peer.bond_type IN ('证券公司债', '证券公司次级债', '证券公司短期融资券')
 			ORDER BY peer.issue_date DESC NULLS LAST, peer.bond_name
-			LIMIT 12
 		), peer_issuer_totals AS (
 			SELECT issuer_name, SUM(actual_issue_amount_yi) AS total_yi
 			FROM liability_peer_issuances peer CROSS JOIN latest
@@ -546,12 +545,15 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 				AND peer.actual_issue_amount_yi IS NOT NULL
 			GROUP BY peer.issuer_name, COALESCE(peer.bond_type, '其他')
 		), registration_progress AS (
-			SELECT project_name, issuer_name, status, variety, amount_yi,
+			SELECT project_name,
+				regexp_replace(issuer_name, '(股份有限公司|有限责任公司|有限公司)$', '') AS issuer_name,
+				status, variety, amount_yi,
 				update_date, notice_number, lead_underwriter, venue
-			FROM liability_registration_progress registration CROSS JOIN latest
-			WHERE registration.update_date <= latest.as_of_date
+			FROM liability_registration_progress registration CROSS JOIN week_bounds week
+			WHERE registration.update_date BETWEEN week.week_start - 7 AND week.week_start - 3
+				AND registration.issuer_name LIKE '%证券%'
+				AND registration.variety IN ('小公募', '私募')
 			ORDER BY registration.update_date DESC, registration.project_name
-			LIMIT 12
 		)
 		SELECT latest.as_of_date AS asOfDate, args.today AS today,
 			(SELECT balance_yi FROM snapshot_totals WHERE label = 'current') AS balanceYi,

@@ -11,7 +11,7 @@
 		return amount ? observed.reduce((sum, row) => sum + Number(row.amountYi) * Number(row.weightedRatePct), 0) / amount : null;
 	}));
 	const option = $derived({
-		aria: { enabled: true, decal: { show: true } },
+		aria: { enabled: true, decal: { show: false } },
 		color: colors,
 		tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
 		legend: {

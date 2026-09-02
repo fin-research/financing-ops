@@ -20,7 +20,7 @@
 	const colors = ['#3e5c9a', '#4fa3d1', '#e06a74', '#8aa0b8', '#e0a24e', '#54bfa0', '#8b7bd9', '#7fd1b0'];
 	const totals = $derived(labels.map((label) => rows.filter((row) => row.label === label).reduce((sum, row) => sum + Number(row.value ?? 0), 0)));
 	const option = $derived({
-		aria: { enabled: true, decal: { show: true } },
+		aria: { enabled: true, decal: { show: false } },
 		color: colors,
 		tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (value: unknown) => `${Number(value).toFixed(2)} 亿元` },
 		legend: { type: 'scroll', top: 0, textStyle: { color: '#475569', fontSize: 12 } },

@@ -73,6 +73,8 @@ const debtExtraFields: Record<string, FieldConfig[]> = {
 		{ key: 'liquidation_submission_status', label: '清算报送状态' },
 		{ key: 'liquidation_registration_status', label: '清算登记状态' },
 		{ key: 'return_type', label: '收益类型' },
+		{ key: 'subscription_date', label: '认购日', type: 'date' },
+		{ key: 'redemption_date', label: '兑付日', type: 'date' },
 		{ key: 'receiving_account', label: '收款账户' },
 		{ key: 'early_maturity', label: '提前到期', type: 'boolean' }
 	],

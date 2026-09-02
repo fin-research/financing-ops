@@ -16,6 +16,7 @@
 - `financing.debt` 是基类；`id bigint` 来自 `debt_id_seq`。
 - `bond`、`income_certificate`、`income_right`、`refinancing`、`swap_facility` 使用 PostgreSQL 原生 `INHERITS`。
 - 同业拆借与集团借款没有有效专属字段，直接存基类。
+- `income_certificate.subscription_date` 与 `redemption_date` 分别保存认购日和兑付日；`maturity_date` 缺失时由数据库按兑付日前一工作日（周一至周五）兜底。简称使用产品名称，去除发行人全称；“吉祥/财气东来 + 序号”统一为“吉祥231号收益凭证”“财气东来1918号收益凭证”格式。
 - `total_amount = amount + interest_payable`、`term_days` 和 `status` 是 stored generated columns。
 - 负债与融资项目已解除关联；最终 schema 不应包含有效的项目外键。
 - 禁止重新引入 import 字段、外部业务键、重复类别字段、可写状态、原始 Excel 行或单元格字段。
@@ -61,7 +62,7 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 ## Excel 与 SQLite
 
 - 线上没有 Excel API、导入表、暂存表或原始数据表。
-- Excel 只由 `scripts/import-debts.mjs` 本地解析，使用单事务、advisory lock、临时表和批量写入；不得删除线上新增数据。
+- Excel 只由 `scripts/import-debts.mjs` 本地解析，使用单事务、advisory lock、临时表和批量写入；收益凭证重导时先按规范简称匹配，存量历史数据可按原系列名回退匹配；不得删除线上新增数据。
 - SQLite 只作为一次性迁移来源；目标负债非空时迁移脚本应拒绝重复覆盖。
 - 解析变化先运行 `pnpm db:import -- --dry-run`；SQLite 变化先运行 `pnpm db:migrate:sqlite -- --dry-run`。
 

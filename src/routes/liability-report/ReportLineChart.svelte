@@ -19,7 +19,7 @@
 	const units = $derived([...new Set(series.map((item) => item.unit))]);
 	const hasBasisPoints = $derived(units.includes('bp'));
 	const option = $derived({
-		aria: { enabled: true, decal: { show: true } },
+		aria: { enabled: true, decal: { show: false } },
 		color: colors,
 		tooltip: {
 			trigger: 'axis',

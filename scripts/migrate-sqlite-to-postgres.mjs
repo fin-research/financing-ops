@@ -1,6 +1,7 @@
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { Client } from 'pg';
+import { normalizeIncomeCertificateName, previousWorkingDay } from './lib/debt-transform.mjs';
 
 const sourceArgument = process.argv.slice(2).find((argument) => !argument.startsWith('--'));
 const sourcePath = path.resolve(sourceArgument ?? 'database/financing-workbench.sqlite');
@@ -151,7 +152,7 @@ function makeDebtRows(idByOldId) {
 		const counterparty = source.debt_type === '收益凭证' ? details?.investor_type || source.counterparty
 			: source.debt_type === '集团借款' ? details?.lender_name || source.counterparty : source.counterparty;
 		const name = isBond ? details?.short_name || source.instrument_name || source.instrument_code
-			: source.debt_type === '收益凭证' ? details?.series_name || source.instrument_name
+			: source.debt_type === '收益凭证' ? normalizeIncomeCertificateName(details?.product_name || source.instrument_name || details?.series_name)
 				: source.debt_type === '收益权转让' ? details?.period_label
 					: source.debt_type === '同业拆借' ? `同业拆借·${counterparty || '未登记对手'}·${source.issue_date || '未定期'}`
 						: source.debt_type === '转融资' ? `转融资·${counterparty || details?.market || '未登记对手'}·${source.issue_date || '未定期'}`
@@ -165,7 +166,8 @@ function makeDebtRows(idByOldId) {
 						: source.debt_type === '转融资' ? details?.interest_amount
 							: source.debt_type === '集团借款' ? groupInterest.get(source.id) : 0;
 		const issueDate = isoDate(source.issue_date);
-		const maturityDate = isoDate(source.maturity_date);
+		const redemptionDate = source.debt_type === '收益凭证' ? isoDate(details?.redemption_date) : null;
+		const maturityDate = isoDate(source.maturity_date) ?? previousWorkingDay(redemptionDate);
 		const lifecycleDate = issueDate || shortDate(source.created_at);
 		return {
 			table: isBond ? 'bond'
@@ -191,7 +193,8 @@ function makeDebtRows(idByOldId) {
 			} : source.debt_type === '收益凭证' ? {
 				liquidation_submission_status: details?.liquidation_submission_status,
 				liquidation_registration_status: details?.liquidation_registration_status,
-				return_type: details?.return_type, receiving_account: details?.receiving_account,
+				return_type: details?.return_type, subscription_date: isoDate(details?.subscription_date),
+				redemption_date: redemptionDate, receiving_account: details?.receiving_account,
 				early_maturity: boolean(details?.is_early_maturity)
 			} : source.debt_type === '收益权转让' ? { interest_basis_days: details?.interest_basis_days }
 				: source.debt_type === '转融资' ? {
@@ -225,7 +228,7 @@ async function migrateDebts() {
 	const extensions = {
 		debt: [],
 		bond: [['issuance_method', 'text'], ['bookbuilding_date', 'date'], ['interest_basis', 'text'], ['issuance_target', 'text'], ['market', 'text'], ['receiving_account', 'text'], ['trustee', 'text'], ['bookrunner', 'text']],
-		income_certificate: [['liquidation_submission_status', 'text'], ['liquidation_registration_status', 'text'], ['return_type', 'text'], ['receiving_account', 'text'], ['early_maturity', 'boolean']],
+		income_certificate: [['liquidation_submission_status', 'text'], ['liquidation_registration_status', 'text'], ['return_type', 'text'], ['subscription_date', 'date'], ['redemption_date', 'date'], ['receiving_account', 'text'], ['early_maturity', 'boolean']],
 		income_right: [['interest_basis_days', 'integer']],
 		refinancing: [['interest_basis_days', 'integer'], ['market', 'text'], ['is_extended', 'boolean'], ['receiving_account', 'text'], ['repayment_account', 'text']],
 		swap_facility: [['average_repo_balance_description', 'text'], ['repo_weighted_average_rate', 'numeric']]

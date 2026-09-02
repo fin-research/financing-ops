@@ -41,6 +41,28 @@ function date(value) {
 	return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
 }
 
+export function previousWorkingDay(value) {
+	const candidate = date(value);
+	if (!candidate) return null;
+	const result = new Date(`${candidate}T00:00:00Z`);
+	do result.setUTCDate(result.getUTCDate() - 1);
+	while (result.getUTCDay() === 0 || result.getUTCDay() === 6);
+	return result.toISOString().slice(0, 10);
+}
+
+export function normalizeIncomeCertificateName(value) {
+	let candidate = text(value);
+	if (!candidate) return null;
+	candidate = candidate
+		.replace(/\s+/gu, '')
+		.replace(/^(?:东方财富证券股份有限公司|东方财富证券|西藏东方财富证券股份有限公司|西藏东方财富证券|西藏同信证券股份有限公司|西藏同信证券)/u, '')
+		.replace(/(?:（[^）]*）|\([^)]*\))$/u, '');
+	const numbered = candidate.match(/([0-9]+)(?:号)?(?:收益凭证)?$/u);
+	if (/^吉祥/u.test(candidate) && numbered) return `吉祥${numbered[1]}号收益凭证`;
+	if (/^财气东来/u.test(candidate) && numbered) return `财气东来${numbered[1]}号收益凭证`;
+	return candidate;
+}
+
 function boolean(value) {
 	const candidate = normalise(value);
 	if (!candidate) return null;
@@ -84,8 +106,8 @@ function displayName({ oldType, instrumentName, instrumentCode, counterparty, is
 		return text(value(main, '债券简称')) ?? instrumentName ?? instrumentCode ?? `${oldType}·${issueDate ?? '未定期'}`;
 	}
 	if (oldType === '收益凭证') {
-		const raw = text(value(main, '系列')) ?? instrumentName;
-		return raw?.replace(/^东方财富证券(?:股份有限公司)?/u, '') || `收益凭证·${issueDate ?? '未定期'}`;
+		const raw = text(value(main, '产品名称')) ?? instrumentName ?? text(value(main, '系列'));
+		return normalizeIncomeCertificateName(raw) || `收益凭证·${issueDate ?? '未定期'}`;
 	}
 	if (oldType === '收益权转让') {
 		return text(value(main, '期数')) ?? instrumentName ?? `收益权·${issueDate ?? '未定期'}`;
@@ -112,14 +134,17 @@ function commonDebt(row, records) {
 		: oldType === '集团借款'
 			? text(value(main, '借款对象')) ?? text(oldCounterparty)
 			: text(oldCounterparty);
-	// The online debt contract labels these fields as 起息日/到期日. For
-	// income certificates, keep the parser's mapped dates (起息日/到期日)
-	// instead of the adjacent 认购日/兑付日 fields, so updates match the
-	// existing Neon rows and do not duplicate the historical ledger.
+	// The debt lifecycle still uses 起息日/到期日. 收益凭证 additionally
+	// retains 认购日/兑付日 so weekly issuance events use the real subscription
+	// date and a missing maturity date can fall back to the previous weekday.
 	const issueDate = oldType === '互换便利'
 		? date(value(main, '首次正回购日期')) ?? oldIssueDate
 		: oldIssueDate;
-	const maturityDate = oldMaturityDate;
+	const subscriptionDate = oldType === '收益凭证' ? date(value(main, '认购日')) : null;
+	const redemptionDate = oldType === '收益凭证' ? date(value(main, '兑付日')) : null;
+	const maturityDate = oldType === '收益凭证'
+		? oldMaturityDate ?? previousWorkingDay(redemptionDate)
+		: oldMaturityDate;
 	const interestPayable = isBond
 		? number(value(main, '应付利息（元）'))
 		: oldType === '收益凭证' ? number(value(main, '应付利息（元）'))
@@ -129,6 +154,7 @@ function commonDebt(row, records) {
 	const resolvedRate = oldType === '互换便利'
 		? rate(value(main, '综合融资利率')) ?? annualRate
 		: annualRate;
+	const name = displayName({ oldType, instrumentName: text(instrumentName), instrumentCode: text(instrumentCode), counterparty, issueDate, main });
 	return {
 		sourceKey,
 		table: isBond ? 'bond'
@@ -138,7 +164,10 @@ function commonDebt(row, records) {
 						: oldType === '互换便利' ? 'swap_facility' : 'debt',
 		debtType,
 		subtype,
-		name: displayName({ oldType, instrumentName: text(instrumentName), instrumentCode: text(instrumentCode), counterparty, issueDate, main }),
+		name,
+		legacyName: oldType === '收益凭证'
+			? text(value(main, '系列')) ?? text(instrumentName) ?? name
+			: name,
 		counterparty,
 		amount: Number(outstandingAmount ?? principalAmount ?? 0),
 		// Match the existing SQLite-to-Postgres migration contract: negative
@@ -163,6 +192,8 @@ function commonDebt(row, records) {
 			liquidationSubmissionStatus: text(value(main, '清盘提交')),
 			liquidationRegistrationStatus: text(value(main, '清盘注册')),
 			returnType: text(value(main, '收益类型')),
+			subscriptionDate,
+			redemptionDate,
 			receivingAccount: text(value(main, '收款账户')),
 			earlyMaturity: boolean(value(main, '是否提前到期'))
 		} : oldType === '收益权转让' ? {

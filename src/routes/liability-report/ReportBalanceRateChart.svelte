@@ -4,7 +4,7 @@
 	let { rows = [] }: { rows?: Array<{ date?: string; balanceYi?: number; weightedRatePct?: number | null }> } = $props();
 	const values = $derived(rows.filter((row) => Number(row.balanceYi) > 0));
 	const option = $derived({
-		aria: { enabled: true, decal: { show: true } },
+		aria: { enabled: true, decal: { show: false } },
 		color: ['#3e5c9a', '#d85b57'],
 		tooltip: {
 			trigger: 'axis',

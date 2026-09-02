@@ -100,8 +100,10 @@ test('recent liability dynamics exclude interbank borrowing and floating income 
 	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
 	const eventRows = queries.slice(queries.indexOf('), event_rows AS'), queries.indexOf('), due_detail AS'));
 	assert.match(eventRows, /NOT IN \('同业拆借', '浮动收益凭证'\)/g);
-	assert.match(eventRows, /project\.debt_type/);
+	assert.doesNotMatch(eventRows, /SELECT 'project'|project\.planned_issue_date/);
+	assert.match(eventRows, /certificate\.subscription_date/);
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
+	assert.doesNotMatch(page, /sumEvents\(group\.items, \['issue', 'project'\]\)/);
 	assert.match(page, /dynamicProjects = \$derived/);
 	assert.match(page, /dynamicProjects as project/);
 });
@@ -112,9 +114,22 @@ test('future 30-day maturity metric and details exclude interbank borrowing and 
 	const liveMetrics = weeklyQuery.slice(weeklyQuery.indexOf('), live_metrics AS'), weeklyQuery.indexOf('), largest_borrowing AS'));
 	const dueDetails = weeklyQuery.slice(weeklyQuery.indexOf('), due_detail_rows AS'), weeklyQuery.indexOf('), due_detail AS'));
 	assert.match(liveMetrics, /NOT IN \('同业拆借', '浮动收益凭证'\)[\s\S]*AS due_30_yi/);
-	assert.equal((dueDetails.match(/NOT IN \('同业拆借', '浮动收益凭证'\)/g) ?? []).length, 2);
+	assert.equal((dueDetails.match(/NOT IN \('同业拆借', '浮动收益凭证'\)/g) ?? []).length, 1);
+	assert.doesNotMatch(dueDetails, /cashflow_type = 'interest'|-利息/);
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	assert.match(page, /不含同业拆借及浮动收益凭证/);
+	assert.match(page, /仅列负债本金到期/);
+	assert.doesNotMatch(page, /付息\/到期日|未来30天无到期或付息明细/);
+});
+
+test('weekly peer tables follow the installation-package weekly filters and coupon field', () => {
+	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
+	const reportQuery = queries.slice(queries.indexOf('export async function getLiabilityWeeklyReportData'), queries.indexOf('export async function getProjectGanttData'));
+	assert.match(reportQuery, /peer\.issue_date BETWEEN week\.week_start - 7 AND week\.week_start - 3/);
+	assert.match(reportQuery, /peer\.bond_type IN \('证券公司债', '证券公司次级债', '证券公司短期融资券'\)/);
+	assert.match(reportQuery, /registration\.variety IN \('小公募', '私募'\)/);
+	const importer = fs.readFileSync(new URL('../scripts/import-liability-weekly-data.mjs', import.meta.url), 'utf8');
+	assert.match(importer, /couponRatePct: number\(row\[30\]\)/);
 });
 
 test('weekly broker pricing and registration tables are independent left-right columns without continuation', () => {
@@ -136,6 +151,7 @@ test('all liability report charts use the shared ECharts host instead of hand-dr
 		const source = fs.readFileSync(new URL(`../src/routes/liability-report/${file}`, import.meta.url), 'utf8');
 		assert.match(source, /EChart/);
 		assert.doesNotMatch(source, /<svg|<path|<rect|conic-gradient/);
+		assert.doesNotMatch(source, /decal:\s*\{\s*show:\s*true/);
 	}
 	const charting = fs.readFileSync(new URL('../src/lib/charts/echarts.ts', import.meta.url), 'utf8');
 	assert.match(charting, /from 'echarts\/core'/);
@@ -157,6 +173,8 @@ test('liability market rates come from scheduled public.edb data, not manual Cho
 	];
 	assert.match(service, /public\.edb/);
 	assert.match(service, /edbLogicalRequests: 0/);
+	assert.match(service, /peer\.bond_type IN \('证券公司债', '证券公司次级债', '证券公司短期融资券'\)/);
+	assert.match(service, /registration\.variety IN \('小公募', '私募'\)/);
 	assert.doesNotMatch(choice, /\/choice\/edb|edbIds/);
 	assert.match(page, /利率数据读取 public\.edb/);
 });

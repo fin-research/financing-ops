@@ -44,7 +44,9 @@ async function installSchema(db, { beforeReminderMigration } = {}) {
 		'0007_detach_projects_from_debt.sql',
 		'0008_sop_node_reminder_periods.sql',
 		'0009_liability_report_sources_and_snapshots.sql',
-		'0010_liability_report_daily_overwrite.sql'
+		'0010_liability_report_daily_overwrite.sql',
+		'0015_income_certificate_dates_and_names.sql',
+		'0016_income_certificate_name_edge_cases.sql'
 	]) {
 		if (name === '0008_sop_node_reminder_periods.sql' && beforeReminderMigration) {
 			await beforeReminderMigration(db);
@@ -305,6 +307,15 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 	assert.equal(debt.status, 'active');
 	assert.equal(debt.physical_table, 'financing.bond');
 	await assert.rejects(db.query("INSERT INTO financing.income_certificate (id, debt_type, subtype, name, amount) VALUES (101, '收益凭证', '固定收益凭证', '冲突凭证', 100)"), /duplicate debt id/i);
+	await db.query(`INSERT INTO financing.income_certificate (
+		id, debt_type, subtype, name, amount, subscription_date, redemption_date, activated_at
+	) VALUES (103, '收益凭证', '固定收益凭证', '东方财富证券财气东来两年期1918号收益凭证', 150000,
+		'2026-09-01', '2026-09-07', '2026-09-01')`);
+	const certificate = (await db.query('SELECT name, maturity_date, subscription_date, redemption_date FROM financing.income_certificate WHERE id = 103')).rows[0];
+	assert.equal(certificate.name, '财气东来1918号收益凭证');
+	assert.equal(new Date(certificate.maturity_date).toISOString().slice(0, 10), '2026-09-04');
+	assert.equal(new Date(certificate.subscription_date).toISOString().slice(0, 10), '2026-09-01');
+	assert.equal(new Date(certificate.redemption_date).toISOString().slice(0, 10), '2026-09-07');
 	await db.query("INSERT INTO financing.cashflow (debt_id, cashflow_type, due_date, amount) VALUES (101, 'interest', '2026-12-31', 25)");
 	assert.equal((await db.query('SELECT sequence FROM financing.cashflow')).rows[0].sequence, 1);
 	await assert.rejects(db.query("INSERT INTO financing.cashflow (debt_id, cashflow_type, due_date, amount) VALUES (999, 'principal', '2026-12-31', 100)"), /debt does not exist/i);
@@ -328,7 +339,7 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 		['delivery-debt']
 	);
 	assert.equal(await deleteProjectWithReminders(db, 'project'), null);
-	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.debt')).rows[0].count, 2);
+	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.debt')).rows[0].count, 3);
 	await db.query('DELETE FROM financing.bond WHERE id = 101');
 	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.cashflow')).rows[0].count, 0);
 });

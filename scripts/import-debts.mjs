@@ -7,6 +7,7 @@ import { transformWorkbook } from './lib/debt-transform.mjs';
 const source = process.argv.slice(2).find((argument) => !argument.startsWith('--'))
 	?? path.resolve('data', 'ledger.xlsx');
 const dryRun = process.argv.includes('--dry-run');
+const rollback = process.argv.includes('--rollback');
 const connectionString = process.env.DATABASE_URL;
 
 const parsed = parseDebtWorkbookData(fs.readFileSync(source), path.basename(source));
@@ -45,7 +46,8 @@ const tableExtensions = {
 	income_certificate: [
 		['liquidation_submission_status', 'liquidationSubmissionStatus', 'text'],
 		['liquidation_registration_status', 'liquidationRegistrationStatus', 'text'],
-		['return_type', 'returnType', 'text'], ['receiving_account', 'receivingAccount', 'text'],
+		['return_type', 'returnType', 'text'], ['subscription_date', 'subscriptionDate', 'date'],
+		['redemption_date', 'redemptionDate', 'date'], ['receiving_account', 'receivingAccount', 'text'],
 		['early_maturity', 'earlyMaturity', 'boolean']
 	],
 	income_right: [['interest_basis_days', 'interestBasisDays', 'integer']],
@@ -86,6 +88,7 @@ try {
 			debt_type text NOT NULL,
 			subtype text,
 			name text NOT NULL,
+			legacy_name text,
 			counterparty text,
 			amount numeric(20, 2) NOT NULL,
 			interest_payable numeric(20, 2) NOT NULL,
@@ -97,6 +100,7 @@ try {
 			closed_at date,
 			extension jsonb NOT NULL,
 			occurrence integer,
+			legacy_occurrence integer,
 			debt_id bigint,
 			existing_table text,
 			is_new boolean NOT NULL DEFAULT false
@@ -104,12 +108,12 @@ try {
 	`);
 	await client.query(`
 		INSERT INTO maintenance_debt (
-			source_key, target_table, debt_type, subtype, name, counterparty, amount,
+			source_key, target_table, debt_type, subtype, name, legacy_name, counterparty, amount,
 			interest_payable, annual_rate, issue_date, maturity_date, activated_at,
 			settled_at, closed_at, extension
 		)
 		SELECT * FROM jsonb_to_recordset($1::jsonb) AS source(
-			source_key text, target_table text, debt_type text, subtype text, name text,
+			source_key text, target_table text, debt_type text, subtype text, name text, legacy_name text,
 			counterparty text, amount numeric, interest_payable numeric, annual_rate numeric,
 			issue_date date, maturity_date date, activated_at date, settled_at date,
 			closed_at date, extension jsonb
@@ -120,6 +124,7 @@ try {
 		debt_type: debt.debtType,
 		subtype: debt.subtype,
 		name: debt.name,
+		legacy_name: debt.legacyName,
 		counterparty: debt.counterparty,
 		amount: debt.amount,
 		interest_payable: debt.interestPayable,
@@ -134,10 +139,12 @@ try {
 	await client.query(`
 		WITH ranked AS (
 			SELECT source_ordinal,
-				row_number() OVER (PARTITION BY debt_type, subtype, name, counterparty, issue_date, maturity_date ORDER BY source_ordinal) AS occurrence
+				row_number() OVER (PARTITION BY debt_type, subtype, name, counterparty, issue_date, maturity_date ORDER BY source_ordinal) AS occurrence,
+				row_number() OVER (PARTITION BY debt_type, subtype, legacy_name, counterparty, issue_date, maturity_date ORDER BY source_ordinal) AS legacy_occurrence
 			FROM maintenance_debt
 		)
-		UPDATE maintenance_debt source SET occurrence = ranked.occurrence
+		UPDATE maintenance_debt source
+		SET occurrence = ranked.occurrence, legacy_occurrence = ranked.legacy_occurrence
 		FROM ranked WHERE ranked.source_ordinal = source.source_ordinal
 	`);
 	await client.query(`
@@ -167,6 +174,30 @@ try {
 			)
 			AND existing.maturity_date IS NOT DISTINCT FROM source.maturity_date
 			AND existing.occurrence = source.occurrence
+	`);
+	await client.query(`
+		WITH existing AS (
+			SELECT d.id, d.tableoid::regclass::text AS physical_table,
+				row_number() OVER (
+					PARTITION BY d.debt_type, d.subtype, d.name, d.counterparty, d.issue_date, d.maturity_date
+					ORDER BY d.id
+				) AS occurrence,
+				d.debt_type, d.subtype, d.name, d.counterparty, d.issue_date, d.maturity_date
+			FROM financing.debt d
+		)
+		UPDATE maintenance_debt source
+		SET debt_id = existing.id, existing_table = existing.physical_table
+		FROM existing
+		WHERE source.debt_id IS NULL
+			AND source.debt_type = '收益凭证'
+			AND source.legacy_name IS NOT NULL
+			AND existing.debt_type = source.debt_type
+			AND existing.subtype IS NOT DISTINCT FROM source.subtype
+			AND existing.name = source.legacy_name
+			AND existing.counterparty IS NOT DISTINCT FROM source.counterparty
+			AND existing.issue_date IS NOT DISTINCT FROM source.issue_date
+			AND existing.maturity_date IS NOT DISTINCT FROM source.maturity_date
+			AND existing.occurrence = source.legacy_occurrence
 	`);
 	const mismatches = await client.query(`
 		SELECT source_key, target_table, existing_table FROM maintenance_debt
@@ -328,8 +359,9 @@ try {
 		throw new Error(`余额核对失败：数据库 ${result.snapshot_total_yi} 亿元，工作簿 ${transformed.snapshot.totalYi} 亿元`);
 	}
 	await client.query(`SELECT setval('financing.debt_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM financing.debt), 1), true)`);
-	await client.query('COMMIT');
+	await client.query(rollback ? 'ROLLBACK' : 'COMMIT');
 	console.log(JSON.stringify({
+		mode: rollback ? 'rollback' : 'committed',
 		source: path.basename(source),
 		asOfDate: transformed.snapshot.asOfDate,
 		totalYi: Number(result.snapshot_total_yi),

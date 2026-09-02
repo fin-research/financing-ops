@@ -12,7 +12,7 @@
 	const colors = ['#3e5c9a', '#5a78c0', '#8b7bd9', '#4fa3d1', '#e06a74', '#8aa0b8', '#e0a24e', '#54bfa0', '#8fcdf2', '#7fd1b0'];
 	const values = $derived(rows.filter((row) => Number(row.amountYi) > 0));
 	const option = $derived({
-		aria: { enabled: true, decal: { show: true } },
+		aria: { enabled: true, decal: { show: false } },
 		color: colors,
 		tooltip: {
 			trigger: 'item',

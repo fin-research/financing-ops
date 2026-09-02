@@ -25,9 +25,10 @@ const CALIBER = {
 	activeDebt: '统计日以前已起息且未到期、未关闭的 financing.debt；无到期日记录保留并标记勾稽缺口。',
 	cumulativeBorrowing: '月末累计新增借款按已导入余额快照差额计算，并剔除互换便利。',
 	projects: '推进中融资计划只读 financing.projects 的 planning/in_progress/at_risk，项目字段缺失不隐藏。',
+	dynamics: '近期动态只含实际发行、到期和付息；收益凭证发行日优先取认购日，融资计划不计入动态金额。',
 	market: '利率走势只读 Neon public.edb；Choice EDB 由 dashboard 每日定时增量更新，页面访问和手动生成都不调用 EDB。',
-	choice: '每次手动生成只发起一次 Choice CTR 逻辑请求，用于可比券商发行明细；失败请求可有限重试。',
-	due30: '未来30天到期本金及明细均排除同业拆借和浮动收益凭证。',
+	choice: '每次手动生成只发起一次 Choice CTR 逻辑请求；可比发行与申报表按上一完整周的周一至周五及券商品种过滤，失败请求可有限重试。',
+	due30: '未来30天到期本金及明细均排除同业拆借和浮动收益凭证，独立付息现金流不计作负债到期。',
 	parameters: '净资本、净资产和资产负债率沿用安装包报告期；月末字段按自然月末日期记录。'
 };
 
@@ -46,6 +47,10 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, choice 
 	const counts = await db.prepare(`
 		WITH args AS (
 			SELECT ?::date AS as_of_date
+		), report_week AS (
+			SELECT date_trunc('week', as_of_date)::date - 7 AS start_date,
+				date_trunc('week', as_of_date)::date - 3 AS end_date
+			FROM args
 		), required_parameters(code) AS (
 			VALUES
 				('prior_month_net_capital'), ('securities_prior_year_net_assets'),
@@ -77,8 +82,19 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, choice 
 				)) AS missing_market_series,
 			(SELECT MAX(observation.synced_at) FROM public.edb observation
 				WHERE observation.indicator_code IN (SELECT code FROM required_market_series)) AS market_synced_at,
-			(SELECT COUNT(*) FROM liability_peer_issuances CROSS JOIN args WHERE issue_date IS NULL OR issue_date <= args.as_of_date) AS peer_count,
-			(SELECT COUNT(*) FROM liability_registration_progress CROSS JOIN args WHERE update_date <= args.as_of_date) AS registration_count,
+			(SELECT COUNT(*) FROM liability_peer_issuances peer CROSS JOIN report_week week
+				WHERE peer.issue_date BETWEEN week.start_date AND week.end_date
+					AND peer.issuer_name LIKE '%证券%'
+					AND peer.bond_type IN ('证券公司债', '证券公司次级债', '证券公司短期融资券')) AS peer_count,
+			(SELECT COUNT(*) FROM liability_peer_issuances peer CROSS JOIN report_week week
+				WHERE peer.issue_date BETWEEN week.start_date AND week.end_date
+					AND peer.issuer_name LIKE '%证券%'
+					AND peer.bond_type IN ('证券公司债', '证券公司次级债', '证券公司短期融资券')
+					AND peer.coupon_rate_pct IS NOT NULL) AS peer_coupon_count,
+			(SELECT COUNT(*) FROM liability_registration_progress registration CROSS JOIN report_week week
+				WHERE registration.update_date BETWEEN week.start_date AND week.end_date
+					AND registration.issuer_name LIKE '%证券%'
+					AND registration.variety IN ('小公募', '私募')) AS registration_count,
 			(SELECT COUNT(*) FROM finance_parameters WHERE code IN (SELECT code FROM required_parameters) AND value_yi IS NOT NULL) AS parameter_count,
 			(SELECT COUNT(*) FROM missing_maturity) AS missing_maturity_count,
 			(SELECT COALESCE(SUM(amount), 0) / 100000000 FROM missing_maturity) AS missing_maturity_amount_yi,
@@ -104,6 +120,9 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, choice 
 	}
 	if (Number(counts.peer_count ?? 0) === 0 && choice.ctr.status !== 'available') {
 		missingModules.push({ code: 'peer_issuance', title: '可比券商发行明细', detail: '底稿与本次 Choice CTR 均未返回可用发行明细。' });
+	}
+	if (Number(counts.peer_count ?? 0) > Number(counts.peer_coupon_count ?? 0)) {
+		missingModules.push({ code: 'peer_coupon_rate', title: '可比券商发行利率', detail: `本周 ${counts.peer_count} 条券商发行中有 ${Number(counts.peer_count) - Number(counts.peer_coupon_count ?? 0)} 条缺少票面利率。` });
 	}
 	if (Number(counts.registration_count ?? 0) === 0) {
 		missingModules.push({ code: 'registration_progress', title: '可比券商注册进程', detail: 'Choice 当前没有已验证的注册进程报表，且生产库没有底稿记录。' });

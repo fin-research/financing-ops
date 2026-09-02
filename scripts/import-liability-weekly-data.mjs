@@ -59,7 +59,9 @@ function parsePeerFile(relative) {
 			actualIssueAmountYi: number(row[8]), issueAmountUpperYi: number(row[9]), planIssueAmountYi: number(row[10]),
 			issueTenor: text(row[11]), interestStartDate: date(row[12]), issueNoticeDate: date(row[13]),
 			issueEndDate: date(row[14]), maturityDate: date(row[15]), listedDate: date(row[16]),
-			market: text(row[17]), couponRatePct: number(row[23]), source: relative, sourceRowNumber: index + 2
+			market: text(row[17]),
+			couponRatePct: number(row[30]) ?? number(row[31]) ?? number(row[23]),
+			source: relative, sourceRowNumber: index + 2
 		}];
 	});
 	const unique = new Map();
@@ -133,6 +135,7 @@ async function main() {
 	const parameters = parseParameters();
 	const summary = {
 		root, dryRun, marketSource: 'public.edb (managed by dashboard scheduled sync)', peerRows: peer.length,
+		peerRowsWithCouponRate: peer.filter((row) => row.couponRatePct !== null).length,
 		registrationRows: registration.length, parameters
 	};
 	if (dryRun) {
