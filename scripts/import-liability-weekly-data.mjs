@@ -140,13 +140,17 @@ function parseParameters() {
 	const assets = findLabelValue(liabilityRows, [/资产合计/, /总资产/]);
 	const liabilities = findLabelValue(liabilityRows, [/负债合计/, /总负债/]);
 	const brokerage = findLabelValue(liabilityRows, [/代理买卖/, /客户资金/]);
+	const assetLiabilityRatio = findLabelValue(liabilityRows, [/^资产负债率$/]);
+	const adjustedAssetLiabilityRatio = findLabelValue(liabilityRows, [/资产负债率（扣除代理买卖）$/]);
 	return [
 		{ code: 'prior_month_net_capital', label: '上月末净资本', valueYi: number(netCapitalRow[1]) / 100000000, periodEnd: monthEnd, notes: `来源：${files.netCapital}` },
 		{ code: 'securities_prior_year_net_assets', label: '证券上年末净资产', valueYi: 751.64, periodEnd: '2025-12-31', notes: '安装包口径；来源：liability-weekly-report-win SKILL.md' },
 		{ code: 'group_prior_year_net_assets', label: '集团上年末净资产', valueYi: 918.75, periodEnd: '2025-12-31', notes: '安装包口径；来源：liability-weekly-report-win SKILL.md' },
 		{ code: 'total_assets', label: '总资产', valueYi: assets, periodEnd: monthEnd, notes: `来源：${files.liability}` },
 		{ code: 'total_liabilities', label: '总负债', valueYi: liabilities, periodEnd: monthEnd, notes: `来源：${files.liability}` },
-		{ code: 'agency_brokerage_funds', label: '代理买卖证券款', valueYi: brokerage, periodEnd: monthEnd, notes: `来源：${files.liability}` }
+		{ code: 'agency_brokerage_funds', label: '代理买卖证券款', valueYi: brokerage, periodEnd: monthEnd, notes: `来源：${files.liability}` },
+		{ code: 'asset_liability_ratio', label: '资产负债率', valueYi: assetLiabilityRatio, periodEnd: monthEnd, notes: `来源：${files.liability}` },
+		{ code: 'adjusted_asset_liability_ratio', label: '资产负债率（扣除代理买卖）', valueYi: adjustedAssetLiabilityRatio, periodEnd: monthEnd, notes: `来源：${files.liability}` }
 	];
 }
 

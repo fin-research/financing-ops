@@ -21,6 +21,7 @@
 	let maxMaturity = $derived(Math.max(1, ...report.maturityDistribution.map((item: any) => item.amountYi)));
 	let maxComposition = $derived(Math.max(1, ...report.composition.map((item: any) => item.amountYi)));
 	let projectAmountYi = $derived(report.projects.reduce((sum: number, item: any) => sum + item.amountYi, 0));
+	let parameterRows = $derived(Object.values(report.parameters ?? {}) as any[]);
 	let missingModules = $derived((report as any).provenance?.missingModules ?? []);
 	let generating = $state(false);
 	let warnings = $derived([
@@ -230,6 +231,16 @@
 					<small>{item.value == null ? '分子或分母待核对' : `${amount(item.numerator)} 亿元 · ${item.threshold}`}</small>
 				</article>
 			{/each}
+		</div>
+	</section>
+
+	<section class="report-section">
+		<header class="section-heading"><div><Database size={20} /><h2>财务基础参数</h2></div><span>报告期与来源均保留</span></header>
+		<div class="weekly-table-wrap">
+			<table class="weekly-table">
+				<thead><tr><th>参数</th><th>数值</th><th>报告期</th><th>来源说明</th></tr></thead>
+				<tbody>{#each parameterRows as item}<tr><td>{item.label}</td><td>{item.valueYi == null ? '数据缺失' : item.label.includes('率') ? `${amount(item.valueYi * 100, 2)}%` : `${amount(item.valueYi)} 亿元`}</td><td>{dateLabel(item.periodEnd)}</td><td>{item.notes ?? '数据缺失'}</td></tr>{:else}<tr><td colspan="4" class="table-empty">尚无净资本、净资产或资产负债规模参数。</td></tr>{/each}</tbody>
+			</table>
 		</div>
 	</section>
 

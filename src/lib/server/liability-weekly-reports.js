@@ -26,7 +26,8 @@ const CALIBER = {
 	activeDebt: '统计日以前已起息且未到期、未关闭的 financing.debt；无到期日记录保留并标记勾稽缺口。',
 	cumulativeBorrowing: '月末累计新增借款按已导入余额快照差额计算，并剔除互换便利。',
 	projects: '推进中融资计划只读 financing.projects 的 planning/in_progress/at_risk，项目字段缺失不隐藏。',
-	choice: '每次手动生成最多各请求一次 Choice EDB 与 CTR；失败不重试。'
+	choice: '每次手动生成最多各请求一次 Choice EDB 与 CTR；失败不重试。',
+	parameters: '净资本、净资产和资产负债率沿用安装包报告期；月末字段按自然月末日期记录。'
 };
 
 function hex(buffer) {
@@ -47,7 +48,8 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, choice 
 			VALUES
 				('prior_month_net_capital'), ('securities_prior_year_net_assets'),
 				('group_prior_year_net_assets'), ('total_assets'),
-				('total_liabilities'), ('agency_brokerage_funds')
+				('total_liabilities'), ('agency_brokerage_funds'),
+				('asset_liability_ratio'), ('adjusted_asset_liability_ratio')
 		)
 		SELECT
 			(SELECT COUNT(*) FROM liability_market_observations WHERE observation_date <= ?::date) AS market_count,
@@ -78,7 +80,7 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, choice 
 	// fields are issuer-level attributes, but no verified bulk registration
 	// progress report is available, so keep that limitation visible in every run.
 	missingModules.push({ code: 'choice_registration', title: 'Choice 注册进程', detail: '尚未验证可批量拉取的 Choice 注册进程报表；当前使用生产库中的底稿历史记录。' });
-	if (Number(counts.parameter_count ?? 0) < 6) {
+	if (Number(counts.parameter_count ?? 0) < 8) {
 		missingModules.push({ code: 'finance_parameters', title: '净资本、净资产与资产负债规模', detail: `生产库缺少参数：${counts.missing_parameter_codes ?? '未识别'}。` });
 	}
 	if (Number(counts.incomplete_project_count ?? 0) > 0) {
