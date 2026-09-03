@@ -5,7 +5,7 @@
 	import { navigating, page } from '$app/state';
 	import { tick } from 'svelte';
 	import { withBase, withoutBase } from '$lib/app-paths';
-	import { fetchManualChoiceSources } from '$lib/liability-choice.js';
+	import { fetchManualLiabilitySources } from '$lib/liability-choice.js';
 	import {
 		BarChart3,
 		BriefcaseBusiness,
@@ -58,7 +58,7 @@
 	let navigationSlow = $state(false);
 	let reportGenerating = $state(false);
 	let reportSnapshotForm = $state<HTMLFormElement>();
-	let reportChoicePayload = $state('');
+	let reportSourcesPayload = $state('');
 	$effect(() => {
 		if (!navigating.to) {
 			navigationSlow = false;
@@ -103,10 +103,10 @@
 		reportGenerating = true;
 		try {
 			const asOfDate = String((page.data as any)?.liveAsOfDate ?? '');
-			const dataApiUrl = String((page.data as any)?.choiceDataApiUrl ?? new URL('/data', window.location.origin));
-			const choice = await fetchManualChoiceSources({ dataApiUrl, asOfDate });
-			if (choice.ctr.status !== 'available') throw new Error(choice.ctr.error);
-			reportChoicePayload = JSON.stringify(choice);
+			const dataApiUrl = String((page.data as any)?.dataApiUrl ?? new URL('/data', window.location.origin));
+			const sources = await fetchManualLiabilitySources({ dataApiUrl, asOfDate });
+			if (sources.ctr.status !== 'available') throw new Error(sources.ctr.error);
+			reportSourcesPayload = JSON.stringify(sources);
 			await tick();
 			if (!reportSnapshotForm) throw new Error('周报快照表单尚未就绪');
 			reportSnapshotForm.requestSubmit();
@@ -146,7 +146,7 @@
 					globalMessages.error(message, { key: 'liability-report-generation' });
 				}
 			} finally {
-				reportChoicePayload = '';
+				reportSourcesPayload = '';
 				reportGenerating = false;
 			}
 		};
@@ -249,7 +249,7 @@
 						</button>
 						<form bind:this={reportSnapshotForm} method="POST" action={withBase('/liability-report?/saveSnapshot')} use:enhance={enhanceReportSnapshotSaving}>
 							<input type="hidden" name="asOfDate" value={String((page.data as any)?.liveAsOfDate ?? '')} />
-							<input type="hidden" name="choice" value={reportChoicePayload} />
+							<input type="hidden" name="sources" value={reportSourcesPayload} />
 							<button class="header-action header-primary-action" type="button" disabled={reportGenerating} onclick={prepareReportSnapshot} aria-label={reportGenerating ? '正在生成本期周报' : '生成本期周报'} title="生成本期周报">
 								<LoaderCircle class={reportGenerating ? 'spinning' : ''} size={17} />
 								<span>{reportGenerating ? '生成中…' : '生成本期周报'}</span>

@@ -1,21 +1,24 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { fetchManualChoiceSources, normalizeManualChoiceSources } from '../src/lib/liability-choice.js';
+import { fetchManualLiabilitySources, normalizeManualLiabilitySources } from '../src/lib/liability-choice.js';
 
-test('browser-safe liability report fetch uses one quant-calibrated CTR request and never calls EDB', async () => {
+test('browser-safe liability report fetch uses CTR and paged DM registrations without EDB', async () => {
 	const requests = [];
-	const result = await fetchManualChoiceSources({
+	const result = await fetchManualLiabilitySources({
 		dataApiUrl: 'https://data.example/data',
 		asOfDate: '2026-08-31',
 		fetchImpl: async (url) => {
 			requests.push(String(url));
-			return new Response(JSON.stringify({ function: 'CTR', fields: [], rows: [] }), { status: 200 });
+			return String(url).includes('/choice/ctr')
+				? Response.json({ function: 'CTR', fields: [], rows: [] })
+				: Response.json({ hasNextPage: false, rows: [] });
 		}
 	});
-	assert.equal(requests.length, 1);
+	assert.equal(requests.length, 2);
 	assert.equal(requests.filter((url) => url.includes('/choice/edb')).length, 0);
 	assert.equal(requests.filter((url) => url.includes('/choice/ctr')).length, 1);
+	assert.equal(requests.filter((url) => url.includes('/broker-bond-registrations')).length, 1);
 	const ctrRequest = requests.find((url) => url.includes('/choice/ctr'));
 	const ctrUrl = new URL(ctrRequest);
 	assert.equal(ctrUrl.pathname, '/data/choice/ctr');
@@ -27,10 +30,18 @@ test('browser-safe liability report fetch uses one quant-calibrated CTR request 
 	assert.match(ctrOptions, /Company_Type=-/);
 	assert.equal(result.window.startDate, '2026-08-24');
 	assert.equal(result.ctr.status, 'available');
+	assert.deepEqual(result.registrationWindow, { startDate: '2026-08-24', endDate: '2026-08-28' });
+	const registrationUrl = new URL(requests.find((url) => url.includes('/broker-bond-registrations')));
+	assert.equal(registrationUrl.searchParams.get('pageNum'), '1');
+	assert.equal(registrationUrl.searchParams.get('pageSize'), '50');
+	assert.equal(registrationUrl.searchParams.get('startDate'), '2026-08-24');
+	assert.equal(registrationUrl.searchParams.get('endDate'), '2026-08-28');
+	assert.match(registrationUrl.searchParams.get('fields'), /projectName,issuerName,status,variety,amountYi/);
+	assert.equal(result.registration.status, 'available');
 });
 
-test('server snapshot validation rebuilds the expected CTR request and rejects unavailable data', () => {
-	const choice = normalizeManualChoiceSources({
+test('server snapshot validation rebuilds expected CTR and DM request contracts', () => {
+	const sources = normalizeManualLiabilitySources({
 		window: { startDate: 'tampered', endDate: 'tampered' },
 		ctr: {
 			status: 'available',
@@ -38,26 +49,77 @@ test('server snapshot validation rebuilds the expected CTR request and rejects u
 			request: { reportName: 'tampered' },
 			fields: ['SECUCODE'],
 			rows: [{ SECUCODE: '123456.SH', ignored: 'not-requested' }]
+		},
+		registration: {
+			status: 'available',
+			fields: [
+				'projectName', 'issuerName', 'status', 'variety', 'amountYi', 'region', 'industry',
+				'leadUnderwriter', 'noticeNumber', 'venue', 'registrationOrFiling', 'updateDate'
+			],
+			rows: [{
+				projectName: '测试项目', issuerName: '测试证券股份有限公司', status: '已受理',
+				variety: '小公募', amountYi: 100, updateDate: '2026-08-28'
+			}]
 		}
 	}, '2026-08-31');
-	assert.deepEqual(choice.window, { startDate: '2026-08-24', endDate: '2026-08-31' });
-	assert.equal(choice.ctr.request.reportName, 'BondIssueDetail');
-	assert.deepEqual(choice.ctr.rows, [{ SECUCODE: '123456.SH' }]);
+	assert.deepEqual(sources.window, { startDate: '2026-08-24', endDate: '2026-08-31' });
+	assert.deepEqual(sources.registrationWindow, { startDate: '2026-08-24', endDate: '2026-08-28' });
+	assert.equal(sources.ctr.request.reportName, 'BondIssueDetail');
+	assert.deepEqual(sources.ctr.rows, [{ SECUCODE: '123456.SH' }]);
+	assert.deepEqual(sources.registration.rows, [{
+		projectName: '测试项目', issuerName: '测试证券股份有限公司', status: '已受理',
+		variety: '小公募', amountYi: 100, region: null, industry: null,
+		leadUnderwriter: null, noticeNumber: null, venue: null,
+		registrationOrFiling: null, updateDate: '2026-08-28'
+	}]);
 	assert.throws(
-		() => normalizeManualChoiceSources({ ctr: { status: 'missing' } }, '2026-08-31'),
+		() => normalizeManualLiabilitySources({ ctr: { status: 'missing' } }, '2026-08-31'),
 		/尚未成功返回/
 	);
 });
 
-test('Choice CTR failures are retried without adding another logical request', async () => {
+test('Choice CTR failures are retried while the DM registration request remains independent', async () => {
 	let calls = 0;
-	const result = await fetchManualChoiceSources({
+	const result = await fetchManualLiabilitySources({
 		dataApiUrl: 'https://data.example/data', asOfDate: '2026-08-31',
-		fetchImpl: async () => { calls += 1; return new Response('upstream failure', { status: 503 }); },
+		fetchImpl: async (url) => {
+			calls += 1;
+			return String(url).includes('/choice/ctr')
+				? new Response('upstream failure', { status: 503 })
+				: Response.json({ hasNextPage: false, rows: [] });
+		},
 		retryDelayMs: 0
 	});
-	assert.equal(calls, 3);
+	assert.equal(calls, 4);
 	assert.equal(result.ctr.status, 'missing');
+	assert.equal(result.registration.status, 'available');
+});
+
+test('DM registration pages are exhausted before the report payload is saved', async () => {
+	const registrationPages = [];
+	const result = await fetchManualLiabilitySources({
+		dataApiUrl: 'https://data.example/data', asOfDate: '2026-08-31',
+		fetchImpl: async (url) => {
+			const parsed = new URL(url);
+			if (parsed.pathname.endsWith('/choice/ctr')) return Response.json({ function: 'CTR', fields: [], rows: [] });
+			const pageNum = Number(parsed.searchParams.get('pageNum'));
+			registrationPages.push(pageNum);
+			return Response.json({
+				hasNextPage: pageNum === 1,
+				rows: [{
+					projectName: `测试项目${pageNum}`, issuerName: '测试证券股份有限公司',
+					status: '已受理', variety: '小公募', amountYi: pageNum,
+					region: null, industry: '证券', leadUnderwriter: null,
+					noticeNumber: null, venue: '上交所', registrationOrFiling: '注册',
+					updateDate: '2026-08-28'
+				}]
+			});
+		},
+		retryDelayMs: 0
+	});
+	assert.deepEqual(registrationPages, [1, 2]);
+	assert.equal(result.registration.pageCount, 2);
+	assert.equal(result.registration.rows.length, 2);
 });
 
 test('weekly page renders the complete report directly in the workspace', () => {
@@ -321,10 +383,11 @@ test('page load never fetches quota-limited Choice sources and the browser owns 
 		fs.readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8'),
 		fs.readFileSync(new URL('../src/lib/server/liability-weekly-reports.js', import.meta.url), 'utf8')
 	];
-	assert.doesNotMatch(page, /fetchManualChoiceSources/);
-	assert.doesNotMatch(service, /fetchManualChoiceSources|CHOICE_DATA_API_URL/);
-	assert.match(layout, /fetchManualChoiceSources/);
-	assert.match(layout, /choiceDataApiUrl/);
+	assert.doesNotMatch(page, /fetchManualLiabilitySources/);
+	assert.doesNotMatch(service, /fetchManualLiabilitySources|CHOICE_DATA_API_URL/);
+	assert.match(layout, /fetchManualLiabilitySources/);
+	assert.match(layout, /broker-bond-registrations|reportSourcesPayload/);
+	assert.match(layout, /dataApiUrl/);
 	assert.match(layout, /liability-report\?\/saveSnapshot/);
 	assert.match(page, /saveSnapshot:[\s\S]*saveLiabilityWeeklyReportSnapshot/);
 	assert.doesNotMatch(page, /generateLiabilityWeeklyReport|generate:/);
@@ -340,6 +403,9 @@ test('liability market rates come from scheduled public.edb data, not manual Cho
 	assert.match(service, /edbLogicalRequests: 0/);
 	assert.match(service, /peer\.bond_type IN \('证券公司债', '证券公司次级债', '证券公司短期融资券'\)/);
 	assert.match(service, /registration\.variety IN \('小公募', '私募'\)/);
+	assert.match(service, /manualSources\.registration\.status === 'available'/);
+	assert.match(service, /registrationProgress: manualSources\.registration\.status/);
+	assert.match(service, /path: '\/broker-bond-registrations'/);
 	assert.doesNotMatch(choice, /\/choice\/edb|edbIds/);
 	assert.doesNotMatch(page, /\/choice\/edb|edbIds/);
 });

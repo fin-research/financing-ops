@@ -9,7 +9,7 @@ import {
 	saveLiabilityWeeklyReportSnapshot
 } from '$lib/server/liability-weekly-reports.js';
 
-const MAX_CHOICE_PAYLOAD_LENGTH = 4_000_000;
+const MAX_SOURCE_PAYLOAD_LENGTH = 4_000_000;
 
 export const load: PageServerLoad = async ({ url, platform }) => {
 	const database = getDatabase();
@@ -45,8 +45,8 @@ export const load: PageServerLoad = async ({ url, platform }) => {
 			missingModules
 		};
 	}
-	const configuredChoiceDataApiUrl = platform?.env?.CHOICE_DATA_API_URL;
-	const choiceDataApiUrl = String(configuredChoiceDataApiUrl || new URL('/data', url.origin))
+	const configuredDataApiUrl = platform?.env?.CHOICE_DATA_API_URL;
+	const dataApiUrl = String(configuredDataApiUrl || new URL('/data', url.origin))
 		.replace(/\/$/, '');
 	return {
 		report,
@@ -54,29 +54,29 @@ export const load: PageServerLoad = async ({ url, platform }) => {
 		selectedRunId: selectedRun?.id ?? null,
 		snapshotError,
 		liveAsOfDate: liveReport.asOfDate,
-		choiceDataApiUrl
+		dataApiUrl
 	};
 };
 
 export const actions = {
 	saveSnapshot: async (event) => {
 		const data = await event.request.formData();
-		const choicePayload = String(data.get('choice') ?? '');
-		if (!choicePayload || choicePayload.length > MAX_CHOICE_PAYLOAD_LENGTH) {
-			return fail(400, { message: 'Choice CTR 数据为空或超过快照大小限制' });
+		const sourcesPayload = String(data.get('sources') ?? '');
+		if (!sourcesPayload || sourcesPayload.length > MAX_SOURCE_PAYLOAD_LENGTH) {
+			return fail(400, { message: '周报数据源为空或超过快照大小限制' });
 		}
-		let choice;
+		let sources;
 		try {
-			choice = JSON.parse(choicePayload);
+			sources = JSON.parse(sourcesPayload);
 		} catch {
-			return fail(400, { message: 'Choice CTR 数据格式无效' });
+			return fail(400, { message: '周报数据源格式无效' });
 		}
 		try {
 			const result = await saveLiabilityWeeklyReportSnapshot({
 				database: getDatabase(event),
 				env: event.platform?.env,
 				actor: event.locals.user,
-				choice,
+				sources,
 				expectedAsOfDate: String(data.get('asOfDate') ?? '')
 			});
 			return {

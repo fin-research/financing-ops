@@ -32,8 +32,8 @@ Local scripts → direct DATABASE_URL → Neon financing
 - `src/lib/server/reminders.js` 承载提醒候选、Resend 调用和发送日志。
 - `src/worker.ts` 在 SvelteKit fetch 入口外增加每小时 Cron；`src/lib/server/reminder-scheduler.js` 为每次调度创建并关闭一个 Hyperdrive 连接。
 - `src/lib/server/project-deletion.js` 负责项目、任务和提醒的原子删除。
-- `src/lib/liability-choice.js` 封装浏览器端负债周报 Choice CTR 请求和服务端入库前校验；用户点击生成后，浏览器直接请求公开 `/data/choice/ctr`，financing 服务端不代理 Choice 请求。
-- `src/lib/server/liability-weekly-reports.js` 负责负债周报数据来源状态、历史快照索引和快照保存；保存 action 接收浏览器已取得的 CTR 数据并校验，把缺失项返回给全局系统消息，利率走势由集合查询只读统一 `public.edb`。
+- `src/lib/liability-choice.js` 封装浏览器端负债周报数据请求和服务端入库前校验；用户点击生成后，浏览器并行请求公开 `/data/choice/ctr` 与 `/data/broker-bond-registrations`，后者按上一完整周分页取数，financing 服务端不代理上游请求。
+- `src/lib/server/liability-weekly-reports.js` 负责负债周报数据来源状态、历史快照索引和快照保存；保存 action 接收浏览器已取得的 CTR 与 DM 申报数据并重建请求边界、校验字段和日期，DM 成功时覆盖本次报告的申报底稿行，失败时回退生产库底稿并把缺失项返回给全局系统消息；利率走势由集合查询只读统一 `public.edb`。
 - `src/lib/server/auth.js` 与 `neon-auth-client.js` 封装 Neon Auth；业务页面不直接拼 Auth 请求。
 
 ## 数据路径
@@ -58,7 +58,7 @@ Excel / SQLite / 手工提醒脚本 → gitignored `.env.database` 直连 Neon�
 - 项目列表首屏 1 次集合查询；人员与启用 SOP 在弹窗打开时通过 `/projects/options` 1 次按需加载。
 - 提醒历史使用三字段 keyset 游标，每批最多 50 条，加载更多不重复全量汇总。
 - 负债周报首屏使用 1 次负债/快照/现金流/项目集合查询和 1 次额度集合查询；查询同时返回快照与明细勾稽状态，前端不自行重算业务口径。
-- 负债周报生成不是页面 load 或 Cron 的副作用：页面从 `public.edb` 读取利率序列；只有用户点击“生成本期周报”后，浏览器才直接读取一次 Choice CTR，再把返回数据提交给 `saveSnapshot` action。该 action 不请求 Choice，只重新读取可信数据库数据、校验 CTR 并保存完整报告 JSON。快照写入现有 `eastmoney` R2 桶的 `liability-report/yyyy-mm-dd.json` 固定 key；同一日重新生成会覆盖该对象和对应索引行，Neon `liability_weekly_report_runs` 保存基准日、来源清单、缺失模块和内容哈希；页眉历史日期选择框只读 R2 快照。`public.edb` 的增量写入由 dashboard 每日定时 Workflow 统一负责，financing Worker 不建立第二套 EDB 调度。
+- 负债周报生成不是页面 load 或 Cron 的副作用：页面从 `public.edb` 读取利率序列；只有用户点击“生成本期周报”后，浏览器才直接读取一次 Choice CTR，并分页读取上一完整周的 DM 券商债券申报，再把两类返回数据提交给 `saveSnapshot` action。该 action 不请求 Choice 或 DM，只重新读取可信数据库数据、校验浏览器数据并保存完整报告 JSON。DM 不可用时以 `liability_registration_progress` 的本周底稿作为显式回退。快照写入现有 `eastmoney` R2 桶的 `liability-report/yyyy-mm-dd.json` 固定 key；同一日重新生成会覆盖该对象和对应索引行，Neon `liability_weekly_report_runs` 保存基准日、来源清单、缺失模块和内容哈希；页眉历史日期选择框只读 R2 快照。`public.edb` 的增量写入由 dashboard 每日定时 Workflow 统一负责，financing Worker 不建立第二套 EDB 调度。
 
 增加查询时必须说明请求级 SQL 次数是否变化，并更新网络效率测试。
 
