@@ -3,11 +3,13 @@ import { getLiabilityWeeklyReportData } from '$lib/server/queries.js';
 import { getDatabase } from '$lib/server/db.js';
 import { fail } from '@sveltejs/kit';
 import {
-	generateLiabilityWeeklyReport,
 	getLiabilityWeeklyReportHistory,
 	getLiabilityWeeklyReportSourceStatus,
-	readLiabilityWeeklyReportSnapshot
+	readLiabilityWeeklyReportSnapshot,
+	saveLiabilityWeeklyReportSnapshot
 } from '$lib/server/liability-weekly-reports.js';
+
+const MAX_CHOICE_PAYLOAD_LENGTH = 4_000_000;
 
 export const load: PageServerLoad = async ({ url, platform }) => {
 	const database = getDatabase();
@@ -43,20 +45,39 @@ export const load: PageServerLoad = async ({ url, platform }) => {
 			missingModules
 		};
 	}
-	return { report, reportHistory, selectedRunId: selectedRun?.id ?? null, snapshotError };
+	const configuredChoiceDataApiUrl = platform?.env?.CHOICE_DATA_API_URL;
+	const choiceDataApiUrl = String(configuredChoiceDataApiUrl || new URL('/data', url.origin))
+		.replace(/\/$/, '');
+	return {
+		report,
+		reportHistory,
+		selectedRunId: selectedRun?.id ?? null,
+		snapshotError,
+		liveAsOfDate: liveReport.asOfDate,
+		choiceDataApiUrl
+	};
 };
 
 export const actions = {
-	generate: async (event) => {
+	saveSnapshot: async (event) => {
 		const data = await event.request.formData();
-		if (String(data.get('confirm') ?? '') !== 'yes') {
-			return fail(400, { message: '请确认手动生成；利率数据读取 public.edb，本次只发起一次 Choice CTR 逻辑请求。' });
+		const choicePayload = String(data.get('choice') ?? '');
+		if (!choicePayload || choicePayload.length > MAX_CHOICE_PAYLOAD_LENGTH) {
+			return fail(400, { message: 'Choice CTR 数据为空或超过快照大小限制' });
+		}
+		let choice;
+		try {
+			choice = JSON.parse(choicePayload);
+		} catch {
+			return fail(400, { message: 'Choice CTR 数据格式无效' });
 		}
 		try {
-			const result = await generateLiabilityWeeklyReport({
+			const result = await saveLiabilityWeeklyReportSnapshot({
 				database: getDatabase(event),
 				env: event.platform?.env,
-				actor: event.locals.user
+				actor: event.locals.user,
+				choice,
+				expectedAsOfDate: String(data.get('asOfDate') ?? '')
 			});
 			return {
 				success: true,
@@ -65,7 +86,7 @@ export const actions = {
 				message: `已生成 ${result.asOfDate} 周报快照`
 			};
 		} catch (error: any) {
-			return fail(503, { message: `周报生成失败：${String(error?.message ?? error)}` });
+			return fail(503, { message: `周报快照保存失败：${String(error?.message ?? error)}` });
 		}
 	}
 };

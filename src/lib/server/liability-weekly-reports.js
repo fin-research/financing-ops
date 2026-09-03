@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { getLiabilityWeeklyReportData } from './queries.js';
 import { prepareAudit } from './audit.js';
-import { fetchManualChoiceSources } from './liability-choice.js';
+import { normalizeManualChoiceSources } from '../liability-choice.js';
 
 const SOURCE_FILES = {
 	peer: '底稿/【每周五替换】可比券商底稿/债券发行明细.xlsx',
@@ -27,7 +27,7 @@ const CALIBER = {
 	projects: '推进中融资计划只读 financing.projects 的 planning/in_progress/at_risk，项目字段缺失不隐藏。',
 	dynamics: '近期动态只含实际发行、到期和付息；收益凭证发行日优先取认购日，融资计划不计入动态金额。',
 	market: '利率走势只读 Neon public.edb；Choice EDB 由 dashboard 每日定时增量更新，页面访问和手动生成都不调用 EDB。',
-	choice: '每次手动生成只发起一次 Choice CTR 逻辑请求；可比发行与申报表按上一完整周的周一至周五及券商品种过滤，失败请求可有限重试。',
+	choice: '用户点击生成后由浏览器直接发起一次 Choice CTR 逻辑请求，financing 服务端只校验并保存返回数据；可比发行与申报表按上一完整周的周一至周五及券商品种过滤，失败请求可有限重试。',
 	due30: '未来30天与年内到期核心指标统计全量已安排负债并纳入尚未发行记录；仅未来30天到期明细排除同业拆借和浮动收益凭证，独立付息现金流不计作负债到期。',
 	parameters: '净资本、净资产和资产负债率沿用安装包报告期；月末字段按自然月末日期记录。'
 };
@@ -172,13 +172,15 @@ export async function readLiabilityWeeklyReportSnapshot(env, run) {
 	return object.json();
 }
 
-export async function generateLiabilityWeeklyReport({ database, env, actor, fetchImpl = fetch }) {
+export async function saveLiabilityWeeklyReportSnapshot({ database, env, actor, choice: submittedChoice, expectedAsOfDate }) {
 	const bucket = env?.LIABILITY_REPORT_SNAPSHOTS;
 	if (!bucket) throw new Error('R2 绑定 LIABILITY_REPORT_SNAPSHOTS 不可用');
 	const baseReport = await getLiabilityWeeklyReportData(database);
 	const asOfDate = baseReport.asOfDate;
-	const dataApiUrl = env.CHOICE_DATA_API_URL || 'https://eastmoney.hasbai.xyz/data';
-	const choice = await fetchManualChoiceSources({ dataApiUrl, asOfDate, fetchImpl });
+	if (expectedAsOfDate !== asOfDate) {
+		throw new Error(`周报数据日期已由 ${expectedAsOfDate} 更新为 ${asOfDate}，请刷新页面后重试`);
+	}
+	const choice = normalizeManualChoiceSources(submittedChoice, asOfDate);
 	const sources = await getLiabilityWeeklyReportSourceStatus(database, asOfDate, choice);
 	if (!baseReport.quality.liveDerivedReliable) {
 		sources.missingModules.push({
@@ -196,7 +198,7 @@ export async function generateLiabilityWeeklyReport({ database, env, actor, fetc
 		choice,
 		provenance: {
 			generation: 'manual',
-			choiceQuota: { edbLogicalRequests: 0, ctrLogicalRequests: 1, maxAttemptsPerRequest: 3 },
+			choiceQuota: { edbLogicalRequests: 0, ctrLogicalRequests: 1, maxAttemptsPerRequest: 3, requestOrigin: 'browser' },
 			databaseSources: { marketRates: 'public.edb', marketRatesSyncedAt: sources.counts.market_synced_at ?? null },
 			sourceFiles: SOURCE_FILES,
 			caliber: CALIBER,
@@ -241,10 +243,10 @@ export async function generateLiabilityWeeklyReport({ database, env, actor, fetc
 		await prepareAudit({
 			db: transaction,
 			actor,
-			action: 'liability_weekly_report.generate',
+			action: 'liability_weekly_report.save_snapshot',
 			entityType: 'liability_weekly_report',
 			entityId: id,
-			summary: `手动生成负债周报：${asOfDate}`,
+			summary: `保存负债周报快照：${asOfDate}`,
 			before: previousRun,
 			after: { id, asOfDate, r2Key, contentSha256, provenance: snapshot.provenance, replaces: previousRun?.id ?? null }
 		}).run();

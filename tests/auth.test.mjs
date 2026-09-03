@@ -85,7 +85,7 @@ test('write authorization is enforced by role and named action', () => {
 		['/people', 'createPerson'],
 		['/projects', 'createProject'],
 		['/sop', 'createSop'],
-		['/liability-report', 'generate']
+		['/liability-report', 'saveSnapshot']
 	]) {
 		assert.equal(isAuthorizedRequest('reviewer', routeId, 'POST', actionName), true);
 		assert.equal(isAuthorizedRequest('handler', routeId, 'POST', actionName), false);

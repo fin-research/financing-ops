@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { fetchManualChoiceSources } from '../src/lib/server/liability-choice.js';
+import { fetchManualChoiceSources, normalizeManualChoiceSources } from '../src/lib/liability-choice.js';
 
-test('liability report generation uses one quant-calibrated CTR request and never calls EDB', async () => {
+test('browser-safe liability report fetch uses one quant-calibrated CTR request and never calls EDB', async () => {
 	const requests = [];
 	const result = await fetchManualChoiceSources({
 		dataApiUrl: 'https://data.example/data',
@@ -18,6 +18,7 @@ test('liability report generation uses one quant-calibrated CTR request and neve
 	assert.equal(requests.filter((url) => url.includes('/choice/ctr')).length, 1);
 	const ctrRequest = requests.find((url) => url.includes('/choice/ctr'));
 	const ctrUrl = new URL(ctrRequest);
+	assert.equal(ctrUrl.pathname, '/data/choice/ctr');
 	assert.equal(ctrUrl.searchParams.get('reportName'), 'BondIssueDetail');
 	const ctrOptions = ctrUrl.searchParams.get('options');
 	assert.match(ctrOptions, /Bond_Type=646003/);
@@ -26,6 +27,26 @@ test('liability report generation uses one quant-calibrated CTR request and neve
 	assert.match(ctrOptions, /Company_Type=-/);
 	assert.equal(result.window.startDate, '2026-08-24');
 	assert.equal(result.ctr.status, 'available');
+});
+
+test('server snapshot validation rebuilds the expected CTR request and rejects unavailable data', () => {
+	const choice = normalizeManualChoiceSources({
+		window: { startDate: 'tampered', endDate: 'tampered' },
+		ctr: {
+			status: 'available',
+			function: 'CTR',
+			request: { reportName: 'tampered' },
+			fields: ['SECUCODE'],
+			rows: [{ SECUCODE: '123456.SH', ignored: 'not-requested' }]
+		}
+	}, '2026-08-31');
+	assert.deepEqual(choice.window, { startDate: '2026-08-24', endDate: '2026-08-31' });
+	assert.equal(choice.ctr.request.reportName, 'BondIssueDetail');
+	assert.deepEqual(choice.ctr.rows, [{ SECUCODE: '123456.SH' }]);
+	assert.throws(
+		() => normalizeManualChoiceSources({ ctr: { status: 'missing' } }, '2026-08-31'),
+		/尚未成功返回/
+	);
 });
 
 test('Choice CTR failures are retried without adding another logical request', async () => {
@@ -294,16 +315,25 @@ test('liability charts and source queries follow the installation-package chart 
 	assert.doesNotMatch(queries, /ABS\(value - previous_value\)|ABS\(value - next_value\)/);
 });
 
-test('page load never fetches quota-limited Choice sources', () => {
-	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8');
+test('page load never fetches quota-limited Choice sources and the browser owns the manual CTR request', () => {
+	const [page, layout, service] = [
+		fs.readFileSync(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8'),
+		fs.readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8'),
+		fs.readFileSync(new URL('../src/lib/server/liability-weekly-reports.js', import.meta.url), 'utf8')
+	];
 	assert.doesNotMatch(page, /fetchManualChoiceSources/);
-	assert.match(page, /action.*generate|generateLiabilityWeeklyReport/s);
+	assert.doesNotMatch(service, /fetchManualChoiceSources|CHOICE_DATA_API_URL/);
+	assert.match(layout, /fetchManualChoiceSources/);
+	assert.match(layout, /choiceDataApiUrl/);
+	assert.match(layout, /liability-report\?\/saveSnapshot/);
+	assert.match(page, /saveSnapshot:[\s\S]*saveLiabilityWeeklyReportSnapshot/);
+	assert.doesNotMatch(page, /generateLiabilityWeeklyReport|generate:/);
 });
 
 test('liability market rates come from scheduled public.edb data, not manual Choice EDB', () => {
 	const [service, choice, page] = [
 		fs.readFileSync(new URL('../src/lib/server/liability-weekly-reports.js', import.meta.url), 'utf8'),
-		fs.readFileSync(new URL('../src/lib/server/liability-choice.js', import.meta.url), 'utf8'),
+		fs.readFileSync(new URL('../src/lib/liability-choice.js', import.meta.url), 'utf8'),
 		fs.readFileSync(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8')
 	];
 	assert.match(service, /public\.edb/);
@@ -311,7 +341,7 @@ test('liability market rates come from scheduled public.edb data, not manual Cho
 	assert.match(service, /peer\.bond_type IN \('证券公司债', '证券公司次级债', '证券公司短期融资券'\)/);
 	assert.match(service, /registration\.variety IN \('小公募', '私募'\)/);
 	assert.doesNotMatch(choice, /\/choice\/edb|edbIds/);
-	assert.match(page, /利率数据读取 public\.edb/);
+	assert.doesNotMatch(page, /\/choice\/edb|edbIds/);
 });
 
 test('weekly report snapshots overwrite the existing eastmoney liability-report key by date', () => {

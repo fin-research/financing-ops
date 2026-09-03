@@ -3,7 +3,9 @@
 	import { enhance } from '$app/forms';
 	import { preloadData } from '$app/navigation';
 	import { navigating, page } from '$app/state';
+	import { tick } from 'svelte';
 	import { withBase, withoutBase } from '$lib/app-paths';
+	import { fetchManualChoiceSources } from '$lib/liability-choice.js';
 	import {
 		BarChart3,
 		BriefcaseBusiness,
@@ -55,6 +57,8 @@
 	};
 	let navigationSlow = $state(false);
 	let reportGenerating = $state(false);
+	let reportSnapshotForm = $state<HTMLFormElement>();
+	let reportChoicePayload = $state('');
 	$effect(() => {
 		if (!navigating.to) {
 			navigationSlow = false;
@@ -94,8 +98,26 @@
 	const submitReportHistorySelection = (event: Event) => {
 		(event.currentTarget as HTMLSelectElement).form?.requestSubmit();
 	};
-	const enhanceReportGeneration = () => {
+	const prepareReportSnapshot = async () => {
+		if (reportGenerating) return;
 		reportGenerating = true;
+		try {
+			const asOfDate = String((page.data as any)?.liveAsOfDate ?? '');
+			const dataApiUrl = String((page.data as any)?.choiceDataApiUrl ?? new URL('/data', window.location.origin));
+			const choice = await fetchManualChoiceSources({ dataApiUrl, asOfDate });
+			if (choice.ctr.status !== 'available') throw new Error(choice.ctr.error);
+			reportChoicePayload = JSON.stringify(choice);
+			await tick();
+			if (!reportSnapshotForm) throw new Error('周报快照表单尚未就绪');
+			reportSnapshotForm.requestSubmit();
+		} catch (error: any) {
+			globalMessages.error(`周报生成失败：${String(error?.message ?? error)}`, {
+				key: 'liability-report-generation'
+			});
+			reportGenerating = false;
+		}
+	};
+	const enhanceReportSnapshotSaving = () => {
 		return async ({ result, update }: any) => {
 			try {
 				await update({ reset: false, invalidateAll: result.type === 'success' });
@@ -124,6 +146,7 @@
 					globalMessages.error(message, { key: 'liability-report-generation' });
 				}
 			} finally {
+				reportChoicePayload = '';
 				reportGenerating = false;
 			}
 		};
@@ -224,9 +247,10 @@
 						<button class="header-action" type="button" onclick={() => window.print()} aria-label="导出 PDF" title="导出 PDF">
 							<Printer size={17} /><span class="header-action-label">导出 PDF</span>
 						</button>
-						<form method="POST" action={withBase('/liability-report?/generate')} use:enhance={enhanceReportGeneration}>
-							<input type="hidden" name="confirm" value="yes" />
-							<button class="header-action header-primary-action" type="submit" disabled={reportGenerating} aria-label={reportGenerating ? '正在生成本期周报' : '生成本期周报'} title="生成本期周报">
+						<form bind:this={reportSnapshotForm} method="POST" action={withBase('/liability-report?/saveSnapshot')} use:enhance={enhanceReportSnapshotSaving}>
+							<input type="hidden" name="asOfDate" value={String((page.data as any)?.liveAsOfDate ?? '')} />
+							<input type="hidden" name="choice" value={reportChoicePayload} />
+							<button class="header-action header-primary-action" type="button" disabled={reportGenerating} onclick={prepareReportSnapshot} aria-label={reportGenerating ? '正在生成本期周报' : '生成本期周报'} title="生成本期周报">
 								<LoaderCircle class={reportGenerating ? 'spinning' : ''} size={17} />
 								<span>{reportGenerating ? '生成中…' : '生成本期周报'}</span>
 							</button>
