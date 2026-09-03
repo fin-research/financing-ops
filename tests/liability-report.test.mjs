@@ -164,13 +164,17 @@ test('generation publishes missing-data reminders through global system messages
 	assert.match(server, /missingModules: result\.missingModules/);
 });
 
-test('monitoring gauges reuse the market-briefing pointer and anchor treatment without texture', () => {
+test('monitoring gauges use strong threshold colors and keep the value clear of the arc', () => {
 	const chart = fs.readFileSync(new URL('../src/routes/liability-report/ReportGaugeChart.svelte', import.meta.url), 'utf8');
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	assert.match(chart, /type: 'gauge'/);
-	assert.match(chart, /pointer:\s*\{[\s\S]*show: hasValue[\s\S]*length: '50%'/);
+	assert.match(chart, /pointer:\s*\{[\s\S]*show: hasValue[\s\S]*length: '46%'/);
 	assert.match(chart, /anchor:\s*\{[\s\S]*show: hasValue[\s\S]*borderColor: tone/);
 	assert.match(chart, /shadowBlur: 6/);
+	assert.match(chart, /\[Math\.min\(warning \/ chartMax, 1\), '#059669'\]/);
+	assert.match(chart, /\[Math\.min\(limit \/ chartMax, 1\), '#d97706'\]/);
+	assert.match(chart, /\[1, '#dc2626'\]/);
+	assert.match(chart, /offsetCenter: \[0, '27%'\]/);
 	assert.doesNotMatch(chart, /progress:/);
 	assert.match(chart, /stateLabel/);
 	assert.match(chart, /tooltip:/);
@@ -189,19 +193,22 @@ test('weekly peer tables follow the installation-package weekly filters and coup
 	assert.match(importer, /couponRatePct: number\(row\[30\]\)/);
 });
 
-test('weekly broker pricing flows into the right column before registration follows it', () => {
+test('weekly broker pricing continuation starts in the right column before registration follows it', () => {
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	const css = fs.readFileSync(new URL('../src/routes/liability-report/weekly-report.css', import.meta.url), 'utf8');
 	const peerSection = page.slice(page.indexOf('section-6-title'), page.indexOf('section-7-title'));
-	assert.match(peerSection, /class="peer-flow"/);
-	assert.match(peerSection, /report\.peerIssuances as item/);
+	assert.match(peerSection, /class="peer-columns"/);
+	assert.match(page, /splitPeerIssuances\(report\.peerIssuances/);
+	assert.match(page, /rows\.slice\(0, leftCount\), rows\.slice\(leftCount\)/);
+	assert.match(peerSection, /本周券商债券发行定价（续表）/);
+	assert.match(peerSection, /peerIssuanceColumns\[1\]\.length/);
 	assert.match(peerSection, /report\.registrationProgress as item/);
 	assert.match(peerSection, /brokerShortName\(item\.issuerName\)/);
 	assert.ok(peerSection.indexOf('本周券商债券发行定价') < peerSection.indexOf('本周券商债券申报动态'));
-	assert.match(css, /\.peer-flow\s*\{[^}]*column-count:\s*2[^}]*column-fill:\s*balance/);
-	assert.match(css, /@media \(max-width:\s*64rem\)[\s\S]*\.peer-flow\s*\{\s*column-count:\s*1/);
-	assert.match(css, /\.peer-flow thead\s*\{\s*display:\s*table-header-group/);
-	assert.doesNotMatch(peerSection, /peerIssuances\.slice|registrationColumns/);
+	assert.match(css, /\.peer-columns\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)[^}]*align-items:\s*start/);
+	assert.match(css, /@media \(max-width:\s*64rem\)[\s\S]*\.peer-columns\s*\{\s*grid-template-columns:\s*1fr/);
+	assert.match(css, /\.peer-column\s*\{[^}]*align-content:\s*start/);
+	assert.doesNotMatch(css, /column-count|column-fill/);
 });
 
 test('all weekly report tables and quota progress charts size to their available columns without scrollbars', () => {
@@ -209,6 +216,7 @@ test('all weekly report tables and quota progress charts size to their available
 	assert.match(css, /\.table-scroll\s*\{[^}]*overflow:\s*visible/);
 	assert.match(css, /\.bento-table\s*\{[\s\S]*table-layout:\s*auto/);
 	assert.match(css, /\.quota-progress\s*\{[^}]*width:\s*clamp\(/);
+	assert.match(css, /\.quota-progress\s*\{[^}]*min-width:\s*8rem/);
 	assert.doesNotMatch(css, /overflow-x:\s*auto|min-width:\s*(?:32|47|58|9)rem|table-layout:\s*fixed/);
 });
 
@@ -247,6 +255,8 @@ test('liability charts and source queries follow the installation-package chart 
 	assert.match(issuance, /\.\.\.issuanceTrendTypes\.map\(\(type\) => \(\{/);
 	assert.match(issuance, /data:\s*\[\.\.\.issuanceTrendTypes\]/);
 	assert.match(issuance, /params\.dataIndex === lastRateIndices\[type\]/);
+	assert.match(issuance, /Number\(row\.amountYi\) > 0 \|\| row\.weightedRatePct != null/);
+	assert.match(issuance, /connectNulls:\s*true/);
 	assert.doesNotMatch(issuance, /data:\s*\[[^\]]*加权发行利率/);
 
 	assert.match(stacked, /position:\s*'inside'/);
@@ -265,11 +275,9 @@ test('liability charts and source queries follow the installation-package chart 
 	assert.match(queries, /THEN '3年公募债'/);
 	assert.match(queries, /THEN '5年次级债'/);
 	assert.match(queries, /maturity_date - issue_date <= 366 THEN '短期公司债'/);
-	assert.match(queries, /raw_market_history_with_neighbors AS/);
-	assert.match(queries, /category <> 'state_owned_bank_ncd'/);
-	assert.match(queries, /ABS\(value - previous_value\) >= 0\.5/);
-	assert.match(queries, /ABS\(value - next_value\) >= 0\.5/);
-	assert.match(queries, /ABS\(previous_value - next_value\) <= 0\.1/);
+	assert.match(queries, /raw_market_history AS/);
+	assert.doesNotMatch(queries, /raw_market_history_with_neighbors|category <> 'state_owned_bank_ncd'/);
+	assert.doesNotMatch(queries, /ABS\(value - previous_value\)|ABS\(value - next_value\)/);
 });
 
 test('page load never fetches quota-limited Choice sources', () => {

@@ -40,13 +40,13 @@
 			axisLine: {
 				roundCap: true,
 				lineStyle: {
-					width: 9,
+					width: 10,
 					shadowBlur: 6,
 					shadowColor: 'rgba(32, 38, 34, 0.08)',
 					color: [
-						[Math.min(warning / chartMax, 1), '#d7f4e9'],
-						[Math.min(limit / chartMax, 1), '#fcecc8'],
-						[1, '#f8d9dc']
+						[Math.min(warning / chartMax, 1), '#059669'],
+						[Math.min(limit / chartMax, 1), '#d97706'],
+						[1, '#dc2626']
 					]
 				}
 			},
@@ -60,7 +60,7 @@
 			axisLabel: { show: false },
 			pointer: {
 				show: hasValue,
-				length: '50%',
+				length: '46%',
 				width: 3,
 				itemStyle: { color: tone, shadowBlur: 5, shadowColor: `${tone}3d` }
 			},
@@ -78,10 +78,10 @@
 			title: { show: false },
 			detail: {
 				valueAnimation: true,
-				offsetCenter: [0, '48%'],
+				offsetCenter: [0, '27%'],
 				color: '#163553',
-				fontSize: 18,
-				fontWeight: 800,
+				fontSize: 17,
+				fontWeight: 'bolder',
 				formatter: display
 			},
 			data: [{ value: safeValue, name: stateLabel }]

@@ -25,6 +25,7 @@
 	let peerRows = $derived(normalizePeerRows(report.peerIssueSummary ?? []));
 	let peerLabels = $derived(peerIssuerLabels(peerRows));
 	let peerTypes = $derived(orderedPeerTypes(peerRows));
+	let peerIssuanceColumns = $derived(splitPeerIssuances(report.peerIssuances ?? [], report.registrationProgress?.length ?? 0));
 	const marketCategories = [
 		{ key: 'state_owned_bank_ncd', title: '国有行同业存单发行利率走势' },
 		{ key: 'credit_spread_broker_govt_1y', title: 'AAA-券商与国债到期收益率及利差（1年）' },
@@ -75,6 +76,12 @@
 		return [...totals.values()];
 	}
 
+	function splitPeerIssuances(rows: any[], registrationCount: number) {
+		if (rows.length <= 10) return [rows, []];
+		const leftCount = Math.min(rows.length - 1, Math.max(10, Math.ceil((rows.length + registrationCount) / 2)));
+		return [rows.slice(0, leftCount), rows.slice(leftCount)];
+	}
+
 	function brokerShortName(value: string | null | undefined) {
 		if (!value) return '数据缺失';
 		const legalName = String(value).trim().replace(/(?:股份有限公司|有限责任公司|有限公司)$/u, '');
@@ -108,6 +115,10 @@
 		return { key: 'safe', label: '安全' };
 	}
 </script>
+
+{#snippet peerPricingTable(rows: any[])}
+	<div class="table-scroll"><table class="bento-table peer-pricing-table"><thead><tr><th>发行人</th><th>品种</th><th class="num">规模</th><th>期限</th><th class="num">利率</th><th>发行日期</th></tr></thead><tbody>{#each rows as item}<tr><td>{brokerShortName(item.issuerName)}</td><td>{item.bondType ?? '数据缺失'}</td><td class="num">{item.actualIssueAmountYi == null ? '数据缺失' : `${amount(item.actualIssueAmountYi)}亿`}</td><td>{item.issueTenor ?? '数据缺失'}</td><td class="num">{item.couponRatePct == null ? '数据缺失' : `${amount(item.couponRatePct, 2)}%`}</td><td>{dateLabel(item.issueDate)}</td></tr>{:else}<tr><td colspan="6" class="table-empty">可比券商发行数据缺失</td></tr>{/each}</tbody></table></div>
+{/snippet}
 
 <svelte:head><title>东方财富证券 · 资金管理部负债周报</title></svelte:head>
 
@@ -176,16 +187,26 @@
 			<section class="report-section" aria-labelledby="section-6-title">
 	<div class="card-head"><div class="section-title-wrap"><span class="section-tag">第六部分</span><h2 id="section-6-title" class="section-title">可比券商申报及发行</h2></div></div>
 	<div class="chart-container large-chart"><h3>{String(report.asOfDate).slice(0, 4)}年以来证券公司债券发行规模与品种构成（亿元）</h3><ReportStackedBarChart title="可比券商债券发行规模与品种构成" rows={peerRows} labels={peerLabels} types={peerTypes} height={430} horizontal highlightLabel="东方财富" /></div>
-	<div class="peer-flow">
-		<div class="bento-card">
-			<div class="inner-card-title">● 本周券商债券发行定价</div>
-			<div class="table-scroll"><table class="bento-table peer-pricing-table"><thead><tr><th>发行人</th><th>品种</th><th class="num">规模</th><th>期限</th><th class="num">利率</th><th>发行日期</th></tr></thead><tbody>{#each report.peerIssuances as item}<tr><td>{brokerShortName(item.issuerName)}</td><td>{item.bondType ?? '数据缺失'}</td><td class="num">{item.actualIssueAmountYi == null ? '数据缺失' : `${amount(item.actualIssueAmountYi)}亿`}</td><td>{item.issueTenor ?? '数据缺失'}</td><td class="num">{item.couponRatePct == null ? '数据缺失' : `${amount(item.couponRatePct, 2)}%`}</td><td>{dateLabel(item.issueDate)}</td></tr>{:else}<tr><td colspan="6" class="table-empty">可比券商发行数据缺失</td></tr>{/each}</tbody></table></div>
+		<div class="peer-columns">
+			<div class="peer-column">
+			<div class="bento-card">
+				<div class="inner-card-title">● 本周券商债券发行定价</div>
+				{@render peerPricingTable(peerIssuanceColumns[0])}
+			</div>
+			</div>
+			<div class="peer-column">
+			{#if peerIssuanceColumns[1].length}
+			<div class="bento-card">
+				<div class="inner-card-title">● 本周券商债券发行定价（续表）</div>
+				{@render peerPricingTable(peerIssuanceColumns[1])}
+			</div>
+			{/if}
+			<div class="bento-card">
+				<div class="inner-card-title">● 本周券商债券申报动态</div>
+				<div class="table-scroll"><table class="bento-table registration-table"><thead><tr><th>发行方</th><th>品种</th><th class="num">申报</th><th>状态</th><th>更新日</th></tr></thead><tbody>{#each report.registrationProgress as item}<tr><td>{brokerShortName(item.issuerName)}</td><td>{item.variety ?? '数据缺失'}</td><td class="num">{item.amountYi == null ? '数据缺失' : `${amount(item.amountYi, 0)}亿`}</td><td><span class="status-badge status-green">{item.status ?? '数据缺失'}</span></td><td>{dateLabel(item.updateDate)}</td></tr>{:else}<tr><td colspan="5" class="table-empty">可比券商申报数据缺失</td></tr>{/each}</tbody></table></div>
+			</div>
+			</div>
 		</div>
-		<div class="bento-card">
-			<div class="inner-card-title">● 本周券商债券申报动态</div>
-			<div class="table-scroll"><table class="bento-table registration-table"><thead><tr><th>发行方</th><th>品种</th><th class="num">申报</th><th>状态</th><th>更新日</th></tr></thead><tbody>{#each report.registrationProgress as item}<tr><td>{brokerShortName(item.issuerName)}</td><td>{item.variety ?? '数据缺失'}</td><td class="num">{item.amountYi == null ? '数据缺失' : `${amount(item.amountYi, 0)}亿`}</td><td><span class="status-badge status-green">{item.status ?? '数据缺失'}</span></td><td>{dateLabel(item.updateDate)}</td></tr>{:else}<tr><td colspan="5" class="table-empty">可比券商申报数据缺失</td></tr>{/each}</tbody></table></div>
-		</div>
-	</div>
 </section>
 		</div>
 		<footer class="bento-footer" aria-label="第 5 页"><span>东方财富证券股份有限公司 · 资金管理部</span><span>第 5 页 · 共 6 页</span></footer>

@@ -516,30 +516,14 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			LEFT JOIN people owner ON owner.id = project.owner_id
 			WHERE project.status IN ('planning', 'in_progress', 'at_risk')
 			ORDER BY project.planned_issue_date, project.name
-		), raw_market_history_with_neighbors AS (
+		), raw_market_history AS (
 			SELECT definition.series_id, definition.series_name, definition.category,
 				definition.tenor, observation.observation_date,
-				observation.value::double precision AS value, definition.unit,
-				LAG(observation.value::double precision) OVER (
-					PARTITION BY definition.series_id ORDER BY observation.observation_date
-				) AS previous_value,
-				LEAD(observation.value::double precision) OVER (
-					PARTITION BY definition.series_id ORDER BY observation.observation_date
-				) AS next_value
+				observation.value::double precision AS value, definition.unit
 			FROM public.edb observation
 			JOIN liability_rate_series definition ON definition.series_id = observation.indicator_code
 			CROSS JOIN latest
 			WHERE observation.observation_date BETWEEN date_trunc('year', latest.as_of_date)::date AND latest.as_of_date
-		), raw_market_history AS (
-			SELECT series_id, series_name, category, tenor, observation_date, value, unit
-			FROM raw_market_history_with_neighbors
-			WHERE category <> 'state_owned_bank_ncd'
-				OR previous_value IS NULL OR next_value IS NULL
-				OR NOT (
-					ABS(value - previous_value) >= 0.5
-					AND ABS(value - next_value) >= 0.5
-					AND ABS(previous_value - next_value) <= 0.1
-				)
 		), market_spread_history AS (
 			SELECT pair.broker_series_id || '-' || pair.government_series_id AS series_id,
 				pair.tenor || '信用利差' AS series_name, pair.category, pair.tenor,

@@ -4,7 +4,11 @@
 
 	type Row = { month: string; type: string; amountYi: number; weightedRatePct?: number | null };
 	let { rows = [] }: { rows?: Row[] } = $props();
-	const months = $derived([...new Set(rows.map((row) => row.month))].sort());
+	const months = $derived(
+		[...new Set(rows.map((row) => row.month))]
+			.sort()
+			.filter((month) => rows.some((row) => row.month === month && (Number(row.amountYi) > 0 || row.weightedRatePct != null)))
+	);
 	const lastRateIndices = $derived(Object.fromEntries(issuanceTrendTypes.map((type) => [type, lastObservedRateIndex(type)])));
 	const option = $derived({
 		aria: { enabled: true, decal: { show: false } },
@@ -50,7 +54,7 @@
 				showSymbol: true,
 				symbol: 'circle',
 				symbolSize: 6,
-				connectNulls: false,
+				connectNulls: true,
 				lineStyle: { width: 2.4, color: issuanceTrendColors[type] },
 				itemStyle: { color: issuanceTrendColors[type] },
 				label: {
