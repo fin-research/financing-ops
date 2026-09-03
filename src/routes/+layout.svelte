@@ -98,12 +98,24 @@
 			const asOfDate = selectedLiabilityReportDate();
 			const externalDataApiUrl = String((page.data as any)?.externalDataApiUrl ?? new URL('/data', window.location.origin));
 			const neonDataApi = new NeonDataApi();
-			const [external, business, marketRates] = await Promise.all([
+			const marketRatesRequest = neonDataApi.liabilityMarketRates(asOfDate).then(
+				(rows) => ({ rows, error: null }),
+				(error) => ({
+					rows: [],
+					error: String(error?.message ?? error).slice(0, 500)
+				})
+			);
+			const [external, business, marketRatesResult] = await Promise.all([
 				fetchManualLiabilitySources({ dataApiUrl: externalDataApiUrl, asOfDate }),
 				neonDataApi.liabilityWeeklyReportBusiness(asOfDate),
-				neonDataApi.liabilityMarketRates(asOfDate)
+				marketRatesRequest
 			]);
-			const database = attachLiabilityMarketRates(business, marketRates, asOfDate);
+			const database = attachLiabilityMarketRates(
+				business,
+				marketRatesResult.rows,
+				asOfDate,
+				marketRatesResult.error
+			);
 			reportSourcesPayload = JSON.stringify({ external, database });
 			await tick();
 			if (!reportSnapshotForm) throw new Error('周报快照表单尚未就绪');

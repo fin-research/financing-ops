@@ -54,7 +54,7 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 - 现金流、历史余额和审计记录不展示，且 `authenticated` 不得通过 Data API 访问。
 - 活跃且关联 Neon Auth 的三种业务角色均可按现有 RLS 编辑数据后台表；SvelteKit 管理 actions 仍由服务端角色规则单独控制。
 - 更新和删除携带 `updated_at` 做乐观并发检查；主键和计算列只读。
-- DDL 或列变化后刷新 Neon Data API schema cache：`neon data-api refresh-schema --database neondb`。
+- DDL、视图、函数或列变化后必须显式刷新 Neon Data API schema cache：`neon data-api refresh-schema --database neondb`；migration 中的 PostgreSQL `NOTIFY pgrst` 不能替代 Neon 托管 Data API 的刷新动作。
 
 ## Migration
 

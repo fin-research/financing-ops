@@ -71,7 +71,9 @@ export function getLiabilityWeeklyReportSourceStatus(report, sources = {
 		missingModules.push({
 			code: 'market_rates',
 			title: 'public.edb 市场利率与信用利差',
-			detail: `定时同步数据缺少指标：${counts.missing_market_series ?? '未识别'}。`
+			detail: report.quality.marketRateError
+				? `原始市场利率读取失败：${report.quality.marketRateError}。本模块已留空，其他周报数据不受影响。`
+				: `定时同步数据缺少指标：${counts.missing_market_series ?? '未识别'}。`
 		});
 	}
 	if (sources.ctr.status !== 'available') {
@@ -160,7 +162,9 @@ export async function saveLiabilityWeeklyReportSnapshot({ database, env, actor, 
 					path: '/liability_market_rate_observations',
 					window: { startDate: `${asOfDate.slice(0, 4)}-01-01`, endDate: asOfDate },
 					requestOrigin: 'browser',
-					spreadCalculation: 'browser'
+					spreadCalculation: 'browser',
+					status: report.quality.marketRateError ? 'missing' : 'available',
+					error: report.quality.marketRateError
 				}
 			},
 			dmRegistrations: {

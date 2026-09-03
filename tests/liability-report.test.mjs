@@ -151,6 +151,15 @@ test('raw EDB observations are classified and broker-government spreads are calc
 		limits: []
 	}, rawRows, '2026-09-03');
 	assert.equal(payload.report.marketHistory.length, market.marketHistory.length);
+	assert.equal(payload.report.marketRateError, null);
+	const fallbackPayload = attachLiabilityMarketRates({
+		version: 1,
+		report: { asOfDate: '2026-09-03' },
+		limits: []
+	}, [], '2026-09-03', 'Data API schema cache unavailable');
+	assert.deepEqual(fallbackPayload.report.marketHistory, []);
+	assert.deepEqual(fallbackPayload.report.marketObservations, []);
+	assert.equal(fallbackPayload.report.marketRateError, 'Data API schema cache unavailable');
 	assert.throws(
 		() => buildLiabilityMarketRateReport([{ indicator_code: 'UNKNOWN', observation_date: '2026-09-02', value: 1 }], '2026-09-03'),
 		/不在周报白名单/
@@ -512,7 +521,9 @@ test('liability market rates come from scheduled public.edb data, not manual Cho
 	assert.match(service, /registrationProgress: manualSources\.registration\.status/);
 	assert.match(service, /path: '\/broker-bond-registrations'/);
 	assert.match(client, /liability_market_rate_observations/);
-	assert.match(layout, /attachLiabilityMarketRates\(business, marketRates, asOfDate\)/);
+	assert.match(layout, /const marketRatesRequest = neonDataApi\.liabilityMarketRates\(asOfDate\)\.then\(/);
+	assert.match(layout, /rows: \[\],[\s\S]*error: String\(error\?\.message \?\? error\)\.slice\(0, 500\)/);
+	assert.match(layout, /attachLiabilityMarketRates\([\s\S]*marketRatesResult\.rows,[\s\S]*marketRatesResult\.error/);
 	assert.match(reportData, /value: \(item\.value - governmentValue\) \* 100/);
 	assert.doesNotMatch(choice, /\/choice\/edb|edbIds/);
 	assert.doesNotMatch(page, /\/choice\/edb|edbIds/);

@@ -30,6 +30,7 @@ git diff --check
 - SQLite：`pnpm db:migrate:sqlite -- --dry-run`；目标库非空时不得强行覆盖。
 - 提醒：Worker Cron 每个 UTC 整点执行一次候选检查；整天周期只会在上海时间 09:00 后进入候选，含小时周期按实际整点进入候选。至少运行测试；候选可用 `pnpm reminders:send -- --dry-run --at=<ISO 时间>` 盘点，`--date=YYYY-MM-DD` 表示该上海自然日末；查询线上候选前确认目标数据库，真实发送前确认收件人与发件人。
 - Auth / Data API：检查登录、短期 JWT、RLS、角色边界和失败状态，不在日志展示 token。
+- Data API schema：migration 新增或调整表、视图、函数或列后，必须对目标 branch/database 执行 `neon data-api refresh-schema --database neondb` 并验证目标资源可见；不能只依赖 migration 内的 `NOTIFY pgrst`。
 - UI：按 `DESIGN.md` 检查受影响的桌面、移动、200% 缩放与减少动效场景；没有执行时明确说明边界。
 
 ## 数据库命令

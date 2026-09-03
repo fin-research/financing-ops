@@ -181,17 +181,25 @@ export function buildLiabilityMarketRateReport(value, expectedAsOfDate) {
 	return { marketHistory, marketObservations };
 }
 
-export function attachLiabilityMarketRates(value, marketRateRows, expectedAsOfDate) {
+/**
+ * @param {unknown} value
+ * @param {unknown[]} marketRateRows
+ * @param {string} expectedAsOfDate
+ * @param {string | null} [sourceError]
+ */
+export function attachLiabilityMarketRates(value, marketRateRows, expectedAsOfDate, sourceError = null) {
 	const payload = record(value, 'Neon 周报业务聚合');
 	if (Number(payload.version) !== 1) throw new Error('Neon 周报业务聚合版本无效');
 	const report = record(payload.report, 'Neon 周报业务数据');
 	const asOfDate = date(report.asOfDate, 'Neon 周报日期');
 	if (asOfDate !== expectedAsOfDate) throw new Error(`Neon 周报日期 ${asOfDate} 与所选日期 ${expectedAsOfDate} 不一致`);
+	const marketRateError = text(sourceError, '市场利率读取错误', { nullable: true, maximum: 500 });
 	return {
 		...payload,
 		report: {
 			...report,
-			...buildLiabilityMarketRateReport(marketRateRows, expectedAsOfDate)
+			...buildLiabilityMarketRateReport(marketRateRows, expectedAsOfDate),
+			marketRateError
 		}
 	};
 }
@@ -292,6 +300,7 @@ export function normalizeLiabilityReportDatabasePayload(value, expectedAsOfDate)
 			rateCoveragePct: number(raw.rateCoverage, '利率覆盖率') * 100,
 			lifecycleCoveragePct: number(raw.lifecycleCoverage, '期限覆盖率') * 100,
 			liveDerivedReliable: Math.abs(liveBalanceYi - balanceYi) < 0.005,
+			marketRateError: text(raw.marketRateError, '市场利率读取错误', { nullable: true, maximum: 500 }),
 			missingMaturityCount: number(raw.missingMaturityCount, '缺失到期日数量', { minimum: 0, maximum: 1_000_000 }),
 			missingMaturityAmountYi: number(raw.missingMaturityAmountYi, '缺失到期日金额', { minimum: 0 }),
 			missingMaturityDetails: text(raw.missingMaturityDetails, '缺失到期日明细', { nullable: true, maximum: 10_000 })
