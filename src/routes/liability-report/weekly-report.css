@@ -57,7 +57,6 @@
 
 .bento-header {
 	display: flex;
-	min-height: 7.25rem;
 	align-items: center;
 	justify-content: space-between;
 	gap: 1rem;
@@ -244,7 +243,7 @@
 }
 
 @media (max-width: 51.25rem) {
-	.bento-header { min-height: 0; align-items: flex-start; flex-direction: column; padding: 1rem; }
+	.bento-header { align-items: flex-start; flex-direction: column; padding: 1rem; }
 	.report-period { text-align: left; }
 	.dynamic-grid,
 	.rate-grid { grid-template-columns: 1fr; }
@@ -284,13 +283,15 @@
 	body:has(.report-pages) .page-content { display: block !important; width: 210mm !important; max-width: none !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; overflow: visible !important; background: #fff !important; }
 	.report-pages { display: block; width: 210mm; }
 	.report-page {
-		width: 210mm !important;
-		height: 297mm !important;
-		min-height: 297mm !important;
-		max-height: 297mm !important;
+		/* 210mm at 96dpi / 1080px: preserve the desktop canvas while fitting A4. */
+		width: 1080px !important;
+		height: 1527px !important;
+		min-height: 1527px !important;
+		max-height: 1527px !important;
 		aspect-ratio: auto;
+		zoom: 0.734908136;
 		margin: 0 !important;
-		padding: 10mm 12mm 9mm;
+		padding: 2rem;
 		overflow: hidden;
 		box-shadow: none !important;
 		page-break-after: always;
@@ -299,7 +300,10 @@
 		break-inside: avoid;
 	}
 	.report-page:last-child { page-break-after: auto; break-after: auto; }
-	.bento-header { min-height: 7.25rem; align-items: center; flex-direction: row; }
+	.bento-header { align-items: center; flex-direction: row; }
+	.bento-header h1 { font-size: 1.75rem; }
+	.p1num { font-size: 1.5rem; }
+	.dual-value strong { font-size: 1.35rem; }
 	.report-period { text-align: right; }
 	.report-section,
 	.bento-card,

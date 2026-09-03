@@ -1,5 +1,6 @@
 <script lang="ts">
 	import EChart from '$lib/charts/EChart.svelte';
+	import { liabilityTypeColor } from '$lib/liability-report-charts';
 
 	let {
 		rows = [],
@@ -9,11 +10,9 @@
 		total?: number;
 	} = $props();
 
-	const colors = ['#3e5c9a', '#5a78c0', '#8b7bd9', '#4fa3d1', '#e06a74', '#8aa0b8', '#e0a24e', '#54bfa0', '#8fcdf2', '#7fd1b0'];
 	const values = $derived(rows.filter((row) => Number(row.amountYi) > 0));
 	const option = $derived({
 		aria: { enabled: true, decal: { show: false } },
-		color: colors,
 		tooltip: {
 			trigger: 'item',
 			formatter: (item: any) => `${escapeHtml(item.name)}<br><b>${Number(item.value).toFixed(2)} 亿元</b>（${Number(item.percent).toFixed(1)}%）`
@@ -34,7 +33,11 @@
 			itemStyle: { borderColor: '#ffffff', borderWidth: 2, borderRadius: 4 },
 			label: { show: false },
 			emphasis: { scaleSize: 6, label: { show: true, formatter: '{b}\n{d}%', color: '#334155', fontWeight: 700 } },
-			data: values.map((row) => ({ name: row.type || '未分类', value: Number(row.amountYi) }))
+			data: values.map((row, index) => ({
+				name: row.type || '未分类',
+				value: Number(row.amountYi),
+				itemStyle: { color: liabilityTypeColor(row.type, index) }
+			}))
 		}]
 	});
 

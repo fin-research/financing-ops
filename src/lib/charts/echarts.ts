@@ -4,6 +4,7 @@ import {
 	AriaComponent,
 	GridComponent,
 	LegendComponent,
+	MarkPointComponent,
 	TitleComponent,
 	TooltipComponent
 } from 'echarts/components';
@@ -19,6 +20,7 @@ echarts.use([
 	LabelLayout,
 	LegendComponent,
 	LineChart,
+	MarkPointComponent,
 	PieChart,
 	SVGRenderer,
 	TitleComponent,

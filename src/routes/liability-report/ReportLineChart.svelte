@@ -8,13 +8,13 @@
 		compact = false
 	}: {
 		title: string;
-		rows?: Array<{ seriesId?: string; seriesName?: string; observationDate?: string; value?: number | null; unit?: string }>;
+		rows?: Array<{ seriesId?: string; seriesName?: string; observationDate?: string; value?: number | null; unit?: string; tenor?: string }>;
 		height?: number;
 		compact?: boolean;
 	} = $props();
 
 	const colors = ['#173a63', '#3273b9', '#0e9384', '#d85b57', '#8b7bd9', '#d08b32'];
-	const lineTypes = ['solid', 'dashed', 'dotted'] as const;
+	const tenorColors: Record<string, string> = { '1年': '#15a9c3', '2年': '#4285e8', '3年': '#2f50b5', '5年': '#1f2937' };
 	const series = $derived(groupRows(rows));
 	const units = $derived([...new Set(series.map((item) => item.unit))]);
 	const hasBasisPoints = $derived(units.includes('bp'));
@@ -26,10 +26,10 @@
 			formatter: (params: any) => formatTooltip(params)
 		},
 		legend: {
-			type: 'scroll', top: 0, left: 'center', itemGap: compact ? 10 : 16,
+			type: 'scroll', bottom: 0, left: 'center', itemGap: compact ? 10 : 16,
 			textStyle: { color: '#475569', fontSize: 12 }
 		},
-		grid: { left: compact ? 10 : 18, right: hasBasisPoints ? 18 : 10, top: compact ? 68 : 58, bottom: 16, containLabel: true },
+		grid: { left: compact ? 10 : 18, right: hasBasisPoints ? 18 : 10, top: 28, bottom: compact ? 70 : 58, containLabel: true },
 		xAxis: {
 			type: 'time',
 			axisLine: { lineStyle: { color: '#cbd5e1' } }, axisTick: { show: false },
@@ -53,29 +53,30 @@
 			type: 'line',
 			yAxisIndex: item.unit === 'bp' && hasBasisPoints ? 1 : 0,
 			showSymbol: false,
-			smooth: 0.16,
+			smooth: 0.1,
 			connectNulls: false,
-			lineStyle: { width: item.unit === 'bp' ? 2.2 : 2.6, type: lineTypes[index % lineTypes.length] },
+			lineStyle: { width: item.unit === 'bp' ? 2.2 : 2.6, type: 'solid', color: seriesColor(item, index) },
+			itemStyle: { color: seriesColor(item, index) },
 			emphasis: { focus: 'series' },
 			data: item.points.map((point) => [point.date, point.value])
 		})),
 		media: [{
 			query: { maxWidth: 520 },
 			option: {
-				grid: { left: 6, right: hasBasisPoints ? 8 : 4, top: 84, bottom: 10, containLabel: true },
-				legend: { top: 0, itemGap: 8, textStyle: { fontSize: 11 } }
+				grid: { left: 6, right: hasBasisPoints ? 8 : 4, top: 28, bottom: 82, containLabel: true },
+				legend: { bottom: 0, itemGap: 8, textStyle: { fontSize: 11 } }
 			}
 		}]
 	});
 
 	function groupRows(input: typeof rows) {
-		const grouped = new Map<string, { id: string; name: string; unit: string; points: Array<{ date: string; value: number }> }>();
+		const grouped = new Map<string, { id: string; name: string; unit: string; tenor: string; points: Array<{ date: string; value: number }> }>();
 		for (const row of input) {
 			const value = Number(row.value);
 			const date = String(row.observationDate ?? '').slice(0, 10);
 			if (!Number.isFinite(value) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
 			const id = String(row.seriesId ?? row.seriesName ?? 'series');
-			const item = grouped.get(id) ?? { id, name: String(row.seriesName ?? id), unit: String(row.unit ?? '%'), points: [] };
+			const item = grouped.get(id) ?? { id, name: String(row.seriesName ?? id), unit: String(row.unit ?? '%'), tenor: String(row.tenor ?? ''), points: [] };
 			item.points.push({ date, value });
 			grouped.set(id, item);
 		}
@@ -83,6 +84,11 @@
 			...item,
 			points: downsample(item.points.sort((left, right) => left.date.localeCompare(right.date)), 180)
 		}));
+	}
+
+	function seriesColor(item: { tenor: string; unit: string }, index: number) {
+		if (item.unit === '%' && tenorColors[item.tenor]) return tenorColors[item.tenor];
+		return colors[index % colors.length];
 	}
 
 	function downsample<T>(points: T[], max: number) {

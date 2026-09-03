@@ -90,17 +90,22 @@ test('weekly report actions and history date selector stay in the application he
 	assert.doesNotMatch(page, /history-picker|report-history-date/);
 });
 
-test('weekly report uses the installation-package A4 pagination and constrained main content', () => {
+test('weekly report preserves the 1080px desktop canvas when scaled to A4', () => {
 	const layout = fs.readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8');
 	const layoutCss = fs.readFileSync(new URL('../src/routes/layout.css', import.meta.url), 'utf8');
 	const reportCss = fs.readFileSync(new URL('../src/routes/liability-report/weekly-report.css', import.meta.url), 'utf8');
 	assert.match(layout, /class:liability-report-content=\{isLiabilityReport\(\)\}/);
 	assert.match(layoutCss, /\.page-content\.liability-report-content\s*\{\s*max-width:\s*1080px/);
 	assert.match(reportCss, /@page\s*\{\s*size:\s*A4 portrait;\s*margin:\s*0/);
-	assert.match(reportCss, /width:\s*210mm !important/);
-	assert.match(reportCss, /height:\s*297mm !important/);
+	const printRules = reportCss.slice(reportCss.indexOf('@media print'));
+	assert.match(printRules, /\.report-page\s*\{[\s\S]*width:\s*1080px !important/);
+	assert.match(printRules, /height:\s*1527px !important/);
+	assert.match(printRules, /zoom:\s*0\.734908136/);
 	assert.match(reportCss, /break-after:\s*page/);
 	assert.match(reportCss, /\.bento-footer/);
+	const headerRules = reportCss.match(/\.bento-header\s*\{[^}]*\}/g) ?? [];
+	assert.ok(headerRules.length >= 3);
+	assert.ok(headerRules.every((rule) => !/min-height/.test(rule)));
 });
 
 test('weekly report query supplies every chart data contract', () => {
@@ -216,6 +221,43 @@ test('all liability report charts use the shared ECharts host instead of hand-dr
 	assert.match(charting, /from 'echarts\/core'/);
 	assert.match(charting, /GaugeChart/);
 	assert.match(charting, /PieChart/);
+	assert.match(charting, /MarkPointComponent/);
+});
+
+test('liability charts and source queries follow the installation-package chart contract', () => {
+	const balance = fs.readFileSync(new URL('../src/routes/liability-report/ReportBalanceRateChart.svelte', import.meta.url), 'utf8');
+	const issuance = fs.readFileSync(new URL('../src/routes/liability-report/ReportIssuanceChart.svelte', import.meta.url), 'utf8');
+	const stacked = fs.readFileSync(new URL('../src/routes/liability-report/ReportStackedBarChart.svelte', import.meta.url), 'utf8');
+	const chartTypes = fs.readFileSync(new URL('../src/lib/liability-report-charts.ts', import.meta.url), 'utf8');
+	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
+	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
+
+	assert.match(balance, /areaStyle:/);
+	assert.match(balance, /firstIndexOfEachYear/);
+	assert.match(balance, /markPoint:/);
+	assert.match(balance, /value\.slice\(0, 4\)/);
+	assert.match(chartTypes, /\['短融', '3年公募债', '5年公募债', '3年次级债', '5年次级债'\]/);
+	assert.match(issuance, /\.\.\.issuanceTrendTypes\.map\(\(type\) => \(\{/);
+	assert.match(issuance, /data:\s*\[\.\.\.issuanceTrendTypes\]/);
+	assert.match(issuance, /params\.dataIndex === lastRateIndices\[type\]/);
+	assert.doesNotMatch(issuance, /data:\s*\[[^\]]*加权发行利率/);
+
+	assert.match(stacked, /position:\s*'inside'/);
+	assert.match(stacked, /maximum:\s*\{\s*color:\s*'#dc2626'/);
+	assert.match(stacked, /inverse:\s*true/);
+	assert.match(stacked, /isHighlighted/);
+	assert.match(page, /highlightLabel="东方财富"/);
+	assert.match(page, /sort\(\(a, b\) => b\[1\] - a\[1\]\)/);
+
+	assert.match(queries, /trend_snapshot_totals AS/);
+	assert.match(queries, /LEFT JOIN balance_snapshot snapshot ON snapshot\.as_of_date = trend_snapshot_dates\.snapshot_date/);
+	assert.match(queries, /SELECT LEAST\(/);
+	assert.match(queries, /classified_issuances AS/);
+	assert.match(queries, /issuance_types\(type\) AS/);
+	assert.match(queries, /FROM issuance_months CROSS JOIN issuance_types/);
+	assert.match(queries, /THEN '3年公募债'/);
+	assert.match(queries, /THEN '5年次级债'/);
+	assert.match(queries, /maturity_date - issue_date <= 366 THEN '短期公司债'/);
 });
 
 test('page load never fetches quota-limited Choice sources', () => {

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import './weekly-report.css';
 	import { withBase } from '$lib/app-paths';
+	import { liabilityTypeColor } from '$lib/liability-report-charts';
 	import ReportBalanceRateChart from './ReportBalanceRateChart.svelte';
 	import ReportDonutChart from './ReportDonutChart.svelte';
 	import ReportGaugeChart from './ReportGaugeChart.svelte';
@@ -21,10 +22,9 @@
 	let annualLabels = $derived([...new Set((report.annualMaturity ?? []).map((item: any) => item.bucket))] as string[]);
 	let annualTypes = $derived(orderedTypes(report.annualMaturity ?? []));
 	let annualRows = $derived((report.annualMaturity ?? []).map((item: any) => ({ label: item.bucket, type: item.type, value: Number(item.amountYi ?? 0) })));
-	let peerLabels = $derived(peerIssuerLabels(report.peerIssueSummary ?? []));
-	let peerTypes = $derived(orderedPeerTypes(report.peerIssueSummary ?? []));
-	let peerRows = $derived((report.peerIssueSummary ?? []).map((item: any) => ({ label: brokerShortName(item.issuerName), type: item.bondType, value: Number(item.amountYi ?? 0) })));
-	const chartColors = ['#3e5c9a', '#5a78c0', '#8b7bd9', '#4fa3d1', '#e06a74', '#8aa0b8', '#e0a24e', '#54bfa0', '#8fcdf2', '#7fd1b0'];
+	let peerRows = $derived(normalizePeerRows(report.peerIssueSummary ?? []));
+	let peerLabels = $derived(peerIssuerLabels(peerRows));
+	let peerTypes = $derived(orderedPeerTypes(peerRows));
 	const marketCategories = [
 		{ key: 'state_owned_bank_ncd', title: '国有行同业存单发行利率走势' },
 		{ key: 'credit_spread_broker_govt_1y', title: 'AAA-券商与国债到期收益率及利差（1年）' },
@@ -46,8 +46,8 @@
 	}
 
 	function orderedPeerTypes(rows: any[]) {
-		const preferred = ['公募债', '次级债', '短期融资券', '私募债'];
-		return [...new Set(rows.map((item: any) => String(item.bondType)))].sort((a, b) => {
+		const preferred = ['公募债', '次级债', '短期公司债', '短期融资券'];
+		return [...new Set(rows.map((item: any) => String(item.type)))].sort((a, b) => {
 			const left = preferred.indexOf(a);
 			const right = preferred.indexOf(b);
 			return (left < 0 ? 99 : left) - (right < 0 ? 99 : right) || a.localeCompare(b, 'zh-CN');
@@ -57,15 +57,36 @@
 	function peerIssuerLabels(rows: any[]) {
 		const totals = new Map<string, number>();
 		for (const row of rows) {
-			const issuer = brokerShortName(row.issuerName);
-			totals.set(issuer, (totals.get(issuer) ?? 0) + Number(row.amountYi ?? 0));
+			totals.set(row.label, (totals.get(row.label) ?? 0) + Number(row.value ?? 0));
 		}
 		return [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
 	}
 
+	function normalizePeerRows(rows: any[]) {
+		const totals = new Map<string, { label: string; type: string; value: number }>();
+		for (const row of rows) {
+			const label = brokerShortName(row.issuerName);
+			const type = String(row.bondType ?? '其他');
+			const key = `${label}\u0000${type}`;
+			const current = totals.get(key) ?? { label, type, value: 0 };
+			current.value += Number(row.amountYi ?? 0);
+			totals.set(key, current);
+		}
+		return [...totals.values()];
+	}
+
 	function brokerShortName(value: string | null | undefined) {
 		if (!value) return '数据缺失';
-		return String(value).trim().replace(/(?:股份有限公司|有限责任公司|有限公司)$/u, '') || '数据缺失';
+		const legalName = String(value).trim().replace(/(?:股份有限公司|有限责任公司|有限公司)$/u, '');
+		const aliases: Record<string, string> = {
+			东方财富证券: '东方财富',
+			国泰海通证券: '国泰海通',
+			中国银河证券: '中国银河',
+			中信建投证券: '中信建投',
+			申万宏源证券: '申万宏源',
+			中国国际金融: '中金公司'
+		};
+		return (aliases[legalName] ?? legalName) || '数据缺失';
 	}
 
 	function sumEvents(items: any[], kinds: string[]) { return items.reduce((sum, item) => kinds.includes(item.kind) ? sum + Number(item.amountYi ?? 0) : sum, 0); }
@@ -129,8 +150,8 @@
 		<div class="report-page-body">
 			<section class="report-section" aria-labelledby="section-3-title">
 	<div class="card-head"><div class="section-title-wrap"><span class="section-tag">第三部分</span><h2 id="section-3-title" class="section-title">融资额度及余额情况</h2></div></div>
-	<div class="bento-card"><div class="inner-card-title">● 融资批复额度使用情况表 <span>单位：亿元</span></div><div class="table-scroll"><table class="bento-table quota-table"><thead><tr><th>融资品种</th><th class="num">可用额度</th><th class="num">已用额度</th><th class="num">剩余额度</th><th>获批日期与规则</th><th>额度使用进度</th></tr></thead><tbody>{#each report.limits as item, limitIndex}<tr><td class="quota-name"><i style={`--quota-color:${chartColors[limitIndex % chartColors.length]}`}></i>{item.debtType}</td><td class="num">{amount(item.limitYi)}</td><td class="num">{amount(item.issuedYi)}</td><td class="num" class:negative={item.remainingYi < 0}>{amount(item.remainingYi)}</td><td>{item.approvedDate ? `${dateLabel(item.approvedDate)}${item.expiryDate ? `–${dateLabel(item.expiryDate)}` : ''}` : '数据缺失'}</td><td><div class="quota-progress"><ReportProgressChart label={item.debtType} value={quotaPercent(item.issuedYi, item.limitYi)} /></div></td></tr>{:else}<tr><td colspan="6" class="table-empty">暂无额度数据</td></tr>{/each}</tbody><tfoot><tr><th>合计</th><th class="num">{amount(report.limitTotals.limitYi)}</th><th class="num">{amount(report.limitTotals.issuedYi)}</th><th class="num">{amount(report.limitTotals.remainingYi)}</th><th></th><th><div class="quota-progress"><ReportProgressChart label="合计" value={quotaPercent(report.limitTotals.issuedYi, report.limitTotals.limitYi)} /></div></th></tr></tfoot></table></div></div>
-	<div class="chart-container composition-panel"><div class="composition-layout"><div class="composition-donut"><ReportDonutChart rows={report.composition} total={compositionTotal} /></div><div class="table-scroll"><table class="bento-table composition-table"><thead><tr><th>融资品种</th><th class="num">余额（亿元）</th><th class="num">占比</th></tr></thead><tbody>{#each report.composition as item, index}<tr><td><i style={`--legend-color:${chartColors[index % chartColors.length]}`}></i>{item.type || '未分类'}</td><td class="num">{amount(item.amountYi)}</td><td class="num">{compositionTotal ? percent(item.amountYi / compositionTotal * 100, 2) : '数据缺失'}</td></tr>{/each}<tr class="total-row"><td>合计</td><td class="num">{amount(compositionTotal)}</td><td class="num">100.00%</td></tr></tbody></table></div></div></div>
+	<div class="bento-card"><div class="inner-card-title">● 融资批复额度使用情况表 <span>单位：亿元</span></div><div class="table-scroll"><table class="bento-table quota-table"><thead><tr><th>融资品种</th><th class="num">可用额度</th><th class="num">已用额度</th><th class="num">剩余额度</th><th>获批日期与规则</th><th>额度使用进度</th></tr></thead><tbody>{#each report.limits as item, limitIndex}<tr><td class="quota-name"><i style={`--quota-color:${liabilityTypeColor(item.debtType, limitIndex)}`}></i>{item.debtType}</td><td class="num">{amount(item.limitYi)}</td><td class="num">{amount(item.issuedYi)}</td><td class="num" class:negative={item.remainingYi < 0}>{amount(item.remainingYi)}</td><td>{item.approvedDate ? `${dateLabel(item.approvedDate)}${item.expiryDate ? `–${dateLabel(item.expiryDate)}` : ''}` : '数据缺失'}</td><td><div class="quota-progress"><ReportProgressChart label={item.debtType} value={quotaPercent(item.issuedYi, item.limitYi)} /></div></td></tr>{:else}<tr><td colspan="6" class="table-empty">暂无额度数据</td></tr>{/each}</tbody><tfoot><tr><th>合计</th><th class="num">{amount(report.limitTotals.limitYi)}</th><th class="num">{amount(report.limitTotals.issuedYi)}</th><th class="num">{amount(report.limitTotals.remainingYi)}</th><th></th><th><div class="quota-progress"><ReportProgressChart label="合计" value={quotaPercent(report.limitTotals.issuedYi, report.limitTotals.limitYi)} /></div></th></tr></tfoot></table></div></div>
+	<div class="chart-container composition-panel"><div class="composition-layout"><div class="composition-donut"><ReportDonutChart rows={report.composition} total={compositionTotal} /></div><div class="table-scroll"><table class="bento-table composition-table"><thead><tr><th>融资品种</th><th class="num">余额（亿元）</th><th class="num">占比</th></tr></thead><tbody>{#each report.composition as item, index}<tr><td><i style={`--legend-color:${liabilityTypeColor(item.type, index)}`}></i>{item.type || '未分类'}</td><td class="num">{amount(item.amountYi)}</td><td class="num">{compositionTotal ? percent(item.amountYi / compositionTotal * 100, 2) : '数据缺失'}</td></tr>{/each}<tr class="total-row"><td>合计</td><td class="num">{amount(compositionTotal)}</td><td class="num">100.00%</td></tr></tbody></table></div></div></div>
 </section>
 		</div>
 		<footer class="bento-footer" aria-label="第 2 页"><span>东方财富证券股份有限公司 · 资金管理部</span><span>第 2 页 · 共 6 页</span></footer>
@@ -138,7 +159,7 @@
 
 	<article class="report-page">
 		<div class="report-page-body">
-			<section class="report-section" aria-labelledby="section-4-title"><div class="card-head"><div class="section-title-wrap"><span class="section-tag">第四部分</span><h2 id="section-4-title" class="section-title">负债规模及利率走势</h2></div></div><div class="chart-container large-chart"><h3>公司融资余额及综合融资利率走势</h3><ReportBalanceRateChart rows={report.balanceRateTrend ?? []} /><div class="chart-foot"><span>图：2021 年至今公司加权平均融资利率与融资余额（亿元，%）</span></div></div><div class="chart-container large-chart"><h3>近一年公司债券发行规模及利率走势</h3><ReportIssuanceChart rows={report.issuanceTrend ?? []} /><div class="chart-foot"><span>图：公司近一年公募债及次级债发行规模及利率（亿元，%）</span></div></div></section>
+			<section class="report-section" aria-labelledby="section-4-title"><div class="card-head"><div class="section-title-wrap"><span class="section-tag">第四部分</span><h2 id="section-4-title" class="section-title">负债规模及利率走势</h2></div></div><div class="chart-container large-chart"><h3>公司融资余额及综合融资利率走势</h3><ReportBalanceRateChart rows={report.balanceRateTrend ?? []} /><div class="chart-foot"><span>图：2021 年至今公司加权平均融资利率与融资余额（亿元，%）</span></div></div><div class="chart-container large-chart"><h3>近一年公司债券发行规模及利率走势</h3><ReportIssuanceChart rows={report.issuanceTrend ?? []} /><div class="chart-foot"><span>图：公司近一年短融、3年/5年公募债及次级债发行规模与分品种加权利率（亿元，%）</span></div></div></section>
 		</div>
 		<footer class="bento-footer" aria-label="第 3 页"><span>东方财富证券股份有限公司 · 资金管理部</span><span>第 3 页 · 共 6 页</span></footer>
 	</article>
@@ -154,7 +175,7 @@
 		<div class="report-page-body">
 			<section class="report-section" aria-labelledby="section-6-title">
 	<div class="card-head"><div class="section-title-wrap"><span class="section-tag">第六部分</span><h2 id="section-6-title" class="section-title">可比券商申报及发行</h2></div></div>
-	<div class="chart-container large-chart"><h3>{String(report.asOfDate).slice(0, 4)}年以来证券公司债券发行规模与品种构成（亿元）</h3><ReportStackedBarChart title="可比券商债券发行规模与品种构成" rows={peerRows} labels={peerLabels} types={peerTypes} height={430} horizontal /></div>
+	<div class="chart-container large-chart"><h3>{String(report.asOfDate).slice(0, 4)}年以来证券公司债券发行规模与品种构成（亿元）</h3><ReportStackedBarChart title="可比券商债券发行规模与品种构成" rows={peerRows} labels={peerLabels} types={peerTypes} height={430} horizontal highlightLabel="东方财富" /></div>
 	<div class="peer-grid">
 		<div class="bento-card">
 			<div class="inner-card-title">● 本周券商债券发行定价</div>

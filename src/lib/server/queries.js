@@ -390,32 +390,65 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			WHERE d.maturity_date > latest.as_of_date
 			GROUP BY 1, 2, 3
 		), trend_months AS (
-			SELECT (month_start + INTERVAL '1 month - 1 day')::date AS month_end
+			SELECT LEAST(
+				(month_start + INTERVAL '1 month - 1 day')::date,
+				latest.as_of_date
+			) AS month_end
 			FROM latest CROSS JOIN LATERAL generate_series(
 				DATE '2021-01-01', date_trunc('month', latest.as_of_date), INTERVAL '1 month'
 			) AS series(month_start)
+		), trend_snapshot_dates AS (
+			SELECT trend_months.month_end, MAX(snapshot.as_of_date) AS snapshot_date
+			FROM trend_months
+			LEFT JOIN balance_snapshot snapshot ON snapshot.as_of_date <= trend_months.month_end
+			GROUP BY trend_months.month_end
+		), trend_snapshot_totals AS (
+			SELECT trend_snapshot_dates.month_end,
+				COALESCE(SUM(snapshot.amount), 0) / 100000000.0 AS balance_yi
+			FROM trend_snapshot_dates
+			LEFT JOIN balance_snapshot snapshot ON snapshot.as_of_date = trend_snapshot_dates.snapshot_date
+			GROUP BY trend_snapshot_dates.month_end
 		), balance_rate_trend AS (
-			SELECT trend_months.month_end,
-				COALESCE(SUM(d.amount), 0) / 100000000.0 AS balance_yi,
+			SELECT trend.month_end, trend.balance_yi,
 				SUM(d.amount * d.annual_rate) FILTER (WHERE d.annual_rate IS NOT NULL)
 					/ NULLIF(SUM(d.amount) FILTER (WHERE d.annual_rate IS NOT NULL), 0) * 100 AS weighted_rate_pct
-			FROM trend_months
-			LEFT JOIN debt d ON COALESCE(d.issue_date, d.activated_at) <= trend_months.month_end
-				AND (d.maturity_date IS NULL OR d.maturity_date > trend_months.month_end)
-				AND (d.closed_at IS NULL OR d.closed_at > trend_months.month_end)
-			GROUP BY trend_months.month_end
+			FROM trend_snapshot_totals trend
+			LEFT JOIN debt d ON COALESCE(d.issue_date, d.activated_at) <= trend.month_end
+				AND (d.maturity_date IS NULL OR d.maturity_date > trend.month_end)
+				AND (d.closed_at IS NULL OR d.closed_at > trend.month_end)
+			GROUP BY trend.month_end, trend.balance_yi
 		), issuance_months AS (
 			SELECT date_trunc('month', latest.as_of_date)::date - (value || ' months')::interval AS month_start
 			FROM latest CROSS JOIN generate_series(11, 0, -1) AS series(value)
-		), issuance_trend AS (
-			SELECT issuance_months.month_start::date AS month_start,
-				${REPORTING_TYPE_SQL()} AS type,
-				SUM(d.amount) / 100000000.0 AS amount_yi,
-				SUM(d.amount * d.annual_rate) FILTER (WHERE d.annual_rate IS NOT NULL)
-					/ NULLIF(SUM(d.amount) FILTER (WHERE d.annual_rate IS NOT NULL), 0) * 100 AS weighted_rate_pct
-			FROM issuance_months
-			JOIN debt d ON date_trunc('month', d.issue_date) = issuance_months.month_start
+		), issuance_types(type) AS (
+			VALUES ('短融'), ('3年公募债'), ('5年公募债'), ('3年次级债'), ('5年次级债')
+		), classified_issuances AS (
+			SELECT date_trunc('month', d.issue_date)::date AS month_start,
+				CASE
+					WHEN ${REPORTING_TYPE_SQL()} = '短期融资券' THEN '短融'
+					WHEN ${REPORTING_TYPE_SQL()} IN ('小公募', '公募债', '科创债')
+						AND ROUND(COALESCE(d.term_days, d.maturity_date - d.issue_date)::numeric / 365.25) = 3 THEN '3年公募债'
+					WHEN ${REPORTING_TYPE_SQL()} IN ('小公募', '公募债', '科创债')
+						AND ROUND(COALESCE(d.term_days, d.maturity_date - d.issue_date)::numeric / 365.25) = 5 THEN '5年公募债'
+					WHEN ${REPORTING_TYPE_SQL()} IN ('次级债', '公募次级')
+						AND ROUND(COALESCE(d.term_days, d.maturity_date - d.issue_date)::numeric / 365.25) = 3 THEN '3年次级债'
+					WHEN ${REPORTING_TYPE_SQL()} IN ('次级债', '公募次级')
+						AND ROUND(COALESCE(d.term_days, d.maturity_date - d.issue_date)::numeric / 365.25) = 5 THEN '5年次级债'
+				END AS type,
+				d.amount, d.annual_rate
+			FROM debt d CROSS JOIN latest
 			WHERE d.debt_type = '债券'
+				AND d.issue_date >= date_trunc('month', latest.as_of_date) - INTERVAL '11 months'
+				AND d.issue_date < date_trunc('month', latest.as_of_date) + INTERVAL '1 month'
+		), issuance_trend AS (
+			SELECT issuance_months.month_start::date AS month_start, issuance_types.type,
+				COALESCE(SUM(issuance.amount), 0) / 100000000.0 AS amount_yi,
+				SUM(issuance.amount * issuance.annual_rate) FILTER (WHERE issuance.annual_rate IS NOT NULL)
+					/ NULLIF(SUM(issuance.amount) FILTER (WHERE issuance.annual_rate IS NOT NULL), 0) * 100 AS weighted_rate_pct
+			FROM issuance_months CROSS JOIN issuance_types
+			LEFT JOIN classified_issuances issuance
+				ON issuance.month_start = issuance_months.month_start
+				AND issuance.type = issuance_types.type
 			GROUP BY 1, 2
 		), week_bounds AS (
 			SELECT date_trunc('week', latest.as_of_date)::date AS week_start FROM latest
@@ -521,10 +554,13 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 		), peer_issuances AS (
 			SELECT security_code, bond_name,
 				regexp_replace(issuer_name, '(股份有限公司|有限责任公司|有限公司)$', '') AS issuer_name,
-				CASE bond_type
-					WHEN '证券公司债' THEN '公募债'
-					WHEN '证券公司次级债' THEN '次级债'
-					WHEN '证券公司短期融资券' THEN '短期融资券'
+				CASE
+					WHEN bond_type = '证券公司债'
+						AND issue_date IS NOT NULL AND maturity_date IS NOT NULL
+						AND maturity_date - issue_date <= 366 THEN '短期公司债'
+					WHEN bond_type = '证券公司债' THEN '公募债'
+					WHEN bond_type = '证券公司次级债' THEN '次级债'
+					WHEN bond_type = '证券公司短期融资券' THEN '短期融资券'
 					ELSE bond_type
 				END AS bond_type,
 				actual_issue_amount_yi,
@@ -539,18 +575,28 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			FROM liability_peer_issuances peer CROSS JOIN latest
 			WHERE peer.issue_date BETWEEN date_trunc('year', latest.as_of_date)::date AND latest.as_of_date
 				AND peer.issuer_name IS NOT NULL AND peer.actual_issue_amount_yi IS NOT NULL
+				AND peer.bond_type IN ('证券公司债', '证券公司次级债', '证券公司短期融资券')
 			GROUP BY issuer_name
 			ORDER BY total_yi DESC, issuer_name
 			LIMIT 15
 		), peer_issue_summary AS (
-			SELECT peer.issuer_name, COALESCE(peer.bond_type, '其他') AS bond_type,
+			SELECT peer.issuer_name,
+				CASE
+					WHEN peer.bond_type = '证券公司债'
+						AND peer.issue_date IS NOT NULL AND peer.maturity_date IS NOT NULL
+						AND peer.maturity_date - peer.issue_date <= 366 THEN '短期公司债'
+					WHEN peer.bond_type = '证券公司债' THEN '公募债'
+					WHEN peer.bond_type = '证券公司次级债' THEN '次级债'
+					WHEN peer.bond_type = '证券公司短期融资券' THEN '短期融资券'
+				END AS bond_type,
 				SUM(peer.actual_issue_amount_yi) AS amount_yi
 			FROM liability_peer_issuances peer
 			JOIN peer_issuer_totals issuer ON issuer.issuer_name = peer.issuer_name
 			CROSS JOIN latest
 			WHERE peer.issue_date BETWEEN date_trunc('year', latest.as_of_date)::date AND latest.as_of_date
 				AND peer.actual_issue_amount_yi IS NOT NULL
-			GROUP BY peer.issuer_name, COALESCE(peer.bond_type, '其他')
+				AND peer.bond_type IN ('证券公司债', '证券公司次级债', '证券公司短期融资券')
+			GROUP BY peer.issuer_name, 2
 		), registration_progress AS (
 			SELECT project_name,
 				regexp_replace(issuer_name, '(股份有限公司|有限责任公司|有限公司)$', '') AS issuer_name,
