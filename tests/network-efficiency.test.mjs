@@ -123,4 +123,7 @@ test('liability report page reads one snapshot and generation splits business an
 	assert.match(layout, /const neonDataApi = new NeonDataApi\(\)/);
 	assert.match(layout, /Promise\.all\(\[[\s\S]*fetchManualLiabilitySources[\s\S]*liabilityWeeklyReportBusiness[\s\S]*liabilityMarketRates/);
 	assert.match(layout, /attachLiabilityMarketRates\(business, marketRates, asOfDate\)/);
+	assert.match(layout, /await update\(\{ reset: false, invalidateAll: false \}\)/);
+	assert.match(layout, /await goto\(page\.url, \{[\s\S]*invalidateAll: true[\s\S]*replaceState: true[\s\S]*noScroll: true/);
+	assert.match(layout, /周报快照已保存，但页面刷新失败，请手动刷新后查看/);
 });

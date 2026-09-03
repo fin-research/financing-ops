@@ -1,7 +1,7 @@
 <script lang="ts">
 	import './layout.css';
 	import { enhance } from '$app/forms';
-	import { preloadData } from '$app/navigation';
+	import { goto, preloadData } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import { tick } from 'svelte';
 	import { withBase, withoutBase } from '$lib/app-paths';
@@ -118,8 +118,22 @@
 	const enhanceReportSnapshotSaving = () => {
 		return async ({ result, update }: any) => {
 			try {
-				await update({ reset: false, invalidateAll: result.type === 'success' });
+				await update({ reset: false, invalidateAll: false });
 				if (result.type === 'success') {
+					try {
+						await goto(page.url, {
+							invalidateAll: true,
+							replaceState: true,
+							noScroll: true,
+							keepFocus: true
+						});
+					} catch {
+						globalMessages.warning('周报快照已保存，但页面刷新失败，请手动刷新后查看。', {
+							key: 'liability-report-generation',
+							title: '周报已保存'
+						});
+						return;
+					}
 					globalMessages.success(String(result.data?.message ?? '周报已生成'), {
 						key: 'liability-report-generation',
 						title: '周报生成完成'
