@@ -2,6 +2,35 @@
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+export const LIABILITY_REPORT_EDB_CODES = Object.freeze([
+	'E1707781', 'E1707782', 'E1707783', 'E1707785',
+	'E1000172', 'E1000174', 'E1000176',
+	'E1704281', 'E1704282', 'E1704283', 'E1704284'
+]);
+
+const LIABILITY_MARKET_SERIES = [
+	{ seriesId: 'E1707781', seriesName: '中债证券公司债到期收益率(AAA-):1年', category: 'chinabond_broker_aaa_minus_yield', tenor: '1年', unit: '%' },
+	{ seriesId: 'E1707782', seriesName: '中债证券公司债到期收益率(AAA-):2年', category: 'chinabond_broker_aaa_minus_yield', tenor: '2年', unit: '%' },
+	{ seriesId: 'E1707783', seriesName: '中债证券公司债到期收益率(AAA-):3年', category: 'chinabond_broker_aaa_minus_yield', tenor: '3年', unit: '%' },
+	{ seriesId: 'E1707785', seriesName: '中债证券公司债到期收益率(AAA-):5年', category: 'chinabond_broker_aaa_minus_yield', tenor: '5年', unit: '%' },
+	{ seriesId: 'E1704284', seriesName: '同业存单发行利率(国有银行):1年', category: 'state_owned_bank_ncd', tenor: '1年', unit: '%' },
+	{ seriesId: 'E1704283', seriesName: '同业存单发行利率(国有银行):9个月', category: 'state_owned_bank_ncd', tenor: '9个月', unit: '%' },
+	{ seriesId: 'E1704282', seriesName: '同业存单发行利率(国有银行):6个月', category: 'state_owned_bank_ncd', tenor: '6个月', unit: '%' },
+	{ seriesId: 'E1704281', seriesName: '同业存单发行利率(国有银行):3个月', category: 'state_owned_bank_ncd', tenor: '3个月', unit: '%' },
+	{ seriesId: 'E1707781', seriesName: 'AAA-券商债:1年', category: 'credit_spread_broker_govt_1y', tenor: '1年', unit: '%' },
+	{ seriesId: 'E1000172', seriesName: '国债:1年', category: 'credit_spread_broker_govt_1y', tenor: '1年', unit: '%' },
+	{ seriesId: 'E1707783', seriesName: 'AAA-券商债:3年', category: 'credit_spread_broker_govt_3y', tenor: '3年', unit: '%' },
+	{ seriesId: 'E1000174', seriesName: '国债:3年', category: 'credit_spread_broker_govt_3y', tenor: '3年', unit: '%' },
+	{ seriesId: 'E1707785', seriesName: 'AAA-券商债:5年', category: 'credit_spread_broker_govt_5y', tenor: '5年', unit: '%' },
+	{ seriesId: 'E1000176', seriesName: '国债:5年', category: 'credit_spread_broker_govt_5y', tenor: '5年', unit: '%' }
+];
+
+const LIABILITY_SPREAD_PAIRS = [
+	{ category: 'credit_spread_broker_govt_1y', tenor: '1年', brokerSeriesId: 'E1707781', governmentSeriesId: 'E1000172' },
+	{ category: 'credit_spread_broker_govt_3y', tenor: '3年', brokerSeriesId: 'E1707783', governmentSeriesId: 'E1000174' },
+	{ category: 'credit_spread_broker_govt_5y', tenor: '5年', brokerSeriesId: 'E1707785', governmentSeriesId: 'E1000176' }
+];
+
 function record(value, field) {
 	if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error(`${field} 返回结构无效`);
 	return value;
@@ -76,6 +105,95 @@ function normalizeLimitRows(value) {
 		sortOrder: number(item.sortOrder, '额度排序', { minimum: -100_000, maximum: 100_000 }),
 		needsNetCapitalUpdate: Boolean(item.needsNetCapitalUpdate)
 	}));
+}
+
+function compareMarketRows(left, right) {
+	return left.category.localeCompare(right.category)
+		|| left.seriesId.localeCompare(right.seriesId)
+		|| left.observationDate.localeCompare(right.observationDate);
+}
+
+/**
+ * Converts raw, read-only public.edb observations fetched through the Data API
+ * into the chart contract. Broker-government spreads are intentionally derived
+ * here so the database only scans the source rows once.
+ */
+export function buildLiabilityMarketRateReport(value, expectedAsOfDate) {
+	const asOfDate = date(expectedAsOfDate, '负债周报日期');
+	const yearStart = `${asOfDate.slice(0, 4)}-01-01`;
+	const allowedCodes = new Set(LIABILITY_REPORT_EDB_CODES);
+	const rawRows = rows(value ?? [], 'Neon EDB 原始观测', 5_000, (item) => {
+		const indicatorCode = text(item.indicator_code, 'EDB 指标编码');
+		if (!allowedCodes.has(indicatorCode)) throw new Error(`EDB 指标编码 ${indicatorCode} 不在周报白名单`);
+		const observationDate = date(item.observation_date, 'EDB 观测日期');
+		if (observationDate < yearStart || observationDate > asOfDate) throw new Error(`EDB 观测日期 ${observationDate} 超出周报区间`);
+		return {
+			indicatorCode,
+			observationDate,
+			value: number(item.value, 'EDB 观测值', { nullable: true })
+		};
+	});
+	const observationsBySeriesAndDate = new Map();
+	for (const item of rawRows) {
+		observationsBySeriesAndDate.set(`${item.indicatorCode}\u0000${item.observationDate}`, item.value);
+	}
+
+	const marketHistory = [];
+	for (const item of rawRows) {
+		for (const definition of LIABILITY_MARKET_SERIES) {
+			if (definition.seriesId !== item.indicatorCode) continue;
+			marketHistory.push({
+				...definition,
+				observationDate: item.observationDate,
+				value: item.value
+			});
+		}
+	}
+	for (const pair of LIABILITY_SPREAD_PAIRS) {
+		for (const item of rawRows) {
+			if (item.indicatorCode !== pair.brokerSeriesId || item.value == null) continue;
+			const governmentValue = observationsBySeriesAndDate.get(`${pair.governmentSeriesId}\u0000${item.observationDate}`);
+			if (governmentValue == null) continue;
+			marketHistory.push({
+				seriesId: `${pair.brokerSeriesId}-${pair.governmentSeriesId}`,
+				seriesName: `${pair.tenor}信用利差`,
+				category: pair.category,
+				tenor: pair.tenor,
+				observationDate: item.observationDate,
+				value: (item.value - governmentValue) * 100,
+				unit: 'bp'
+			});
+		}
+	}
+	marketHistory.sort(compareMarketRows);
+
+	const latestByCategoryAndSeries = new Map();
+	for (const item of marketHistory) {
+		const key = `${item.category}\u0000${item.seriesId}`;
+		const previous = latestByCategoryAndSeries.get(key);
+		if (!previous || item.observationDate > previous.observationDate) latestByCategoryAndSeries.set(key, item);
+	}
+	const marketObservations = [...latestByCategoryAndSeries.values()].sort((left, right) =>
+		left.category.localeCompare(right.category)
+		|| String(left.tenor ?? '').localeCompare(String(right.tenor ?? ''), 'zh-CN')
+		|| left.seriesName.localeCompare(right.seriesName, 'zh-CN')
+	);
+	return { marketHistory, marketObservations };
+}
+
+export function attachLiabilityMarketRates(value, marketRateRows, expectedAsOfDate) {
+	const payload = record(value, 'Neon 周报业务聚合');
+	if (Number(payload.version) !== 1) throw new Error('Neon 周报业务聚合版本无效');
+	const report = record(payload.report, 'Neon 周报业务数据');
+	const asOfDate = date(report.asOfDate, 'Neon 周报日期');
+	if (asOfDate !== expectedAsOfDate) throw new Error(`Neon 周报日期 ${asOfDate} 与所选日期 ${expectedAsOfDate} 不一致`);
+	return {
+		...payload,
+		report: {
+			...report,
+			...buildLiabilityMarketRateReport(marketRateRows, expectedAsOfDate)
+		}
+	};
 }
 
 export function emptyLiabilityWeeklyReport(asOfDate) {

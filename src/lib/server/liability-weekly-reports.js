@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { prepareAudit } from './audit.js';
 import { normalizeManualLiabilitySources } from '../liability-choice.js';
-import { normalizeLiabilityReportDatabasePayload } from '../liability-report-data.js';
+import { LIABILITY_REPORT_EDB_CODES, normalizeLiabilityReportDatabasePayload } from '../liability-report-data.js';
 
 const SOURCE_FILES = {
 	parameters: [
@@ -11,22 +11,16 @@ const SOURCE_FILES = {
 	]
 };
 
-const LIABILITY_REPORT_EDB_CODES = [
-	'E1707781', 'E1707782', 'E1707783', 'E1707785',
-	'E1000172', 'E1000174', 'E1000176',
-	'E1704281', 'E1704282', 'E1704283', 'E1704284'
-];
-
 const CALIBER = {
 	balance: '主动负债余额与结构使用 financing.balance_snapshot；明细台账仅用于实时指标和勾稽提示。',
 	activeDebt: '统计日以前已起息且未到期、未关闭的 financing.debt；无到期日记录保留并标记勾稽缺口。',
 	cumulativeBorrowing: '月末累计新增借款按已导入余额快照差额计算，并剔除互换便利。',
 	projects: '推进中融资计划只读 financing.projects 的 planning/in_progress/at_risk，项目字段缺失不隐藏。',
 	dynamics: '近期动态只含实际发行、到期和付息；收益凭证发行日优先取认购日，融资计划不计入动态金额。',
-	market: '利率走势只读 Neon public.edb；Choice EDB 由 dashboard 每日定时增量更新，页面访问和手动生成都不调用 EDB。',
+	market: '浏览器通过 Neon Data API 只读 public.edb 白名单原始观测，并按同日券商债与国债收益率之差计算信用利差；Choice EDB 由 dashboard 每日定时增量更新。',
 	choice: '用户点击生成后由浏览器直接发起一次 Choice CTR 年初至报告日逻辑请求；周表取报告日所在周周一至报告日，年度图取年初至报告日。',
 	registration: '用户点击生成后由浏览器通过统一 Data API 分页读取 DM 券商债券申报；区间为报告日所在周周一至报告日，不使用数据库底稿回退。',
-	database: '融资工作台数据由浏览器使用短期 JWT 直接调用 Neon Data API 聚合 RPC；数据库内完成集合查询，financing Worker 只校验并固化快照。',
+	database: '融资工作台业务数据由浏览器使用短期 JWT 调用 Neon Data API 聚合 RPC；历史月末趋势读取冻结汇总，仅当前报告月份实时计算，financing Worker 只校验并固化快照。',
 	due30: '未来30天与年内到期核心指标统计全量已安排负债并纳入尚未发行记录；仅未来30天到期明细排除同业拆借和浮动收益凭证，独立付息现金流不计作负债到期。',
 	parameters: '净资本、净资产和资产负债率读取 financing.finance_parameters 当前维护值；月末字段按自然月末日期记录。'
 };
@@ -147,7 +141,7 @@ export async function saveLiabilityWeeklyReportSnapshot({ database, env, actor, 
 	const sourceStatus = getLiabilityWeeklyReportSourceStatus(report, manualSources);
 	const generatedAt = new Date().toISOString();
 	const snapshot = {
-		version: 4,
+		version: 5,
 		generatedAt,
 		asOfDate,
 		report,
@@ -156,10 +150,18 @@ export async function saveLiabilityWeeklyReportSnapshot({ database, env, actor, 
 			generation: 'manual',
 			choiceQuota: { edbLogicalRequests: 0, ctrLogicalRequests: 1, maxAttemptsPerRequest: 3, requestOrigin: 'browser', window: manualSources.issuanceWindow },
 			neonDataApi: {
-				path: '/rpc/liability_weekly_report_data',
-				asOfDate,
-				requestOrigin: 'browser',
-				aggregation: 'postgres'
+				business: {
+					path: '/rpc/liability_weekly_report_data',
+					asOfDate,
+					requestOrigin: 'browser',
+					aggregation: 'postgres-current-and-cached-closed-months'
+				},
+				marketRates: {
+					path: '/liability_market_rate_observations',
+					window: { startDate: `${asOfDate.slice(0, 4)}-01-01`, endDate: asOfDate },
+					requestOrigin: 'browser',
+					spreadCalculation: 'browser'
+				}
 			},
 			dmRegistrations: {
 				path: '/broker-bond-registrations',

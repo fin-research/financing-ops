@@ -19,6 +19,12 @@ async function installSchema(db, { beforeReminderMigration } = {}) {
 	await db.exec(`
 		CREATE ROLE authenticated;
 		CREATE ROLE anonymous;
+		CREATE TABLE public.edb (
+			indicator_code text NOT NULL,
+			observation_date date NOT NULL,
+			value numeric,
+			PRIMARY KEY (indicator_code, observation_date)
+		);
 		CREATE SCHEMA auth;
 		CREATE FUNCTION auth.user_id() RETURNS text LANGUAGE sql STABLE AS $$
 			SELECT current_setting('request.jwt.claim.sub', true)
@@ -49,7 +55,8 @@ async function installSchema(db, { beforeReminderMigration } = {}) {
 		'0016_income_certificate_name_edge_cases.sql',
 		'0017_normalize_refinancing_name.sql',
 		'0018_liability_report_data_api.sql',
-		'0019_allow_authenticated_liability_report_rpc.sql'
+		'0019_allow_authenticated_liability_report_rpc.sql',
+		'0020_optimize_liability_report_query.sql'
 	]) {
 		if (name === '0008_sop_node_reminder_periods.sql' && beforeReminderMigration) {
 			await beforeReminderMigration(db);
@@ -230,6 +237,61 @@ test('SOP-node reminder migration removes legacy rules before installing the new
 	assert.equal((await db.query("SELECT to_regclass('financing.reminder_rule_periods') AS table_name")).rows[0].table_name, 'financing.reminder_rule_periods');
 });
 
+test('closed-month financing metrics are filled once and remain frozen on later report calls', async (t) => {
+	const db = new PGlite();
+	t.after(() => db.close());
+	await installSchema(db);
+	await db.exec(`
+		DELETE FROM financing.monthly_financing_metrics
+		WHERE month_end = date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date)::date - 1;
+		INSERT INTO financing.balance_snapshot (as_of_date, debt_type, subtype, amount)
+		VALUES (
+			date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date)::date - 1,
+			'测试负债', '', 100000000
+		);
+		INSERT INTO financing.debt (
+			id, debt_type, name, amount, annual_rate, issue_date, maturity_date, activated_at
+		) VALUES (
+			900001, '测试负债', '月度缓存测试', 100000000, 0.02,
+			date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date)::date - INTERVAL '1 month',
+			date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date)::date + INTERVAL '1 year',
+			date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date)::date - INTERVAL '1 month'
+		);
+	`);
+	const firstRefresh = (await db.query(`
+		SELECT financing.refresh_monthly_financing_metrics(
+			(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date
+		) AS inserted
+	`)).rows[0];
+	assert.equal(firstRefresh.inserted, 1);
+	const first = (await db.query(`
+		SELECT balance_yi, weighted_rate_pct, weighted_days
+		FROM financing.monthly_financing_metrics
+		WHERE month_end = date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date)::date - 1
+	`)).rows[0];
+	assert.equal(Number(first.balance_yi), 1);
+	assert.equal(Number(first.weighted_rate_pct), 2);
+	assert.ok(Number(first.weighted_days) > 0);
+
+	await db.exec(`
+		UPDATE financing.debt SET annual_rate = 0.03 WHERE id = 900001;
+		UPDATE financing.balance_snapshot SET amount = 200000000 WHERE debt_type = '测试负债';
+	`);
+	const secondRefresh = (await db.query(`
+		SELECT financing.refresh_monthly_financing_metrics(
+			(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date
+		) AS inserted
+	`)).rows[0];
+	assert.equal(secondRefresh.inserted, 0);
+	const frozen = (await db.query(`
+		SELECT balance_yi, weighted_rate_pct
+		FROM financing.monthly_financing_metrics
+		WHERE month_end = date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date)::date - 1
+	`)).rows[0];
+	assert.equal(Number(frozen.balance_yi), 1);
+	assert.equal(Number(frozen.weighted_rate_pct), 2);
+});
+
 test('Data API RLS lets every active financing role edit and writes audit records', async (t) => {
 	const db = new PGlite();
 	t.after(() => db.close());
@@ -308,8 +370,25 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 		(await db.query("SELECT has_function_privilege('anonymous', 'financing.liability_weekly_report_data(date)', 'EXECUTE') AS allowed")).rows[0].allowed,
 		false
 	);
-	await db.exec('CREATE TABLE public.edb (indicator_code text, observation_date date, value numeric)');
+	assert.equal((await db.query("SELECT to_regclass('financing.monthly_financing_metrics') AS table_name")).rows[0].table_name, 'financing.monthly_financing_metrics');
+	assert.equal((await db.query("SELECT to_regclass('financing.liability_market_rate_observations') AS view_name")).rows[0].view_name, 'financing.liability_market_rate_observations');
+	assert.equal(
+		(await db.query("SELECT has_table_privilege('authenticated', 'financing.monthly_financing_metrics', 'SELECT') AS allowed")).rows[0].allowed,
+		false
+	);
+	assert.equal(
+		(await db.query("SELECT has_table_privilege('authenticated', 'financing.liability_market_rate_observations', 'SELECT') AS allowed")).rows[0].allowed,
+		true
+	);
+	await db.exec(`
+		INSERT INTO public.edb (indicator_code, observation_date, value) VALUES
+			('E1707781', '2026-09-02', 2.1),
+			('UNRELATED', '2026-09-02', 9.9)
+	`);
 	await db.exec('SET ROLE authenticated');
+	const marketRows = (await db.query('SELECT indicator_code, value FROM financing.liability_market_rate_observations')).rows;
+	assert.deepEqual(marketRows.map((row) => row.indicator_code), ['E1707781']);
+	await assert.rejects(db.query('SELECT * FROM public.edb'), /permission denied/i);
 	const reportPayload = (await db.query(`
 		SELECT financing.liability_weekly_report_data(
 			(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date

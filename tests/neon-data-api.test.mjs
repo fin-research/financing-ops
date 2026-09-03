@@ -8,6 +8,9 @@ async function loadNeonDataApi() {
 	const isolated = source.replace(
 		"import { withBase } from './app-paths';",
 		"const withBase = (path) => `/financing${path}`;"
+	).replace(
+		"import { LIABILITY_REPORT_EDB_CODES } from './liability-report-data.js';",
+		"const LIABILITY_REPORT_EDB_CODES = ['E1707781', 'E1000172'];"
 	);
 	const output = ts.transpileModule(isolated, {
 		compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
@@ -94,27 +97,45 @@ test('data client refreshes both token and endpoint once after a 401', async () 
 	}
 });
 
-test('liability report uses one authenticated aggregate RPC request', async () => {
+test('liability report fetches business and raw EDB data in parallel with one authenticated session', async () => {
 	const { NeonDataApi } = await loadNeonDataApi();
 	const originalFetch = globalThis.fetch;
 	const calls = [];
+	let tokenCalls = 0;
 	globalThis.fetch = async (input, init = {}) => {
 		const url = String(input);
 		if (url === '/financing/data/token') {
+			tokenCalls += 1;
 			return Response.json({ token: 'report-token', dataApiUrl: 'https://data.example.test' });
 		}
 		calls.push({ url, method: init.method, headers: new Headers(init.headers), body: init.body });
-		return Response.json({ version: 1, report: { asOfDate: '2026-09-03' }, limits: [] });
+		return url.includes('/rpc/')
+			? Response.json({ version: 1, report: { asOfDate: '2026-09-03' }, limits: [] })
+			: Response.json([{ indicator_code: 'E1707781', observation_date: '2026-09-02', value: 2.1 }]);
 	};
 	try {
-		const result = await new NeonDataApi().liabilityWeeklyReport('2026-09-03');
-		assert.equal(result.version, 1);
-		assert.equal(calls.length, 1);
-		assert.equal(calls[0].url, 'https://data.example.test/rpc/liability_weekly_report_data');
-		assert.equal(calls[0].method, 'POST');
-		assert.equal(calls[0].headers.get('content-profile'), 'financing');
-		assert.equal(calls[0].body, JSON.stringify({ p_report_date: '2026-09-03' }));
-		await assert.rejects(new NeonDataApi().liabilityWeeklyReport('invalid'), /日期无效/);
+		const api = new NeonDataApi();
+		const [business, marketRates] = await Promise.all([
+			api.liabilityWeeklyReportBusiness('2026-09-03'),
+			api.liabilityMarketRates('2026-09-03')
+		]);
+		assert.equal(business.version, 1);
+		assert.equal(marketRates.length, 1);
+		assert.equal(tokenCalls, 1);
+		assert.equal(calls.length, 2);
+		const businessCall = calls.find((call) => call.url.includes('/rpc/'));
+		assert.equal(businessCall.url, 'https://data.example.test/rpc/liability_weekly_report_data');
+		assert.equal(businessCall.method, 'POST');
+		assert.equal(businessCall.headers.get('content-profile'), 'financing');
+		assert.equal(businessCall.body, JSON.stringify({ p_report_date: '2026-09-03' }));
+		const marketCall = calls.find((call) => call.url.includes('/liability_market_rate_observations?'));
+		const marketUrl = new URL(marketCall.url);
+		assert.equal(marketUrl.searchParams.get('select'), 'indicator_code,observation_date,value');
+		assert.equal(marketUrl.searchParams.get('indicator_code'), 'in.(E1707781,E1000172)');
+		assert.deepEqual(marketUrl.searchParams.getAll('observation_date'), ['gte.2026-01-01', 'lte.2026-09-03']);
+		assert.equal(marketUrl.searchParams.get('limit'), '5000');
+		await assert.rejects(api.liabilityWeeklyReportBusiness('invalid'), /日期无效/);
+		await assert.rejects(api.liabilityMarketRates('invalid'), /日期无效/);
 	} finally {
 		globalThis.fetch = originalFetch;
 	}

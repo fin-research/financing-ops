@@ -1,5 +1,6 @@
 import { withBase } from './app-paths';
 import type { DataRow, EntityConfig } from './data-admin';
+import { LIABILITY_REPORT_EDB_CODES } from './liability-report-data.js';
 
 type ListOptions = {
 	page: number;
@@ -13,22 +14,35 @@ type ApiErrorBody = { message?: string; details?: string; hint?: string; code?: 
 
 export class NeonDataApi {
 	#session: { token: string; dataApiUrl: string } | null = null;
+	#sessionRequest: Promise<{ token: string; dataApiUrl: string }> | null = null;
 
 	async #getSession(force = false) {
 		if (this.#session && !force) return this.#session;
-		if (force) this.#session = null;
-		const response = await fetch(withBase('/data/token'), { headers: { Accept: 'application/json' }, cache: 'no-store' });
-		if (!response.ok) throw new Error(response.status === 401 ? '登录已失效，请重新登录' : '无法取得数据后台访问令牌');
-		const body = await response.json() as { token?: string; dataApiUrl?: string };
-		if (!body.token) throw new Error('Neon Data API 令牌为空');
-		if (!body.dataApiUrl) throw new Error('Neon Data API 地址为空');
-		const parsed = new URL(body.dataApiUrl);
-		if (parsed.protocol !== 'https:') throw new Error('Neon Data API 必须使用 HTTPS');
-		this.#session = {
-			token: body.token,
-			dataApiUrl: parsed.toString().replace(/\/$/, '')
-		};
-		return this.#session;
+		if (force) {
+			this.#session = null;
+			this.#sessionRequest = null;
+		}
+		if (this.#sessionRequest) return this.#sessionRequest;
+		const request = (async () => {
+			const response = await fetch(withBase('/data/token'), { headers: { Accept: 'application/json' }, cache: 'no-store' });
+			if (!response.ok) throw new Error(response.status === 401 ? '登录已失效，请重新登录' : '无法取得数据后台访问令牌');
+			const body = await response.json() as { token?: string; dataApiUrl?: string };
+			if (!body.token) throw new Error('Neon Data API 令牌为空');
+			if (!body.dataApiUrl) throw new Error('Neon Data API 地址为空');
+			const parsed = new URL(body.dataApiUrl);
+			if (parsed.protocol !== 'https:') throw new Error('Neon Data API 必须使用 HTTPS');
+			return {
+				token: body.token,
+				dataApiUrl: parsed.toString().replace(/\/$/, '')
+			};
+		})();
+		this.#sessionRequest = request;
+		try {
+			this.#session = await request;
+			return this.#session;
+		} finally {
+			if (this.#sessionRequest === request) this.#sessionRequest = null;
+		}
 	}
 
 	async #request(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
@@ -111,12 +125,26 @@ export class NeonDataApi {
 		if (!rows.length) throw new Error('记录已被其他人修改或已经删除');
 	}
 
-	async liabilityWeeklyReport(reportDate: string) {
+	async liabilityWeeklyReportBusiness(reportDate: string) {
 		if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) throw new Error('负债周报日期无效');
 		const response = await this.#request('rpc/liability_weekly_report_data', {
 			method: 'POST',
 			body: JSON.stringify({ p_report_date: reportDate })
 		});
 		return await response.json() as Record<string, unknown>;
+	}
+
+	async liabilityMarketRates(reportDate: string) {
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) throw new Error('负债周报日期无效');
+		const params = new URLSearchParams({
+			select: 'indicator_code,observation_date,value',
+			indicator_code: `in.(${LIABILITY_REPORT_EDB_CODES.join(',')})`,
+			order: 'indicator_code.asc,observation_date.asc',
+			limit: '5000'
+		});
+		params.append('observation_date', `gte.${reportDate.slice(0, 4)}-01-01`);
+		params.append('observation_date', `lte.${reportDate}`);
+		const response = await this.#request(`liability_market_rate_observations?${params}`);
+		return await response.json() as Array<{ indicator_code: string; observation_date: string; value: number | null }>;
 	}
 }

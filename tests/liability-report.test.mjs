@@ -6,7 +6,11 @@ import {
 	fetchManualLiabilitySources,
 	normalizeManualLiabilitySources
 } from '../src/lib/liability-choice.js';
-import { normalizeLiabilityReportDatabasePayload } from '../src/lib/liability-report-data.js';
+import {
+	attachLiabilityMarketRates,
+	buildLiabilityMarketRateReport,
+	normalizeLiabilityReportDatabasePayload
+} from '../src/lib/liability-report-data.js';
 
 function ctrRow(overrides = {}) {
 	return {
@@ -121,6 +125,39 @@ test('Neon report RPC payload is date-bound and normalized before snapshotting',
 	assert.throws(
 		() => normalizeLiabilityReportDatabasePayload(payload, '2026-09-02'),
 		/与所选日期 2026-09-02 不一致/
+	);
+});
+
+test('raw EDB observations are classified and broker-government spreads are calculated outside SQL', () => {
+	const rawRows = [
+		{ indicator_code: 'E1707781', observation_date: '2026-09-01', value: 2.11 },
+		{ indicator_code: 'E1000172', observation_date: '2026-09-01', value: 1.71 },
+		{ indicator_code: 'E1707781', observation_date: '2026-09-02', value: 2.15 },
+		{ indicator_code: 'E1000172', observation_date: '2026-09-02', value: 1.7 },
+		{ indicator_code: 'E1704284', observation_date: '2026-09-02', value: 1.82 }
+	];
+	const market = buildLiabilityMarketRateReport(rawRows, '2026-09-03');
+	const spreads = market.marketHistory.filter((item) => item.seriesId === 'E1707781-E1000172');
+	assert.deepEqual(spreads.map((item) => [item.observationDate, Math.round(item.value)]), [
+		['2026-09-01', 40],
+		['2026-09-02', 45]
+	]);
+	assert.equal(market.marketHistory.filter((item) => item.seriesId === 'E1707781').length, 4);
+	assert.equal(market.marketObservations.find((item) => item.seriesId === 'E1707781-E1000172').observationDate, '2026-09-02');
+
+	const payload = attachLiabilityMarketRates({
+		version: 1,
+		report: { asOfDate: '2026-09-03' },
+		limits: []
+	}, rawRows, '2026-09-03');
+	assert.equal(payload.report.marketHistory.length, market.marketHistory.length);
+	assert.throws(
+		() => buildLiabilityMarketRateReport([{ indicator_code: 'UNKNOWN', observation_date: '2026-09-02', value: 1 }], '2026-09-03'),
+		/不在周报白名单/
+	);
+	assert.throws(
+		() => buildLiabilityMarketRateReport([{ indicator_code: 'E1707781', observation_date: '2025-12-31', value: 1 }], '2026-09-03'),
+		/超出周报区间/
 	);
 });
 
@@ -243,21 +280,23 @@ test('weekly report preserves the 1080px desktop canvas when scaled to A4', () =
 	assert.ok(headerRules.every((rule) => !/min-height/.test(rule)));
 });
 
-test('Neon report RPC supplies every chart data contract', () => {
-	const queries = fs.readFileSync(new URL('../migrations/0018_liability_report_data_api.sql', import.meta.url), 'utf8');
-	for (const field of ['maturityByType', 'annualMaturity', 'balanceRateTrend', 'issuanceTrend', 'marketHistory']) {
+test('optimized Neon report RPC supplies business chart data while raw EDB stays outside the function', () => {
+	const migration = fs.readFileSync(new URL('../migrations/0020_optimize_liability_report_query.sql', import.meta.url), 'utf8');
+	const queries = migration.slice(migration.indexOf('CREATE OR REPLACE FUNCTION liability_weekly_report_data'));
+	for (const field of ['maturityByType', 'annualMaturity', 'balanceRateTrend', 'issuanceTrend']) {
 		assert.match(queries, new RegExp(`AS "${field}"`));
 	}
 	assert.match(queries, /jsonb_build_object\('type', type, 'amountYi', amount_yi\)/);
 	assert.match(queries, /principal_yi/);
 	assert.match(queries, /interest_yi/);
-	assert.match(queries, /FROM public\.edb/);
-	assert.match(queries, /market_spread_history/);
-	assert.doesNotMatch(queries, /FROM liability_market_observations/);
+	assert.doesNotMatch(queries, /public\.edb|market_spread_history|marketHistory|marketObservations/);
+	assert.match(migration, /CREATE VIEW financing\.liability_market_rate_observations/);
+	assert.match(migration, /FROM public\.edb observation/);
+	assert.match(migration, /GRANT SELECT ON financing\.liability_market_rate_observations TO authenticated/);
 });
 
 test('recent liability dynamics keep the agreed weekly exclusions while plans remain separate', () => {
-	const queries = fs.readFileSync(new URL('../migrations/0018_liability_report_data_api.sql', import.meta.url), 'utf8');
+	const queries = fs.readFileSync(new URL('../migrations/0020_optimize_liability_report_query.sql', import.meta.url), 'utf8');
 	const eventRows = queries.slice(queries.indexOf('), event_rows AS'), queries.indexOf('), due_detail AS'));
 	assert.equal((eventRows.match(/NOT IN \('同业拆借', '浮动收益凭证'\)/g) ?? []).length, 3);
 	assert.equal((eventRows.match(/BETWEEN week\.week_start AND week\.as_of_date/g) ?? []).length, 3);
@@ -271,7 +310,7 @@ test('recent liability dynamics keep the agreed weekly exclusions while plans re
 });
 
 test('core maturity metrics include all arranged debt while only 30-day details apply exclusions', () => {
-	const weeklyQuery = fs.readFileSync(new URL('../migrations/0018_liability_report_data_api.sql', import.meta.url), 'utf8');
+	const weeklyQuery = fs.readFileSync(new URL('../migrations/0020_optimize_liability_report_query.sql', import.meta.url), 'utf8');
 	const scheduledMetrics = weeklyQuery.slice(weeklyQuery.indexOf('), scheduled_maturity_metrics AS'), weeklyQuery.indexOf('), largest_borrowing AS'));
 	const dueDetails = weeklyQuery.slice(weeklyQuery.indexOf('), due_detail AS'), weeklyQuery.indexOf('), active_projects AS'));
 	assert.match(scheduledMetrics, /FROM debt d CROSS JOIN latest/);
@@ -395,13 +434,13 @@ test('all liability report charts use the shared ECharts host instead of hand-dr
 	assert.match(charting, /MarkPointComponent/);
 });
 
-test('liability charts and Neon RPC follow the report chart contract', () => {
+test('liability charts and optimized Neon RPC follow the report chart contract', () => {
 	const balance = fs.readFileSync(new URL('../src/routes/liability-report/ReportBalanceRateChart.svelte', import.meta.url), 'utf8');
 	const issuance = fs.readFileSync(new URL('../src/routes/liability-report/ReportIssuanceChart.svelte', import.meta.url), 'utf8');
 	const stacked = fs.readFileSync(new URL('../src/routes/liability-report/ReportStackedBarChart.svelte', import.meta.url), 'utf8');
 	const chartTypes = fs.readFileSync(new URL('../src/lib/liability-report-charts.ts', import.meta.url), 'utf8');
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
-	const queries = fs.readFileSync(new URL('../migrations/0018_liability_report_data_api.sql', import.meta.url), 'utf8');
+	const queries = fs.readFileSync(new URL('../migrations/0020_optimize_liability_report_query.sql', import.meta.url), 'utf8');
 	const choice = fs.readFileSync(new URL('../src/lib/liability-choice.js', import.meta.url), 'utf8');
 
 	assert.match(balance, /areaStyle:/);
@@ -423,18 +462,20 @@ test('liability charts and Neon RPC follow the report chart contract', () => {
 	assert.match(page, /highlightLabel="东方财富"/);
 	assert.match(page, /sort\(\(a, b\) => b\[1\] - a\[1\]\)/);
 
-	assert.match(queries, /trend_snapshot_totals AS/);
-	assert.match(queries, /SELECT MAX\(snapshot\.as_of_date\)[\s\S]*snapshot\.as_of_date <= trend_months\.month_end/);
-	assert.match(queries, /SELECT LEAST\(/);
+	assert.match(queries, /CREATE TABLE financing\.monthly_financing_metrics/);
+	assert.match(queries, /SELECT financing\.refresh_monthly_financing_metrics/);
+	assert.match(queries, /cached_balance_rate_trend AS/);
+	assert.match(queries, /FROM monthly_financing_metrics metrics/);
+	assert.match(queries, /current_balance_rate_trend AS/);
+	assert.doesNotMatch(queries.slice(queries.indexOf('CREATE OR REPLACE FUNCTION liability_weekly_report_data')), /trend_months AS|SELECT LEAST\(/);
 	assert.match(queries, /classified_issuances AS/);
 	assert.match(queries, /issuance_types\(type\) AS/);
 	assert.match(queries, /FROM issuance_months CROSS JOIN issuance_types/);
 	assert.match(queries, /THEN '3年公募债'/);
 	assert.match(queries, /THEN '5年次级债'/);
 	assert.match(choice, /originalTermYears <= 1 \? '短期公司债' : '公募债'/);
-	assert.match(queries, /raw_market_history AS/);
-	assert.doesNotMatch(queries, /raw_market_history_with_neighbors|category <> 'state_owned_bank_ncd'/);
-	assert.doesNotMatch(queries, /ABS\(value - previous_value\)|ABS\(value - next_value\)/);
+	assert.match(queries, /CREATE VIEW financing\.liability_market_rate_observations/);
+	assert.doesNotMatch(queries.slice(queries.indexOf('CREATE OR REPLACE FUNCTION liability_weekly_report_data')), /raw_market_history AS|market_spread_history/);
 });
 
 test('page load never fetches quota-limited Choice sources and the browser owns the manual CTR request', () => {
@@ -454,18 +495,25 @@ test('page load never fetches quota-limited Choice sources and the browser owns 
 });
 
 test('liability market rates come from scheduled public.edb data, not manual Choice EDB', () => {
-	const [service, choice, page] = [
+	const [service, choice, page, layout, client, reportData] = [
 		fs.readFileSync(new URL('../src/lib/server/liability-weekly-reports.js', import.meta.url), 'utf8'),
 		fs.readFileSync(new URL('../src/lib/liability-choice.js', import.meta.url), 'utf8'),
-		fs.readFileSync(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8')
+		fs.readFileSync(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8'),
+		fs.readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8'),
+		fs.readFileSync(new URL('../src/lib/neon-data-api.ts', import.meta.url), 'utf8'),
+		fs.readFileSync(new URL('../src/lib/liability-report-data.js', import.meta.url), 'utf8')
 	];
 	assert.match(service, /public\.edb/);
 	assert.match(service, /edbLogicalRequests: 0/);
+	assert.match(service, /spreadCalculation: 'browser'/);
 	assert.match(choice, /PEER_BOND_TYPES/);
 	assert.match(choice, /\/broker-bond-registrations/);
 	assert.match(service, /manualSources\.registration\.status === 'available'/);
 	assert.match(service, /registrationProgress: manualSources\.registration\.status/);
 	assert.match(service, /path: '\/broker-bond-registrations'/);
+	assert.match(client, /liability_market_rate_observations/);
+	assert.match(layout, /attachLiabilityMarketRates\(business, marketRates, asOfDate\)/);
+	assert.match(reportData, /value: \(item\.value - governmentValue\) \* 100/);
 	assert.doesNotMatch(choice, /\/choice\/edb|edbIds/);
 	assert.doesNotMatch(page, /\/choice\/edb|edbIds/);
 });

@@ -33,7 +33,7 @@ Local scripts → direct DATABASE_URL → Neon financing
 - `src/worker.ts` 在 SvelteKit fetch 入口外增加每小时 Cron；`src/lib/server/reminder-scheduler.js` 为每次调度创建并关闭一个 Hyperdrive 连接。
 - `src/lib/server/project-deletion.js` 负责项目、任务和提醒的原子删除。
 - `src/lib/liability-choice.js` 封装浏览器端负债周报外部数据请求和服务端入库前校验；用户点击生成后，浏览器请求公开 `/data/choice/ctr` 与 `/data/broker-bond-registrations`，后者按报告日所在周周一至报告日分页取数，financing 服务端不代理上游请求。
-- `src/lib/neon-data-api.ts` 在生成时通过短期 JWT 调用 `financing.liability_weekly_report_data(date)` 聚合 RPC；`src/lib/liability-report-data.js` 对 RPC 返回的日期、字段、数量和数值边界做白名单校验。
+- `src/lib/neon-data-api.ts` 在生成时通过同一短期 JWT 并行调用 `financing.liability_weekly_report_data(date)` 业务聚合 RPC 与 `financing.liability_market_rate_observations` 原始市场观测视图；`src/lib/liability-report-data.js` 在浏览器配对计算信用利差，并在服务端保存前再次校验日期、字段、数量和数值边界。
 - `src/lib/server/liability-weekly-reports.js` 只负责负债周报来源状态、按报告日读取快照索引，以及校验后保存 R2 快照；Choice 或 DM 失败时对应模块留空并返回缺失项，不回退安装包导入表。
 - `src/lib/server/auth.js` 与 `neon-auth-client.js` 封装 Neon Auth；业务页面不直接拼 Auth 请求。
 
@@ -59,7 +59,7 @@ Excel / SQLite / 手工提醒脚本 → gitignored `.env.database` 直连 Neon�
 - 项目列表首屏 1 次集合查询；人员与启用 SOP 在弹窗打开时通过 `/projects/options` 1 次按需加载。
 - 提醒历史使用三字段 keyset 游标，每批最多 50 条，加载更多不重复全量汇总。
 - 负债周报首屏只按所选报告日查询一行 `liability_weekly_report_runs`；存在成功索引时读取对应 R2 对象，不存在时返回空状态。页面 load、刷新、日期切换和 Cron 均不得读取报表明细、Neon Data API、Choice 或 DM。
-- 只有用户点击“生成本期周报”后，浏览器才并行执行三条数据路径：一次 Choice CTR 年初至报告日逻辑请求、报告日所在周周一至报告日的 DM 分页请求、一次 Neon Data API 聚合 RPC。复杂集合查询和 JSON 聚合在 PostgreSQL 内完成，避免 financing Worker 执行大查询并消耗 CPU；`saveSnapshot` action 只做边界校验、内容哈希、R2 写入和一行索引/审计事务。快照写入 `eastmoney/liability-report/yyyy-mm-dd.json` 固定 key；同一日重新生成覆盖同一对象和索引行。`public.edb` 的增量写入由 dashboard 每日定时 Workflow 统一负责。
+- 只有用户点击“生成本期周报”后，浏览器才并行执行四条数据请求：一次 Choice CTR 年初至报告日逻辑请求、报告日所在周周一至报告日的 DM 分页请求、一次 Neon Data API 业务聚合 RPC、一次 Neon Data API 原始市场观测读取。业务集合与 JSON 聚合在 PostgreSQL 内完成；2021 年以来已结束月份直接读取 `monthly_financing_metrics`，函数只惰性补齐尚未固化的月末，当前报告月份实时计算。市场请求只扫描白名单 `public.edb` 原始行，信用利差在浏览器计算。`saveSnapshot` action 只做边界校验、内容哈希、R2 写入和一行索引/审计事务。快照写入 `eastmoney/liability-report/yyyy-mm-dd.json` 固定 key；同一日重新生成覆盖同一对象和索引行。`public.edb` 的增量写入由 dashboard 每日定时 Workflow 统一负责。
 
 增加查询时必须说明请求级 SQL 次数是否变化，并更新网络效率测试。
 

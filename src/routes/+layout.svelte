@@ -6,6 +6,7 @@
 	import { tick } from 'svelte';
 	import { withBase, withoutBase } from '$lib/app-paths';
 	import { fetchManualLiabilitySources } from '$lib/liability-choice.js';
+	import { attachLiabilityMarketRates } from '$lib/liability-report-data.js';
 	import { NeonDataApi } from '$lib/neon-data-api';
 	import {
 		BarChart3,
@@ -96,10 +97,13 @@
 		try {
 			const asOfDate = selectedLiabilityReportDate();
 			const externalDataApiUrl = String((page.data as any)?.externalDataApiUrl ?? new URL('/data', window.location.origin));
-			const [external, database] = await Promise.all([
+			const neonDataApi = new NeonDataApi();
+			const [external, business, marketRates] = await Promise.all([
 				fetchManualLiabilitySources({ dataApiUrl: externalDataApiUrl, asOfDate }),
-				new NeonDataApi().liabilityWeeklyReport(asOfDate)
+				neonDataApi.liabilityWeeklyReportBusiness(asOfDate),
+				neonDataApi.liabilityMarketRates(asOfDate)
 			]);
+			const database = attachLiabilityMarketRates(business, marketRates, asOfDate);
 			reportSourcesPayload = JSON.stringify({ external, database });
 			await tick();
 			if (!reportSnapshotForm) throw new Error('周报快照表单尚未就绪');

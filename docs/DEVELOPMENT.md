@@ -42,6 +42,23 @@ pnpm reminders:send -- --dry-run
 pnpm cf:typegen
 ```
 
+### Neon 查询负载诊断
+
+`0020_optimize_liability_report_query.sql` 在 Neon 可用时启用 `pg_stat_statements`。判断 CU-hours 相关热点时按累计执行时间排序，同时保留调用次数、平均耗时、缓存命中、磁盘读取、临时块写入和返回行数：
+
+```sql
+SELECT calls,
+	round(total_exec_time::numeric, 2) AS total_ms,
+	round(mean_exec_time::numeric, 2) AS avg_ms,
+	shared_blks_hit, shared_blks_read, temp_blks_written, rows,
+	left(query, 300) AS query
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 20;
+```
+
+已链接 Neon CLI 的环境也可用 `neon inspect db outliers` 与 `neon inspect db calls` 做只读排查。不要只按单次平均耗时判断资源热点；扩展首次启用后需要等待实际流量积累统计。
+
 去掉 `--dry-run`、增加 `--apply` 或执行发送都可能写入外部状态；先确认目标环境和任务授权。
 
 ## Git 与发布

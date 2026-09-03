@@ -107,7 +107,7 @@ test('data administration gets its endpoint with the private token request', asy
 	assert.doesNotMatch(page, /dataApiUrl/);
 });
 
-test('liability report page reads only the selected snapshot and generation calls one Neon aggregate RPC', async () => {
+test('liability report page reads one snapshot and generation splits business and raw market Data API reads', async () => {
 	const [page, service, client, layout] = await Promise.all([
 		readFile(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8'),
 		readFile(new URL('../src/lib/server/liability-weekly-reports.js', import.meta.url), 'utf8'),
@@ -119,5 +119,8 @@ test('liability report page reads only the selected snapshot and generation call
 	assert.doesNotMatch(page, /getLiabilityWeeklyReportData|fetchManualLiabilitySources|liabilityWeeklyReport\(/);
 	assert.equal((service.match(/database\.prepare\(/g) ?? []).length, 3);
 	assert.match(client, /#request\('rpc\/liability_weekly_report_data'/);
-	assert.match(layout, /Promise\.all\(\[[\s\S]*fetchManualLiabilitySources[\s\S]*new NeonDataApi\(\)\.liabilityWeeklyReport/);
+	assert.match(client, /#request\(`liability_market_rate_observations\?\$\{params\}`\)/);
+	assert.match(layout, /const neonDataApi = new NeonDataApi\(\)/);
+	assert.match(layout, /Promise\.all\(\[[\s\S]*fetchManualLiabilitySources[\s\S]*liabilityWeeklyReportBusiness[\s\S]*liabilityMarketRates/);
+	assert.match(layout, /attachLiabilityMarketRates\(business, marketRates, asOfDate\)/);
 });
