@@ -11,7 +11,7 @@ import {
 	shortDebtPredicateSql
 } from '../src/lib/server/dashboard-metrics.js';
 
-test('short debt includes every instrument whose original issuance term is at most one year', async (t) => {
+test('short debt uses original issuance term and only the three business instrument groups', async (t) => {
 	const db = new PGlite();
 	t.after(() => db.close());
 	await db.exec(`
@@ -28,8 +28,8 @@ test('short debt includes every instrument whose original issuance term is at mo
 			('收益凭证', '浮动收益凭证', 20, '2025-08-21', '2026-08-22', 366),
 			('收益凭证', '固定收益凭证', 30, '2025-08-22', '2026-08-22', 365),
 			('收益凭证', '固定收益凭证', 40, '2025-08-21', '2026-08-23', 367),
-			('债券', '短期融资券', 50, '2026-08-01', '2027-01-27', 179),
-			('同业拆借', NULL, 70, '2026-08-01', '2026-09-01', 31),
+			('债券', '短期融资券', 50, '2024-01-01', NULL, NULL),
+			('同业拆借', NULL, 70, '2026-08-01', NULL, NULL),
 			('债券', '小公募', 60, '2023-01-01', '2026-12-31', 1460),
 			('集团借款', NULL, 80, '2026-01-01', '2026-12-31', 364),
 			('债券', '短期公司债', 110, '2026-08-01', '2027-08-01', 365),
@@ -50,7 +50,7 @@ test('short debt includes every instrument whose original issuance term is at mo
 
 	assert.equal(SHORT_DEBT_MAX_ORIGINAL_TERM_DAYS, 365);
 	assert.equal(reportingTypeSql('d'), "COALESCE(NULLIF(d.subtype, ''), d.debt_type)");
-	assert.equal(Number(result.rows[0].amount), 470);
+	assert.equal(Number(result.rows[0].amount), 160);
 });
 
 test('largest new borrowing only considers issues from the as-of calendar year', async (t) => {
