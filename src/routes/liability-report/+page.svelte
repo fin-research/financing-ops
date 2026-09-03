@@ -25,7 +25,7 @@
 	let peerRows = $derived(normalizePeerRows(report.peerIssueSummary ?? []));
 	let peerLabels = $derived(peerIssuerLabels(peerRows));
 	let peerTypes = $derived(orderedPeerTypes(peerRows));
-	let peerIssuanceColumns = $derived(splitPeerIssuances(report.peerIssuances ?? [], report.registrationProgress?.length ?? 0));
+	let peerRegistrationColumns = $derived(splitPeerRegistrations(report.registrationProgress ?? [], report.peerIssuances?.length ?? 0));
 	const marketCategories = [
 		{ key: 'state_owned_bank_ncd', title: '国有行同业存单发行利率走势' },
 		{ key: 'credit_spread_broker_govt_1y', title: 'AAA-券商与国债到期收益率及利差（1年）' },
@@ -76,9 +76,9 @@
 		return [...totals.values()];
 	}
 
-	function splitPeerIssuances(rows: any[], registrationCount: number) {
+	function splitPeerRegistrations(rows: any[], pricingCount: number) {
 		if (rows.length <= 10) return [rows, []];
-		const leftCount = Math.min(rows.length - 1, Math.max(10, Math.ceil((rows.length + registrationCount) / 2)));
+		const leftCount = Math.max(1, Math.min(rows.length - 1, Math.ceil((rows.length - pricingCount - 2) / 2)));
 		return [rows.slice(0, leftCount), rows.slice(leftCount)];
 	}
 
@@ -102,6 +102,10 @@
 	function percent(value: number | null | undefined, digits = 1) { return value == null || !Number.isFinite(Number(value)) ? '数据缺失' : `${amount(Number(value), digits)}%`; }
 	function signed(value: number | null | undefined, digits = 2) { if (value == null || !Number.isFinite(Number(value))) return '数据缺失'; return `${Number(value) >= 0 ? '+' : '-'}${amount(Math.abs(Number(value)), digits)}`; }
 	function dateLabel(value: string | null | undefined) { return value ? String(value).slice(0, 10).replaceAll('-', '/') : '数据缺失'; }
+	function isoDate(value: string | null | undefined) { return value ? String(value).slice(0, 10) : '数据缺失'; }
+	function addDays(value: string | null | undefined, days: number) { if (!value) return null; const date = new Date(`${String(value).slice(0, 10)}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); }
+	function yearEnd(value: string | null | undefined) { return value ? `${String(value).slice(0, 4)}-12-31` : null; }
+	function share(value: number | null | undefined, total: number | null | undefined) { return total && Number.isFinite(Number(value)) ? percent(Number(value) / Number(total) * 100, 1) : '数据缺失'; }
 	function headerDate(value: string | null | undefined) { if (!value) return '数据缺失'; const [year, month, day] = String(value).slice(0, 10).split('-'); return `${year}年${month}月${day}日`; }
 	function weekdayDate(value: string | null | undefined) { if (!value) return '日期缺失'; const date = new Date(`${String(value).slice(0, 10)}T00:00:00Z`); return `周${'日一二三四五六'[date.getUTCDay()]} ${String(value).slice(5, 10)}`; }
 	function eventLabel(kind: string) { return ({ maturity: '到期', interest: '付息', issue: '发行' } as Record<string, string>)[kind] ?? kind; }
@@ -118,6 +122,10 @@
 
 {#snippet peerPricingTable(rows: any[])}
 	<div class="table-scroll"><table class="bento-table peer-pricing-table"><thead><tr><th>发行人</th><th>品种</th><th class="num">规模</th><th>期限</th><th class="num">利率</th><th>发行日期</th></tr></thead><tbody>{#each rows as item}<tr><td>{brokerShortName(item.issuerName)}</td><td>{item.bondType ?? '数据缺失'}</td><td class="num">{item.actualIssueAmountYi == null ? '数据缺失' : `${amount(item.actualIssueAmountYi)}亿`}</td><td>{item.issueTenor ?? '数据缺失'}</td><td class="num">{item.couponRatePct == null ? '数据缺失' : `${amount(item.couponRatePct, 2)}%`}</td><td>{dateLabel(item.issueDate)}</td></tr>{:else}<tr><td colspan="6" class="table-empty">可比券商发行数据缺失</td></tr>{/each}</tbody></table></div>
+{/snippet}
+
+{#snippet peerRegistrationTable(rows: any[])}
+	<div class="table-scroll"><table class="bento-table registration-table"><thead><tr><th>发行方</th><th>品种</th><th class="num">申报</th><th>状态</th><th>更新日</th></tr></thead><tbody>{#each rows as item}<tr><td>{brokerShortName(item.issuerName)}</td><td>{item.variety ?? '数据缺失'}</td><td class="num">{item.amountYi == null ? '数据缺失' : `${amount(item.amountYi, 0)}亿`}</td><td><span class="status-badge status-green">{item.status ?? '数据缺失'}</span></td><td>{dateLabel(item.updateDate)}</td></tr>{:else}<tr><td colspan="5" class="table-empty">可比券商申报数据缺失</td></tr>{/each}</tbody></table></div>
 {/snippet}
 
 <svelte:head><title>东方财富证券 · 资金管理部负债周报</title></svelte:head>
@@ -139,7 +147,7 @@
 
 <section class="report-section" aria-labelledby="section-2-title">
 	<div class="card-head"><div class="section-title-wrap"><span class="section-tag">第二部分</span><h2 id="section-2-title" class="section-title">负债核心数据总览与指标监控</h2></div></div>
-	<div class="core-panel"><div class="p1-grid"><div class="p1card accent-cyan"><div class="p1tag">资产负债规模</div><div class="dual-value"><span>总资产</span><strong>{amount(report.parameters.total_assets?.valueYi)}<em>亿元</em></strong></div><div class="dual-value"><span>总负债</span><strong>{amount(report.parameters.total_liabilities?.valueYi)}<em>亿元</em></strong></div><div class="p1sub">{dateLabel(report.parameters.total_assets?.periodEnd)}口径</div></div><div class="p1card"><div class="p1tag">主动负债余额</div><div class="p1num">{amount(report.metrics.balanceYi)}<em>亿元</em></div><div class="p1sub">较上月末 <b>{signed(report.metrics.balanceMonthChangeYi)}</b> 亿元<br />较上年末 <b>{signed(report.metrics.balanceYearChangeYi)}</b> 亿元</div></div><div class="p1card accent-cyan"><div class="p1tag">资产负债率</div><div class="p1num">{report.parameters.adjusted_asset_liability_ratio?.valueYi == null ? '数据缺失' : percent(report.parameters.adjusted_asset_liability_ratio.valueYi * 100, 2)}</div><div class="p1sub">扣代理买卖<br />{dateLabel(report.parameters.adjusted_asset_liability_ratio?.periodEnd)}口径</div></div><div class="p1card accent-amber"><div class="p1tag">加权融资利率</div><div class="p1num">{report.metrics.weightedRatePct == null ? '数据缺失' : `${amount(report.metrics.weightedRatePct, 2)}%`}</div><div class="p1sub">较上月末 <b>{signed(report.metrics.weightedRateMonthBp, 1)}</b> bp<br />金额覆盖 {amount(report.quality.rateCoveragePct, 1)}%</div></div><div class="p1card accent-amber"><div class="p1tag">加权剩余期限</div><div class="p1num">{#if report.metrics.weightedRemainingDays == null}数据缺失{:else}{amount(report.metrics.weightedRemainingDays, 0)}<em>天</em>{/if}</div><div class="p1sub">起息与到期字段覆盖 {amount(report.quality.lifecycleCoveragePct, 1)}%</div></div><div class="p1card accent-amber"><div class="p1tag">长期负债占比</div><div class="p1num">{percent(report.metrics.longBalanceRatio)}</div><div class="p1sub">发行期限口径<br />长期 <b>{amount(report.metrics.longBalanceYi, 0)}</b> 亿元、短期 <b>{amount(report.metrics.shortBalanceYi, 0)}</b> 亿元</div></div><div class="p1card accent-red"><div class="p1tag">未来30天到期</div><div class="p1num danger">{amount(report.metrics.due30Yi)}<em>亿元</em></div><div class="p1sub">全量负债，含已安排未发行<br />统计日后 1–30 天到期规模</div></div><div class="p1card accent-red"><div class="p1tag">年内到期</div><div class="p1num danger">{amount(report.metrics.dueYearYi)}<em>亿元</em></div><div class="p1sub">全量负债，含已安排未发行<br />到期日 ≤ 当年12月31日</div></div></div></div>
+	<div class="core-panel"><div class="p1-grid"><div class="p1card accent-cyan"><div class="p1tag">资产负债规模</div><div class="dual-value"><span>总资产</span><strong>{amount(report.parameters.total_assets?.valueYi)}<em>亿元</em></strong></div><div class="dual-value"><span>总负债</span><strong>{amount(report.parameters.total_liabilities?.valueYi)}<em>亿元</em></strong></div></div><div class="p1card"><div class="p1tag">主动负债余额</div><div class="p1num">{amount(report.metrics.balanceYi)}<em>亿元</em></div><div class="p1sub">较上月末 <b>{signed(report.metrics.balanceMonthChangeYi)}</b> 亿元<br />较上年末 <b>{signed(report.metrics.balanceYearChangeYi)}</b> 亿元</div></div><div class="p1card accent-cyan"><div class="p1tag">资产负债率</div><div class="p1num">{report.parameters.adjusted_asset_liability_ratio?.valueYi == null ? '数据缺失' : percent(report.parameters.adjusted_asset_liability_ratio.valueYi * 100, 2)}</div><div class="p1sub">扣代理买卖</div></div><div class="p1card accent-amber"><div class="p1tag">加权融资利率</div><div class="p1num">{report.metrics.weightedRatePct == null ? '数据缺失' : `${amount(report.metrics.weightedRatePct, 2)}%`}</div><div class="p1sub">较上月末 <b>{signed(report.metrics.weightedRateMonthBp, 1)}</b> bp<br />较上年末 <b>{signed(report.metrics.weightedRateYearBp, 1)}</b> bp</div></div><div class="p1card accent-amber"><div class="p1tag">加权剩余期限</div><div class="p1num">{#if report.metrics.weightedRemainingDays == null}数据缺失{:else}{amount(report.metrics.weightedRemainingDays, 0)}<em>天</em>{/if}</div><div class="p1sub">较上月末 <b>{signed(report.metrics.remainingMonthChangeDays, 1)}</b> 天<br />较上年末 <b>{signed(report.metrics.remainingYearChangeDays, 1)}</b> 天</div></div><div class="p1card accent-amber"><div class="p1tag">长期负债占比</div><div class="p1num">{percent(report.metrics.longBalanceRatio)}</div><div class="p1sub">长期 <b>{amount(report.metrics.longBalanceYi, 0)}</b> 亿元<br />短期 <b>{amount(report.metrics.shortBalanceYi, 0)}</b> 亿元</div></div><div class="p1card accent-red"><div class="p1tag">未来30天到期</div><div class="p1num danger">{amount(report.metrics.due30Yi)}<em>亿元</em></div><div class="p1sub">到期日 {isoDate(addDays(report.asOfDate, 30))} 前<br />占主动负债 <b>{share(report.metrics.due30Yi, report.metrics.balanceYi)}</b></div></div><div class="p1card accent-red"><div class="p1tag">年内到期</div><div class="p1num danger">{amount(report.metrics.dueYearYi)}<em>亿元</em></div><div class="p1sub">到期日 {isoDate(yearEnd(report.asOfDate))} 前<br />占主动负债 <b>{share(report.metrics.dueYearYi, report.metrics.balanceYi)}</b></div></div></div></div>
 	<div class="p1-gauge-row">
 		{#each [{ label: '（短融+短期公司债+同业拆借）/上月末净资本', value: report.metrics.shortCompanyDebtRatio, numerator: report.metrics.shortCompanyDebtYi, denominator: report.parameters.prior_month_net_capital?.valueYi, warning: 48, limit: 60, maxLabel: '60%' }, { label: '发行期限1年以内短期负债 / 净资本', value: report.metrics.shortDebtRatio, numerator: report.metrics.shortDebtYi, denominator: report.parameters.prior_month_net_capital?.valueYi, warning: 80, limit: 100, maxLabel: '100%' }, { label: '新增单笔借款 / 证券上年末净资产', value: report.metrics.largestBorrowingRatio, numerator: report.metrics.largestBorrowingYi, denominator: report.parameters.securities_prior_year_net_assets?.valueYi, warning: 16, limit: 20, maxLabel: '20%' }, { label: '月末累计新增借款 / 证券上年末净资产', value: report.metrics.cumulativeSecuritiesRatio, numerator: report.metrics.cumulativeBorrowingYi, denominator: report.parameters.securities_prior_year_net_assets?.valueYi, warning: 40, limit: 50, maxLabel: '50%' }, { label: '月末累计新增借款 / 集团上年末净资产', value: report.metrics.cumulativeGroupRatio, numerator: report.metrics.cumulativeBorrowingYi, denominator: report.parameters.group_prior_year_net_assets?.valueYi, warning: 8, limit: 10, maxLabel: '10%' }] as gauge}
 			{@const state = gaugeState(gauge.value, gauge.warning, gauge.limit)}
@@ -191,20 +199,20 @@
 			<div class="peer-column">
 			<div class="bento-card">
 				<div class="inner-card-title">● 本周券商债券发行定价</div>
-				{@render peerPricingTable(peerIssuanceColumns[0])}
+				{@render peerPricingTable(report.peerIssuances ?? [])}
+			</div>
+			<div class="bento-card">
+				<div class="inner-card-title">● 本周券商债券申报动态</div>
+				{@render peerRegistrationTable(peerRegistrationColumns[0])}
 			</div>
 			</div>
 			<div class="peer-column">
-			{#if peerIssuanceColumns[1].length}
+			{#if peerRegistrationColumns[1].length}
 			<div class="bento-card">
-				<div class="inner-card-title">● 本周券商债券发行定价（续表）</div>
-				{@render peerPricingTable(peerIssuanceColumns[1])}
+				<div class="inner-card-title">● 本周券商债券申报动态（续表）</div>
+				{@render peerRegistrationTable(peerRegistrationColumns[1])}
 			</div>
 			{/if}
-			<div class="bento-card">
-				<div class="inner-card-title">● 本周券商债券申报动态</div>
-				<div class="table-scroll"><table class="bento-table registration-table"><thead><tr><th>发行方</th><th>品种</th><th class="num">申报</th><th>状态</th><th>更新日</th></tr></thead><tbody>{#each report.registrationProgress as item}<tr><td>{brokerShortName(item.issuerName)}</td><td>{item.variety ?? '数据缺失'}</td><td class="num">{item.amountYi == null ? '数据缺失' : `${amount(item.amountYi, 0)}亿`}</td><td><span class="status-badge status-green">{item.status ?? '数据缺失'}</span></td><td>{dateLabel(item.updateDate)}</td></tr>{:else}<tr><td colspan="5" class="table-empty">可比券商申报数据缺失</td></tr>{/each}</tbody></table></div>
-			</div>
 			</div>
 		</div>
 </section>

@@ -296,6 +296,17 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			SELECT 'current'::text AS label, as_of_date FROM latest
 			UNION ALL SELECT 'month', date_trunc('month', as_of_date)::date - 1 FROM latest
 			UNION ALL SELECT 'year', make_date(EXTRACT(YEAR FROM as_of_date)::integer - 1, 12, 31) FROM latest
+		), point_metrics AS (
+			SELECT point_dates.label,
+				SUM(d.amount * d.annual_rate) FILTER (WHERE d.annual_rate IS NOT NULL)
+					/ NULLIF(SUM(d.amount) FILTER (WHERE d.annual_rate IS NOT NULL), 0) AS weighted_rate,
+				SUM(d.amount * GREATEST(d.maturity_date - point_dates.as_of_date, 0)) FILTER (WHERE d.maturity_date IS NOT NULL)
+					/ NULLIF(SUM(d.amount) FILTER (WHERE d.maturity_date IS NOT NULL), 0) AS weighted_days
+			FROM point_dates
+			LEFT JOIN debt d ON (d.issue_date IS NULL OR d.issue_date <= point_dates.as_of_date)
+				AND (d.maturity_date IS NULL OR d.maturity_date > point_dates.as_of_date)
+				AND (d.closed_at IS NULL OR d.closed_at > point_dates.as_of_date)
+			GROUP BY point_dates.label
 		), snapshot_dates AS (
 			SELECT point_dates.label, MAX(snapshot.as_of_date) AS as_of_date
 			FROM point_dates
@@ -618,6 +629,10 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			live_metrics.live_balance_yi AS liveBalanceYi,
 			live_metrics.weighted_rate AS weightedRate,
 			live_metrics.weighted_days AS weightedDays,
+			(SELECT weighted_rate FROM point_metrics WHERE label = 'month') AS previousMonthRate,
+			(SELECT weighted_rate FROM point_metrics WHERE label = 'year') AS previousYearRate,
+			(SELECT weighted_days FROM point_metrics WHERE label = 'month') AS previousMonthDays,
+			(SELECT weighted_days FROM point_metrics WHERE label = 'year') AS previousYearDays,
 			live_metrics.long_balance_yi AS longBalanceYi,
 			live_metrics.short_balance_yi AS shortBalanceYi,
 			scheduled_maturity_metrics.due_30_yi AS due30Yi,
@@ -704,9 +719,12 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 	const balanceRateTrend = (report.balanceRateTrend ?? []).map((item) => ({
 		...item, balanceYi: valueYi(item.balanceYi), weightedRatePct: nullableValueYi(item.weightedRatePct)
 	}));
-	const observedRates = balanceRateTrend.filter((item) => item.weightedRatePct != null);
-	const previousObservedRate = observedRates.length > 1 ? observedRates.at(-2)?.weightedRatePct : null;
 	const weightedRatePct = nullableValueYi(report.weightedRate) == null ? null : valueYi(report.weightedRate) * 100;
+	const previousMonthRatePct = nullableValueYi(report.previousMonthRate) == null ? null : valueYi(report.previousMonthRate) * 100;
+	const previousYearRatePct = nullableValueYi(report.previousYearRate) == null ? null : valueYi(report.previousYearRate) * 100;
+	const weightedRemainingDays = nullableValueYi(report.weightedDays);
+	const previousMonthDays = nullableValueYi(report.previousMonthDays);
+	const previousYearDays = nullableValueYi(report.previousYearDays);
 
 	return {
 		asOfDate,
@@ -717,10 +735,19 @@ export async function getLiabilityWeeklyReportData(database = getDatabase()) {
 			balanceMonthChangeYi: balanceYi - valueYi(report.previousMonthBalanceYi),
 			balanceYearChangeYi: balanceYi - valueYi(report.previousYearBalanceYi),
 			weightedRatePct,
-			weightedRateMonthBp: weightedRatePct == null || previousObservedRate == null
+			weightedRateMonthBp: weightedRatePct == null || previousMonthRatePct == null
 				? null
-				: (weightedRatePct - previousObservedRate) * 100,
-			weightedRemainingDays: valueYi(report.weightedDays),
+				: (weightedRatePct - previousMonthRatePct) * 100,
+			weightedRateYearBp: weightedRatePct == null || previousYearRatePct == null
+				? null
+				: (weightedRatePct - previousYearRatePct) * 100,
+			weightedRemainingDays,
+			remainingMonthChangeDays: weightedRemainingDays == null || previousMonthDays == null
+				? null
+				: weightedRemainingDays - previousMonthDays,
+			remainingYearChangeDays: weightedRemainingDays == null || previousYearDays == null
+				? null
+				: weightedRemainingDays - previousYearDays,
 			longBalanceYi,
 			shortBalanceYi,
 			longBalanceRatio: longBalanceYi + shortBalanceYi ? longBalanceYi / (longBalanceYi + shortBalanceYi) * 100 : null,

@@ -28,12 +28,5 @@ export function currentYearBorrowingPredicateSql(alias = 'd', asOfExpression = '
 }
 
 export function shortDebtPredicateSql(alias = 'd') {
-	const reportingType = reportingTypeSql(alias);
-	return `(
-		${reportingType} IN ('短期融资券', '同业拆借')
-		OR (
-			${reportingType} IN ('浮动收益凭证', '固定收益凭证')
-			AND ${alias}.term_days <= ${SHORT_DEBT_MAX_ORIGINAL_TERM_DAYS}
-		)
-	)`;
+	return `COALESCE(${alias}.term_days, ${alias}.maturity_date - ${alias}.issue_date) <= ${SHORT_DEBT_MAX_ORIGINAL_TERM_DAYS}`;
 }

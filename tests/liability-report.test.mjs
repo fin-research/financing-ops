@@ -147,8 +147,9 @@ test('core maturity metrics include all arranged debt while only 30-day details 
 	assert.equal((dueDetails.match(/NOT IN \('同业拆借', '浮动收益凭证'\)/g) ?? []).length, 1);
 	assert.doesNotMatch(dueDetails, /cashflow_type = 'interest'|-利息/);
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
-	assert.match(page, /全量负债，含已安排未发行/);
-	assert.equal((page.match(/全量负债，含已安排未发行/g) ?? []).length, 2);
+	assert.match(page, /到期日 \{isoDate\(addDays\(report\.asOfDate, 30\)\)\} 前/);
+	assert.match(page, /到期日 \{isoDate\(yearEnd\(report\.asOfDate\)\)\} 前/);
+	assert.equal((page.match(/占主动负债/g) ?? []).length, 2);
 	assert.doesNotMatch(page, /仅列负债本金到期；不含同业拆借及浮动收益凭证 ｜/);
 	assert.doesNotMatch(page, /逐月到期堆叠柱状图|年度到期阶梯图/);
 	assert.match(page, /<span class="badge-tag">单位：亿元<\/span>/);
@@ -174,7 +175,9 @@ test('monitoring gauges use strong threshold colors and keep the value clear of 
 	assert.match(chart, /\[Math\.min\(warning \/ chartMax, 1\), '#059669'\]/);
 	assert.match(chart, /\[Math\.min\(limit \/ chartMax, 1\), '#d97706'\]/);
 	assert.match(chart, /\[1, '#dc2626'\]/);
-	assert.match(chart, /offsetCenter: \[0, '27%'\]/);
+	assert.match(chart, /detail: \{ show: false \}/);
+	assert.match(chart, /class="report-gauge-value"/);
+	assert.ok(chart.indexOf('<EChart') < chart.indexOf('class="report-gauge-value"'));
 	assert.doesNotMatch(chart, /progress:/);
 	assert.match(chart, /stateLabel/);
 	assert.match(chart, /tooltip:/);
@@ -193,22 +196,33 @@ test('weekly peer tables follow the installation-package weekly filters and coup
 	assert.match(importer, /couponRatePct: number\(row\[30\]\)/);
 });
 
-test('weekly broker pricing continuation starts in the right column before registration follows it', () => {
+test('weekly broker registrations continue in the right column after pricing', () => {
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	const css = fs.readFileSync(new URL('../src/routes/liability-report/weekly-report.css', import.meta.url), 'utf8');
 	const peerSection = page.slice(page.indexOf('section-6-title'), page.indexOf('section-7-title'));
 	assert.match(peerSection, /class="peer-columns"/);
-	assert.match(page, /splitPeerIssuances\(report\.peerIssuances/);
+	assert.match(page, /splitPeerRegistrations\(report\.registrationProgress/);
 	assert.match(page, /rows\.slice\(0, leftCount\), rows\.slice\(leftCount\)/);
-	assert.match(peerSection, /本周券商债券发行定价（续表）/);
-	assert.match(peerSection, /peerIssuanceColumns\[1\]\.length/);
-	assert.match(peerSection, /report\.registrationProgress as item/);
-	assert.match(peerSection, /brokerShortName\(item\.issuerName\)/);
+	assert.match(peerSection, /本周券商债券申报动态（续表）/);
+	assert.match(peerSection, /peerRegistrationColumns\[1\]\.length/);
+	assert.match(page, /peerRegistrationTable/);
+	assert.match(page, /brokerShortName\(item\.issuerName\)/);
 	assert.ok(peerSection.indexOf('本周券商债券发行定价') < peerSection.indexOf('本周券商债券申报动态'));
 	assert.match(css, /\.peer-columns\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)[^}]*align-items:\s*start/);
 	assert.match(css, /@media \(max-width:\s*64rem\)[\s\S]*\.peer-columns\s*\{\s*grid-template-columns:\s*1fr/);
 	assert.match(css, /\.peer-column\s*\{[^}]*align-content:\s*start/);
 	assert.doesNotMatch(css, /column-count|column-fill/);
+});
+
+test('weekly report core cards use the requested comparison and maturity labels', () => {
+	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
+	const core = page.slice(page.indexOf('section-2-title'), page.indexOf('class="p1-gauge-row"'));
+	assert.doesNotMatch(core, /periodEnd\)\}口径|发行期限口径|金额覆盖|起息与到期字段覆盖/);
+	assert.match(core, /weightedRateMonthBp/);
+	assert.match(core, /weightedRateYearBp/);
+	assert.match(core, /remainingMonthChangeDays/);
+	assert.match(core, /remainingYearChangeDays/);
+	assert.match(core, /长期 <b>[\s\S]*<br \/>短期 <b>/);
 });
 
 test('all weekly report tables and quota progress charts size to their available columns without scrollbars', () => {

@@ -32,7 +32,7 @@
 			type: 'gauge',
 			startAngle: 215,
 			endAngle: -35,
-			center: ['50%', '54%'],
+			center: ['50%', '62%'],
 			radius: '82%',
 			min: 0,
 			max: chartMax,
@@ -76,17 +76,18 @@
 				}
 			},
 			title: { show: false },
-			detail: {
-				valueAnimation: true,
-				offsetCenter: [0, '27%'],
-				color: '#163553',
-				fontSize: 17,
-				fontWeight: 'bolder',
-				formatter: display
-			},
+			detail: { show: false },
 			data: [{ value: safeValue, name: stateLabel }]
 		}]
 	});
 </script>
 
-<EChart {option} ariaLabel={`${label}，当前 ${display}，状态 ${stateLabel}，预警 ${warning}% ，上限 ${maxLabel}`} height={6.4} />
+<div class="report-gauge-chart">
+	<EChart {option} ariaLabel={`${label}，当前 ${display}，状态 ${stateLabel}，预警 ${warning}% ，上限 ${maxLabel}`} height={5.2} />
+	<strong class="report-gauge-value" style:color={tone}>{display}</strong>
+</div>
+
+<style>
+	.report-gauge-chart { display: grid; min-width: 0; justify-items: stretch; }
+	.report-gauge-value { margin-top: -0.25rem; font-size: 1.125rem; font-variant-numeric: tabular-nums; line-height: 1; text-align: center; }
+</style>
