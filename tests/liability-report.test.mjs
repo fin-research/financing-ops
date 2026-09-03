@@ -103,6 +103,7 @@ test('weekly report preserves the 1080px desktop canvas when scaled to A4', () =
 	assert.match(printRules, /zoom:\s*0\.734908136/);
 	assert.match(reportCss, /break-after:\s*page/);
 	assert.match(reportCss, /\.bento-footer/);
+	assert.match(printRules, /body:has\(\.report-pages\) \.skip-link/);
 	const headerRules = reportCss.match(/\.bento-header\s*\{[^}]*\}/g) ?? [];
 	assert.ok(headerRules.length >= 3);
 	assert.ok(headerRules.every((rule) => !/min-height/.test(rule)));
@@ -148,8 +149,9 @@ test('core maturity metrics include all arranged debt while only 30-day details 
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	assert.match(page, /全量负债，含已安排未发行/);
 	assert.equal((page.match(/全量负债，含已安排未发行/g) ?? []).length, 2);
-	assert.match(page, /仅列负债本金到期/);
-	assert.match(page, /不含同业拆借及浮动收益凭证/);
+	assert.doesNotMatch(page, /仅列负债本金到期；不含同业拆借及浮动收益凭证 ｜/);
+	assert.doesNotMatch(page, /逐月到期堆叠柱状图|年度到期阶梯图/);
+	assert.match(page, /<span class="badge-tag">单位：亿元<\/span>/);
 	assert.doesNotMatch(page, /付息\/到期日|未来30天无到期或付息明细/);
 });
 
@@ -187,14 +189,19 @@ test('weekly peer tables follow the installation-package weekly filters and coup
 	assert.match(importer, /couponRatePct: number\(row\[30\]\)/);
 });
 
-test('weekly broker pricing and registration tables are independent left-right columns without continuation', () => {
+test('weekly broker pricing flows into the right column before registration follows it', () => {
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
+	const css = fs.readFileSync(new URL('../src/routes/liability-report/weekly-report.css', import.meta.url), 'utf8');
 	const peerSection = page.slice(page.indexOf('section-6-title'), page.indexOf('section-7-title'));
-	assert.match(peerSection, /class="peer-grid"/);
+	assert.match(peerSection, /class="peer-flow"/);
 	assert.match(peerSection, /report\.peerIssuances as item/);
 	assert.match(peerSection, /report\.registrationProgress as item/);
 	assert.match(peerSection, /brokerShortName\(item\.issuerName\)/);
-	assert.doesNotMatch(peerSection, /续|registrationColumns|peerIssuances\.slice/);
+	assert.ok(peerSection.indexOf('本周券商债券发行定价') < peerSection.indexOf('本周券商债券申报动态'));
+	assert.match(css, /\.peer-flow\s*\{[^}]*column-count:\s*2[^}]*column-fill:\s*balance/);
+	assert.match(css, /@media \(max-width:\s*64rem\)[\s\S]*\.peer-flow\s*\{\s*column-count:\s*1/);
+	assert.match(css, /\.peer-flow thead\s*\{\s*display:\s*table-header-group/);
+	assert.doesNotMatch(peerSection, /peerIssuances\.slice|registrationColumns/);
 });
 
 test('all weekly report tables and quota progress charts size to their available columns without scrollbars', () => {
@@ -258,6 +265,11 @@ test('liability charts and source queries follow the installation-package chart 
 	assert.match(queries, /THEN '3年公募债'/);
 	assert.match(queries, /THEN '5年次级债'/);
 	assert.match(queries, /maturity_date - issue_date <= 366 THEN '短期公司债'/);
+	assert.match(queries, /raw_market_history_with_neighbors AS/);
+	assert.match(queries, /category <> 'state_owned_bank_ncd'/);
+	assert.match(queries, /ABS\(value - previous_value\) >= 0\.5/);
+	assert.match(queries, /ABS\(value - next_value\) >= 0\.5/);
+	assert.match(queries, /ABS\(previous_value - next_value\) <= 0\.1/);
 });
 
 test('page load never fetches quota-limited Choice sources', () => {
