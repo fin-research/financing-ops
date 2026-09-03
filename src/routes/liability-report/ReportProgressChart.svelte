@@ -13,19 +13,19 @@
 	const tone = $derived(percent == null ? '#94a3b8' : percent >= 80 ? '#dc2626' : percent >= 45 ? '#d97706' : '#059669');
 	const option = $derived({
 		aria: { enabled: true },
-		grid: { left: 0, right: 42, top: 4, bottom: 4 },
+		grid: { left: 0, right: 36, top: 4, bottom: 4 },
 		xAxis: { type: 'value', min: 0, max: 100, show: false },
 		yAxis: { type: 'category', data: [''], show: false },
 		series: [{
 			type: 'bar',
-			barWidth: 8,
+			barWidth: 7,
 			showBackground: true,
 			backgroundStyle: { color: '#e2e8f0', borderRadius: 8 },
 			itemStyle: { color: tone, borderRadius: 8 },
 			label: {
 				show: true,
 				position: 'right',
-				distance: 8,
+				distance: 6,
 				color: tone,
 				fontWeight: 750,
 				fontSize: 11,

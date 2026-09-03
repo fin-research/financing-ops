@@ -22,6 +22,7 @@
 	const display = $derived(hasValue ? `${safeValue.toFixed(1)}%` : '—');
 	const chartMax = $derived(Math.max(limit * 1.2, safeValue * 1.08, 1));
 	const option = $derived({
+		animationDuration: 280,
 		aria: { enabled: true },
 		tooltip: {
 			trigger: 'item',
@@ -31,15 +32,17 @@
 			type: 'gauge',
 			startAngle: 215,
 			endAngle: -35,
-			center: ['50%', '56%'],
-			radius: '88%',
+			center: ['50%', '54%'],
+			radius: '82%',
 			min: 0,
 			max: chartMax,
-			progress: { show: hasValue, width: 14, roundCap: true, itemStyle: { color: tone } },
+			splitNumber: 4,
 			axisLine: {
 				roundCap: true,
 				lineStyle: {
-					width: 14,
+					width: 9,
+					shadowBlur: 6,
+					shadowColor: 'rgba(32, 38, 34, 0.08)',
 					color: [
 						[Math.min(warning / chartMax, 1), '#d7f4e9'],
 						[Math.min(limit / chartMax, 1), '#fcecc8'],
@@ -48,15 +51,36 @@
 				}
 			},
 			axisTick: { show: false },
-			splitLine: { show: false },
+			splitLine: {
+				show: true,
+				distance: -13,
+				length: 6,
+				lineStyle: { color: 'rgba(255, 255, 255, 0.92)', width: 1 }
+			},
 			axisLabel: { show: false },
-			pointer: { show: false },
-			anchor: { show: false },
+			pointer: {
+				show: hasValue,
+				length: '50%',
+				width: 3,
+				itemStyle: { color: tone, shadowBlur: 5, shadowColor: `${tone}3d` }
+			},
+			anchor: {
+				show: hasValue,
+				size: 11,
+				itemStyle: {
+					color: '#fff',
+					borderColor: tone,
+					borderWidth: 3,
+					shadowBlur: 4,
+					shadowColor: 'rgba(32, 38, 34, 0.16)'
+				}
+			},
+			title: { show: false },
 			detail: {
 				valueAnimation: true,
-				offsetCenter: [0, '2%'],
+				offsetCenter: [0, '48%'],
 				color: '#163553',
-				fontSize: 20,
+				fontSize: 18,
 				fontWeight: 800,
 				formatter: display
 			},
@@ -65,4 +89,4 @@
 	});
 </script>
 
-<EChart {option} ariaLabel={`${label}，当前 ${display}，状态 ${stateLabel}，预警 ${warning}% ，上限 ${maxLabel}`} height={6.8} />
+<EChart {option} ariaLabel={`${label}，当前 ${display}，状态 ${stateLabel}，预警 ${warning}% ，上限 ${maxLabel}`} height={6.4} />

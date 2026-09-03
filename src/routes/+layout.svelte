@@ -81,6 +81,19 @@
 		return navItems.find((item) => isActive(item.href))?.label ?? '仪表盘';
 	};
 	const isLiabilityReport = () => withoutBase(page.url.pathname) === '/liability-report';
+	const liabilityReportHistory = () => ((page.data as any)?.reportHistory ?? []) as Array<{
+		id: string;
+		asOfDate: string;
+	}>;
+	const selectedLiabilityReportRunId = () => String((page.data as any)?.selectedRunId ?? '');
+	const liabilityReportDateLabel = (value: string | null | undefined) => {
+		if (!value) return '日期缺失';
+		const [year, month, day] = String(value).slice(0, 10).split('-');
+		return `${year}年${month}月${day}日`;
+	};
+	const submitReportHistorySelection = (event: Event) => {
+		(event.currentTarget as HTMLSelectElement).form?.requestSubmit();
+	};
 	const enhanceReportGeneration = () => {
 		reportGenerating = true;
 		return async ({ result, update }: any) => {
@@ -176,7 +189,7 @@
 		{#if navigationSlow}
 			<div class="navigation-progress" role="progressbar" aria-label="页面加载中"></div>
 		{/if}
-		<header class="topbar">
+		<header class="topbar" class:liability-report-topbar={isLiabilityReport()}>
 			<div class="mobile-brand">
 				<span class="brand-mark"><BarChart3 size={18} /></span>
 			</div>
@@ -192,6 +205,22 @@
 			<div class="top-actions">
 				{#if isLiabilityReport()}
 					<div class="report-header-actions" aria-label="负债周报操作">
+						<form class="report-history-picker" method="GET" action={withBase('/liability-report')}>
+							<label for="report-history-date">历史日期</label>
+							<select
+								id="report-history-date"
+								name="run"
+								value={selectedLiabilityReportRunId()}
+								disabled={liabilityReportHistory().length === 0}
+								onchange={submitReportHistorySelection}
+							>
+								{#each liabilityReportHistory() as run}
+									<option value={run.id}>{liabilityReportDateLabel(run.asOfDate)}</option>
+								{:else}
+									<option value="">暂无历史周报</option>
+								{/each}
+							</select>
+						</form>
 						<button class="header-action" type="button" onclick={() => window.print()} aria-label="导出 PDF" title="导出 PDF">
 							<Printer size={17} /><span class="header-action-label">导出 PDF</span>
 						</button>
@@ -263,7 +292,7 @@
 			</div>
 		{/if}
 
-		<main class="page-content" id="main-content" tabindex="-1" aria-busy={Boolean(navigating.to)}>
+		<main class="page-content" class:liability-report-content={isLiabilityReport()} id="main-content" tabindex="-1" aria-busy={Boolean(navigating.to)}>
 			{@render children()}
 		</main>
 	</div>

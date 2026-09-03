@@ -65,7 +65,9 @@ test('weekly page renders the complete report directly in the workspace', () => 
 	assert.doesNotMatch(source, /id="reportContainer"/);
 	assert.doesNotMatch(source, /class="a4-page"/);
 	assert.doesNotMatch(source, /class="edit-toolbar"/);
-	assert.doesNotMatch(source, /第 \d+ 页 · 共 \d+ 页/);
+	assert.equal((source.match(/class="report-page"/g) ?? []).length, 6);
+	assert.equal((source.match(/第 \d+ 页 · 共 6 页/g) ?? []).length, 6);
+	assert.doesNotMatch(source, /aria-label="数据口径"/);
 	assert.doesNotMatch(source, /负债、融资计划与市场数据/);
 	assert.doesNotMatch(source, /生产数据库口径/);
 	assert.doesNotMatch(source, /近期动态口径/);
@@ -75,16 +77,30 @@ test('weekly page renders the complete report directly in the workspace', () => 
 	assert.equal((source.match(/class="report-section"/g) ?? []).length, 7);
 });
 
-test('weekly report actions stay in the application header and history moves to a page-header select', () => {
+test('weekly report actions and history date selector stay in the application header', () => {
 	const layout = fs.readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8');
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	assert.match(layout, /report-header-actions/);
 	assert.match(layout, /生成本期周报/);
 	assert.match(layout, /window\.print\(\)/);
 	assert.doesNotMatch(layout, /liability-report#history|历史快照/);
-	assert.match(page, /class="history-picker"/);
-	assert.match(page, /<label for="report-history-date">历史日期<\/label>/);
-	assert.match(page, /<select[\s\S]*name="run"[\s\S]*data\.reportHistory/);
+	assert.match(layout, /class="report-history-picker"/);
+	assert.match(layout, /<label for="report-history-date">历史日期<\/label>/);
+	assert.match(layout, /<select[\s\S]*name="run"[\s\S]*liabilityReportHistory/);
+	assert.doesNotMatch(page, /history-picker|report-history-date/);
+});
+
+test('weekly report uses the installation-package A4 pagination and constrained main content', () => {
+	const layout = fs.readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8');
+	const layoutCss = fs.readFileSync(new URL('../src/routes/layout.css', import.meta.url), 'utf8');
+	const reportCss = fs.readFileSync(new URL('../src/routes/liability-report/weekly-report.css', import.meta.url), 'utf8');
+	assert.match(layout, /class:liability-report-content=\{isLiabilityReport\(\)\}/);
+	assert.match(layoutCss, /\.page-content\.liability-report-content\s*\{\s*max-width:\s*1080px/);
+	assert.match(reportCss, /@page\s*\{\s*size:\s*A4 portrait;\s*margin:\s*0/);
+	assert.match(reportCss, /width:\s*210mm !important/);
+	assert.match(reportCss, /height:\s*297mm !important/);
+	assert.match(reportCss, /break-after:\s*page/);
+	assert.match(reportCss, /\.bento-footer/);
 });
 
 test('weekly report query supplies every chart data contract', () => {
@@ -141,11 +157,14 @@ test('generation publishes missing-data reminders through global system messages
 	assert.match(server, /missingModules: result\.missingModules/);
 });
 
-test('monitoring gauges use polished ECharts status arcs without texture', () => {
+test('monitoring gauges reuse the market-briefing pointer and anchor treatment without texture', () => {
 	const chart = fs.readFileSync(new URL('../src/routes/liability-report/ReportGaugeChart.svelte', import.meta.url), 'utf8');
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	assert.match(chart, /type: 'gauge'/);
-	assert.match(chart, /progress: \{ show: hasValue, width: 14, roundCap: true/);
+	assert.match(chart, /pointer:\s*\{[\s\S]*show: hasValue[\s\S]*length: '50%'/);
+	assert.match(chart, /anchor:\s*\{[\s\S]*show: hasValue[\s\S]*borderColor: tone/);
+	assert.match(chart, /shadowBlur: 6/);
+	assert.doesNotMatch(chart, /progress:/);
 	assert.match(chart, /stateLabel/);
 	assert.match(chart, /tooltip:/);
 	assert.doesNotMatch(chart, /decal|LinearGradient|RadialGradient/);
@@ -169,7 +188,16 @@ test('weekly broker pricing and registration tables are independent left-right c
 	assert.match(peerSection, /class="peer-grid"/);
 	assert.match(peerSection, /report\.peerIssuances as item/);
 	assert.match(peerSection, /report\.registrationProgress as item/);
+	assert.match(peerSection, /brokerShortName\(item\.issuerName\)/);
 	assert.doesNotMatch(peerSection, /续|registrationColumns|peerIssuances\.slice/);
+});
+
+test('all weekly report tables and quota progress charts size to their available columns without scrollbars', () => {
+	const css = fs.readFileSync(new URL('../src/routes/liability-report/weekly-report.css', import.meta.url), 'utf8');
+	assert.match(css, /\.table-scroll\s*\{[^}]*overflow:\s*visible/);
+	assert.match(css, /\.bento-table\s*\{[\s\S]*table-layout:\s*auto/);
+	assert.match(css, /\.quota-progress\s*\{[^}]*width:\s*clamp\(/);
+	assert.doesNotMatch(css, /overflow-x:\s*auto|min-width:\s*(?:32|47|58|9)rem|table-layout:\s*fixed/);
 });
 
 test('all liability report charts use the shared ECharts host instead of hand-drawn markup', () => {

@@ -345,6 +345,42 @@ textarea:focus-visible {
   gap: 0.5rem;
 }
 
+.report-history-picker {
+  display: flex !important;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.report-history-picker label {
+  color: #667085;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.report-history-picker select {
+  width: auto;
+  min-width: 10.5rem;
+  min-height: 2.75rem;
+  padding: 0 2rem 0 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  color: #344054;
+  background: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.report-history-picker select:hover {
+  border-color: #b8c7e0;
+  background: #f8faff;
+}
+
+.report-history-picker select:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .header-action {
   display: inline-flex;
   min-height: 2.75rem;
@@ -460,6 +496,10 @@ textarea:focus-visible {
   max-width: 103.75rem;
   margin: 0 auto;
   padding: 1.5rem 1.75rem 2.5rem;
+}
+
+.page-content.liability-report-content {
+  max-width: 1080px;
 }
 
 .reminder-ticker {
@@ -691,6 +731,14 @@ textarea:focus-visible {
     display: none;
   }
 
+  .report-history-picker label {
+    display: none;
+  }
+
+  .report-history-picker select {
+    min-width: 8.5rem;
+  }
+
   .header-action {
     width: 2.75rem;
     padding: 0;
@@ -766,6 +814,17 @@ textarea:focus-visible {
 
   .report-header-actions {
     gap: 0.25rem;
+  }
+
+  .liability-report-topbar .mobile-brand {
+    display: none;
+  }
+
+  .report-history-picker select {
+    width: 6.75rem;
+    min-width: 0;
+    min-height: 2.5rem;
+    padding-right: 1.5rem;
   }
 
   .header-action {
