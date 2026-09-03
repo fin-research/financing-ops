@@ -28,6 +28,7 @@
 - `/data/token` 强制从 Neon Auth 会话响应取得短期 JWT，当前有效期由服务端签发策略决定。
 - 浏览器只取得短期 JWT，不得取得长期会话 token。
 - Data API 只暴露 `financing` schema；每张可编辑表必须同时具备白名单、RLS、GRANT 和审计触发器。
+- 只读的负债周报聚合 RPC 仅向 `authenticated` 授予执行权限，不要求 JWT 用户关联 `people`；该例外不改变可编辑表的人员 RLS。
 - 现金流、历史余额和审计记录不向 `authenticated` 开放。
 
 ## Secret 与环境

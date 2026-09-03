@@ -48,7 +48,8 @@ async function installSchema(db, { beforeReminderMigration } = {}) {
 		'0015_income_certificate_dates_and_names.sql',
 		'0016_income_certificate_name_edge_cases.sql',
 		'0017_normalize_refinancing_name.sql',
-		'0018_liability_report_data_api.sql'
+		'0018_liability_report_data_api.sql',
+		'0019_allow_authenticated_liability_report_rpc.sql'
 	]) {
 		if (name === '0008_sop_node_reminder_periods.sql' && beforeReminderMigration) {
 			await beforeReminderMigration(db);
@@ -303,6 +304,20 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 		(await db.query("SELECT has_function_privilege('authenticated', 'financing.liability_weekly_report_data(date)', 'EXECUTE') AS allowed")).rows[0].allowed,
 		true
 	);
+	assert.equal(
+		(await db.query("SELECT has_function_privilege('anonymous', 'financing.liability_weekly_report_data(date)', 'EXECUTE') AS allowed")).rows[0].allowed,
+		false
+	);
+	await db.exec('CREATE TABLE public.edb (indicator_code text, observation_date date, value numeric)');
+	await db.exec('SET ROLE authenticated');
+	const reportPayload = (await db.query(`
+		SELECT financing.liability_weekly_report_data(
+			(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date
+		) AS payload
+	`)).rows[0].payload;
+	await db.exec('RESET ROLE');
+	assert.equal(reportPayload.version, 1);
+	assert.equal(reportPayload.report.asOfDate, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' }));
 
 	await db.query("INSERT INTO financing.people (id, name, email, role) VALUES ('one', '甲', 'user@example.com', 'handler')");
 	await assert.rejects(db.query("INSERT INTO financing.people (id, name, email, role) VALUES ('two', '乙', 'USER@example.com', 'reviewer')"), /duplicate key value|unique constraint/i);

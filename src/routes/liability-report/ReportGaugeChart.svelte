@@ -82,12 +82,17 @@
 	});
 </script>
 
-<div class="report-gauge-chart">
-	<EChart {option} ariaLabel={`${label}，当前 ${display}，状态 ${stateLabel}，预警 ${warning}% ，上限 ${maxLabel}`} height={5.2} />
-	<strong class="report-gauge-value" style:color={tone}>{display}</strong>
-</div>
+{#if hasValue}
+	<div class="report-gauge-chart">
+		<EChart {option} ariaLabel={`${label}，当前 ${display}，状态 ${stateLabel}，预警 ${warning}% ，上限 ${maxLabel}`} height={5.2} />
+		<strong class="report-gauge-value" style:color={tone}>{display}</strong>
+	</div>
+{:else}
+	<div class="report-gauge-empty">暂无可靠数据</div>
+{/if}
 
 <style>
 	.report-gauge-chart { display: grid; min-width: 0; justify-items: stretch; }
 	.report-gauge-value { margin-top: -0.25rem; font-size: 1.125rem; font-variant-numeric: tabular-nums; line-height: 1; text-align: center; }
+	.report-gauge-empty { display: grid; min-height: 6rem; place-items: center; color: #64748b; font-size: 0.875rem; }
 </style>

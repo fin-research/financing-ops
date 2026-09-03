@@ -36,4 +36,12 @@
 	});
 </script>
 
-<EChart {option} ariaLabel={`${label}额度使用率${percent == null ? '缺失' : `${percent.toFixed(1)}%`}`} height={2.5} />
+{#if percent == null}
+	<span class="report-progress-empty" aria-label={`${label}额度使用率缺失`}>—</span>
+{:else}
+	<EChart {option} ariaLabel={`${label}额度使用率${percent.toFixed(1)}%`} height={2.5} />
+{/if}
+
+<style>
+	.report-progress-empty { display: block; color: #64748b; text-align: center; }
+</style>

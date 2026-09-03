@@ -49,7 +49,7 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 - Data API 只暴露 `financing` schema，数据库角色为 `authenticated`。
 - 可编辑表必须同时进入 `src/lib/data-admin.ts` 白名单、显式 GRANT、RLS policy 和写入审计触发器。
 - 当前数据后台只开放负债品种表、`finance_parameters` 与 `debt_limit_configs`。
-- Data API 支持 PostgREST 过滤、关联和聚合，也支持调用数据库函数；负债周报使用固定的 `liability_weekly_report_data(date)` RPC 在 PostgreSQL 内完成复杂聚合，只向 `authenticated` 授予执行权限，不开放底层只读表。
+- Data API 支持 PostgREST 过滤、关联和聚合，也支持调用数据库函数；负债周报使用固定的 `liability_weekly_report_data(date)` RPC 在 PostgreSQL 内完成复杂聚合，只向 `authenticated` 授予执行权限，不再要求 JWT 用户关联 `people`；底层只读表仍不开放。
 - 现金流、历史余额和审计记录不展示，且 `authenticated` 不得通过 Data API 访问。
 - 活跃且关联 Neon Auth 的三种业务角色均可按现有 RLS 编辑数据后台表；SvelteKit 管理 actions 仍由服务端角色规则单独控制。
 - 更新和删除携带 `updated_at` 做乐观并发检查；主键和计算列只读。

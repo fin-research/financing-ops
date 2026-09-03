@@ -201,7 +201,11 @@ test('weekly page renders the complete report directly in the workspace', () => 
 	assert.doesNotMatch(source, /生产数据库口径/);
 	assert.doesNotMatch(source, /近期动态口径/);
 	assert.doesNotMatch(source, /详见第七部分/);
-	assert.match(source, /页面不会自动拉取业务数据/);
+	assert.match(source, /emptyLiabilityWeeklyReport\(data\.selectedReportDate\)/);
+	assert.match(source, /let hasSnapshot = \$derived\(Boolean\(data\.hasSnapshot\)\)/);
+	assert.match(source, /hasSnapshot \? amount\(compositionTotal\) : '数据缺失'/);
+	assert.match(source, /sumEvents[\s\S]*hasSnapshot/);
+	assert.doesNotMatch(source, /页面不会自动拉取业务数据|暂无周报快照|生成本期周报/);
 	assert.doesNotMatch(source, /数据缺失与来源状态|数据源：public\.edb ｜ 每日更新|历史周报快照/);
 	assert.equal((source.match(/class="report-section"/g) ?? []).length, 7);
 });
@@ -298,6 +302,7 @@ test('generation publishes missing-data reminders through global system messages
 
 test('monitoring gauges use strong threshold colors and keep the value clear of the arc', () => {
 	const chart = fs.readFileSync(new URL('../src/routes/liability-report/ReportGaugeChart.svelte', import.meta.url), 'utf8');
+	const progress = fs.readFileSync(new URL('../src/routes/liability-report/ReportProgressChart.svelte', import.meta.url), 'utf8');
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	assert.match(chart, /type: 'gauge'/);
 	assert.match(chart, /pointer:\s*\{[\s\S]*show: hasValue[\s\S]*length: '46%'/);
@@ -308,6 +313,8 @@ test('monitoring gauges use strong threshold colors and keep the value clear of 
 	assert.match(chart, /\[1, '#dc2626'\]/);
 	assert.match(chart, /detail: \{ show: false \}/);
 	assert.match(chart, /class="report-gauge-value"/);
+	assert.match(chart, /\{#if hasValue\}/);
+	assert.match(progress, /\{#if percent == null\}/);
 	assert.ok(chart.indexOf('<EChart') < chart.indexOf('class="report-gauge-value"'));
 	assert.doesNotMatch(chart, /progress:/);
 	assert.match(chart, /stateLabel/);

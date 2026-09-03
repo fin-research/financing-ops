@@ -78,6 +78,35 @@ function normalizeLimitRows(value) {
 	}));
 }
 
+export function emptyLiabilityWeeklyReport(asOfDate) {
+	const reportDate = date(asOfDate, '负债周报日期');
+	return {
+		asOfDate: reportDate,
+		today: reportDate,
+		staleDays: 0,
+		metrics: {},
+		quality: {},
+		parameters: {},
+		composition: [],
+		maturityDistribution: [],
+		maturityByType: [],
+		annualMaturity: [],
+		balanceRateTrend: [],
+		issuanceTrend: [],
+		events: [],
+		dueDetails: [],
+		projects: [],
+		marketObservations: [],
+		marketHistory: [],
+		limits: [],
+		limitTotals: { limitYi: null, issuedYi: null, remainingYi: null },
+		financeParameterReminder: false,
+		peerIssueSummary: [],
+		peerIssuances: [],
+		registrationProgress: []
+	};
+}
+
 /**
  * Validates the report payload returned directly by the authenticated Neon
  * Data API RPC. Only known fields are retained before the snapshot is saved.

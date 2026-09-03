@@ -2,6 +2,7 @@
 	import './weekly-report.css';
 	import { withBase } from '$lib/app-paths';
 	import { liabilityTypeColor } from '$lib/liability-report-charts';
+	import { emptyLiabilityWeeklyReport } from '$lib/liability-report-data.js';
 	import ReportBalanceRateChart from './ReportBalanceRateChart.svelte';
 	import ReportDonutChart from './ReportDonutChart.svelte';
 	import ReportGaugeChart from './ReportGaugeChart.svelte';
@@ -11,7 +12,8 @@
 	import ReportStackedBarChart from './ReportStackedBarChart.svelte';
 
 	let { data } = $props();
-	let report = $derived(data.report);
+	let report = $derived(data.report ?? emptyLiabilityWeeklyReport(data.selectedReportDate));
+	let hasSnapshot = $derived(Boolean(data.hasSnapshot));
 	let currentEvents = $derived((report?.events ?? []).filter((item: any) => item.week === 'current' && isDynamicEvent(item)));
 	let nextEvents = $derived((report?.events ?? []).filter((item: any) => item.week === 'next' && isDynamicEvent(item)));
 	let dynamicProjects = $derived((report?.projects ?? []).filter((item: any) => !['同业拆借', '浮动收益凭证'].includes(String(item.debtType ?? ''))));
@@ -96,7 +98,7 @@
 		return (aliases[legalName] ?? legalName) || '数据缺失';
 	}
 
-	function sumEvents(items: any[], kinds: string[]) { return items.reduce((sum, item) => kinds.includes(item.kind) ? sum + Number(item.amountYi ?? 0) : sum, 0); }
+	function sumEvents(items: any[], kinds: string[]) { return hasSnapshot ? items.reduce((sum, item) => kinds.includes(item.kind) ? sum + Number(item.amountYi ?? 0) : sum, 0) : null; }
 	function amount(value: number | null | undefined, digits = 2) { return value == null || !Number.isFinite(Number(value)) ? '数据缺失' : new Intl.NumberFormat('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(Number(value)); }
 	function numberOrDash(value: number | null | undefined, digits = 2) { return value == null || !Number.isFinite(Number(value)) ? '—' : amount(value, digits); }
 	function percent(value: number | null | undefined, digits = 1) { return value == null || !Number.isFinite(Number(value)) ? '数据缺失' : `${amount(Number(value), digits)}%`; }
@@ -130,7 +132,6 @@
 
 <svelte:head><title>东方财富证券 · 资金管理部负债周报</title></svelte:head>
 
-{#if report}
 <div class="report-pages">
 	<article class="report-page">
 		<div class="report-page-body">
@@ -143,7 +144,7 @@
 
 <section class="report-section" aria-labelledby="section-1-title">
 	<div class="card-head"><div class="section-title-wrap"><span class="section-tag">第一部分</span><h2 id="section-1-title" class="section-title">近期负债发行与到期动态</h2></div></div>
-	<div class="bento-card dynamic-card"><div class="dynamic-grid">{#each [{ label: '本周', items: currentEvents, issueLabel: '负债缴款' }, { label: '下周', items: nextEvents, issueLabel: '负债发行' }] as group}<div class="template-week-card"><div class="week-summary">{group.label}{group.issueLabel} <strong class="positive">{amount(sumEvents(group.items, ['issue']))}</strong> 亿元，到期 <strong class="negative-text">{amount(sumEvents(group.items, ['maturity']))}</strong> 亿元，付息 <strong class="negative-text">{amount(sumEvents(group.items, ['interest']))}</strong> 亿元</div><div class="table-scroll"><table class="event-table"><tbody>{#each group.items as item}<tr><td>{weekdayDate(item.date)}</td><td><span class={`event-kind event-${item.kind}`}>{eventLabel(item.kind)}</span>：【{item.name}】</td><td>{amount(item.amountYi, 4)}E</td></tr>{:else}<tr><td colspan="3" class="table-empty">暂无符合口径的动态</td></tr>{/each}</tbody></table></div></div>{/each}</div><div class="template-plan-card"><div class="plan-title">推进中的融资计划</div><div class="table-scroll"><table class="plan-table"><thead><tr><th>品种</th><th>规模</th><th>期限</th><th>预计利率区间</th><th>发行/簿记日期</th></tr></thead><tbody>{#each dynamicProjects as project}<tr><td>{project.name}</td><td>{project.amountDescription ?? `${amount(project.amountYi)}E`}</td><td>{project.tenorDescription ?? '数据缺失'}</td><td>{projectRate(project)}</td><td>{dateLabel(project.plannedIssueDate)}</td></tr>{:else}<tr><td colspan="5" class="table-empty">暂无符合口径的融资计划</td></tr>{/each}</tbody></table></div></div></div>
+	<div class="bento-card dynamic-card"><div class="dynamic-grid">{#each [{ label: '本周', items: currentEvents, issueLabel: '负债缴款' }, { label: '下周', items: nextEvents, issueLabel: '负债发行' }] as group}<div class="template-week-card"><div class="week-summary">{group.label}{group.issueLabel} <strong class="positive">{amount(sumEvents(group.items, ['issue']))}</strong> 亿元，到期 <strong class="negative-text">{amount(sumEvents(group.items, ['maturity']))}</strong> 亿元，付息 <strong class="negative-text">{amount(sumEvents(group.items, ['interest']))}</strong> 亿元</div><div class="table-scroll"><table class="event-table"><tbody>{#each group.items as item}<tr><td>{weekdayDate(item.date)}</td><td><span class={`event-kind event-${item.kind}`}>{eventLabel(item.kind)}</span>：【{item.name}】</td><td>{amount(item.amountYi, 4)}E</td></tr>{:else}<tr><td colspan="3" class="table-empty">{hasSnapshot ? '暂无符合口径的动态' : '暂无可靠数据'}</td></tr>{/each}</tbody></table></div></div>{/each}</div><div class="template-plan-card"><div class="plan-title">推进中的融资计划</div><div class="table-scroll"><table class="plan-table"><thead><tr><th>品种</th><th>规模</th><th>期限</th><th>预计利率区间</th><th>发行/簿记日期</th></tr></thead><tbody>{#each dynamicProjects as project}<tr><td>{project.name}</td><td>{project.amountDescription ?? `${amount(project.amountYi)}E`}</td><td>{project.tenorDescription ?? '数据缺失'}</td><td>{projectRate(project)}</td><td>{dateLabel(project.plannedIssueDate)}</td></tr>{:else}<tr><td colspan="5" class="table-empty">{hasSnapshot ? '暂无符合口径的融资计划' : '暂无可靠数据'}</td></tr>{/each}</tbody></table></div></div></div>
 </section>
 
 <section class="report-section" aria-labelledby="section-2-title">
@@ -171,7 +172,7 @@
 			<section class="report-section" aria-labelledby="section-3-title">
 	<div class="card-head"><div class="section-title-wrap"><span class="section-tag">第三部分</span><h2 id="section-3-title" class="section-title">融资额度及余额情况</h2></div></div>
 	<div class="bento-card"><div class="inner-card-title">● 融资批复额度使用情况表 <span>单位：亿元</span></div><div class="table-scroll"><table class="bento-table quota-table"><thead><tr><th>融资品种</th><th class="num">可用额度</th><th class="num">已用额度</th><th class="num">剩余额度</th><th>获批日期与规则</th><th>额度使用进度</th></tr></thead><tbody>{#each report.limits as item, limitIndex}<tr><td class="quota-name"><i style={`--quota-color:${liabilityTypeColor(item.debtType, limitIndex)}`}></i>{item.debtType}</td><td class="num">{amount(item.limitYi)}</td><td class="num">{amount(item.issuedYi)}</td><td class="num" class:negative={item.remainingYi < 0}>{amount(item.remainingYi)}</td><td>{item.approvedDate ? `${dateLabel(item.approvedDate)}${item.expiryDate ? `–${dateLabel(item.expiryDate)}` : ''}` : '数据缺失'}</td><td><div class="quota-progress"><ReportProgressChart label={item.debtType} value={quotaPercent(item.issuedYi, item.limitYi)} /></div></td></tr>{:else}<tr><td colspan="6" class="table-empty">暂无额度数据</td></tr>{/each}</tbody><tfoot><tr><th>合计</th><th class="num">{amount(report.limitTotals.limitYi)}</th><th class="num">{amount(report.limitTotals.issuedYi)}</th><th class="num">{amount(report.limitTotals.remainingYi)}</th><th></th><th><div class="quota-progress"><ReportProgressChart label="合计" value={quotaPercent(report.limitTotals.issuedYi, report.limitTotals.limitYi)} /></div></th></tr></tfoot></table></div></div>
-	<div class="chart-container composition-panel"><div class="composition-layout"><div class="composition-donut"><ReportDonutChart rows={report.composition} total={compositionTotal} /></div><div class="table-scroll"><table class="bento-table composition-table"><thead><tr><th>融资品种</th><th class="num">余额（亿元）</th><th class="num">占比</th></tr></thead><tbody>{#each report.composition as item, index}<tr><td><i style={`--legend-color:${liabilityTypeColor(item.type, index)}`}></i>{item.type || '未分类'}</td><td class="num">{amount(item.amountYi)}</td><td class="num">{compositionTotal ? percent(item.amountYi / compositionTotal * 100, 2) : '数据缺失'}</td></tr>{/each}<tr class="total-row"><td>合计</td><td class="num">{amount(compositionTotal)}</td><td class="num">100.00%</td></tr></tbody></table></div></div></div>
+	<div class="chart-container composition-panel"><div class="composition-layout"><div class="composition-donut"><ReportDonutChart rows={report.composition} total={compositionTotal} /></div><div class="table-scroll"><table class="bento-table composition-table"><thead><tr><th>融资品种</th><th class="num">余额（亿元）</th><th class="num">占比</th></tr></thead><tbody>{#each report.composition as item, index}<tr><td><i style={`--legend-color:${liabilityTypeColor(item.type, index)}`}></i>{item.type || '未分类'}</td><td class="num">{amount(item.amountYi)}</td><td class="num">{compositionTotal ? percent(item.amountYi / compositionTotal * 100, 2) : '数据缺失'}</td></tr>{/each}<tr class="total-row"><td>合计</td><td class="num">{hasSnapshot ? amount(compositionTotal) : '数据缺失'}</td><td class="num">{hasSnapshot ? '100.00%' : '数据缺失'}</td></tr></tbody></table></div></div></div>
 </section>
 		</div>
 		<footer class="bento-footer" aria-label="第 2 页"><span>东方财富证券股份有限公司 · 资金管理部</span><span>第 2 页 · 共 6 页</span></footer>
@@ -186,7 +187,7 @@
 
 	<article class="report-page">
 		<div class="report-page-body">
-			<section class="report-section" aria-labelledby="section-5-title"><div class="card-head"><div class="section-title-wrap"><span class="section-tag">第五部分</span><h2 id="section-5-title" class="section-title">负债到期分布全景</h2></div></div><div class="chart-container large-chart"><ReportStackedBarChart title="未来12个月负债逐月到期规模分布" rows={maturityRows} labels={maturityLabels} types={maturityTypes} height={300} /><div class="chart-foot"><span>图 1：未来 12 个月负债逐月到期规模分布（按品种）（亿元）</span></div></div><div class="chart-container large-chart"><ReportStackedBarChart title="存量负债年度到期阶梯与品种构成" rows={annualRows} labels={annualLabels} types={annualTypes} height={280} /><div class="chart-foot"><span>图 2：存量负债年度到期阶梯与品种构成（亿元）</span></div></div><div class="card-head inner-section-head"><h3>未来30天负债到期明细</h3><span class="badge-tag">单位：亿元</span></div><div class="table-scroll"><table class="bento-table maturity-table"><thead><tr><th>品种</th><th>对手方</th><th class="num">本金</th><th class="num">应付利息</th><th class="num">利率</th><th>到期日</th></tr></thead><tbody>{#each report.dueDetails as item}<tr><td><a href={withBase(`/debts/${item.id}`)}>{item.debt_type}</a></td><td>{item.counterparty ?? '—'}</td><td class="num">{amount(item.principalYi)}</td><td class="num">{numberOrDash(item.interestYi)}</td><td class="num">{item.annualRatePct == null ? '数据缺失' : `${amount(item.annualRatePct, 2)}%`}</td><td>{dateLabel(item.dueDate ?? item.maturityDate)}</td></tr>{:else}<tr><td colspan="6" class="table-empty">未来30天无负债本金到期明细</td></tr>{/each}</tbody><tfoot><tr><th>合计</th><th></th><th class="num">{amount(report.dueDetails.reduce((sum: number, item: any) => sum + Number(item.principalYi ?? 0), 0))}</th><th class="num">{amount(report.dueDetails.reduce((sum: number, item: any) => sum + Number(item.interestYi ?? 0), 0))}</th><th></th><th></th></tr></tfoot></table></div></section>
+			<section class="report-section" aria-labelledby="section-5-title"><div class="card-head"><div class="section-title-wrap"><span class="section-tag">第五部分</span><h2 id="section-5-title" class="section-title">负债到期分布全景</h2></div></div><div class="chart-container large-chart"><ReportStackedBarChart title="未来12个月负债逐月到期规模分布" rows={maturityRows} labels={maturityLabels} types={maturityTypes} height={300} /><div class="chart-foot"><span>图 1：未来 12 个月负债逐月到期规模分布（按品种）（亿元）</span></div></div><div class="chart-container large-chart"><ReportStackedBarChart title="存量负债年度到期阶梯与品种构成" rows={annualRows} labels={annualLabels} types={annualTypes} height={280} /><div class="chart-foot"><span>图 2：存量负债年度到期阶梯与品种构成（亿元）</span></div></div><div class="card-head inner-section-head"><h3>未来30天负债到期明细</h3><span class="badge-tag">单位：亿元</span></div><div class="table-scroll"><table class="bento-table maturity-table"><thead><tr><th>品种</th><th>对手方</th><th class="num">本金</th><th class="num">应付利息</th><th class="num">利率</th><th>到期日</th></tr></thead><tbody>{#each report.dueDetails as item}<tr><td><a href={withBase(`/debts/${item.id}`)}>{item.debt_type}</a></td><td>{item.counterparty ?? '—'}</td><td class="num">{amount(item.principalYi)}</td><td class="num">{numberOrDash(item.interestYi)}</td><td class="num">{item.annualRatePct == null ? '数据缺失' : `${amount(item.annualRatePct, 2)}%`}</td><td>{dateLabel(item.dueDate ?? item.maturityDate)}</td></tr>{:else}<tr><td colspan="6" class="table-empty">{hasSnapshot ? '未来30天无负债本金到期明细' : '暂无可靠数据'}</td></tr>{/each}</tbody><tfoot><tr><th>合计</th><th></th><th class="num">{amount(hasSnapshot ? report.dueDetails.reduce((sum: number, item: any) => sum + Number(item.principalYi ?? 0), 0) : null)}</th><th class="num">{amount(hasSnapshot ? report.dueDetails.reduce((sum: number, item: any) => sum + Number(item.interestYi ?? 0), 0) : null)}</th><th></th><th></th></tr></tfoot></table></div></section>
 		</div>
 		<footer class="bento-footer" aria-label="第 4 页"><span>东方财富证券股份有限公司 · 资金管理部</span><span>第 4 页 · 共 6 页</span></footer>
 	</article>
@@ -228,9 +229,3 @@
 		<footer class="bento-footer" aria-label="第 6 页"><span>东方财富证券股份有限公司 · 资金管理部</span><span>第 6 页 · 共 6 页</span></footer>
 	</article>
 </div>
-{:else}
-	<section class="report-empty-state" aria-labelledby="report-empty-title">
-		<h2 id="report-empty-title">{data.selectedReportDate} 暂无周报快照</h2>
-		<p>{data.snapshotError ?? '页面不会自动拉取业务数据。请确认报告日后，点击右上角“生成本期周报”。'}</p>
-	</section>
-{/if}
