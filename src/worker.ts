@@ -3,6 +3,8 @@ import svelteKitWorker from 'sveltekit-worker';
 import { runScheduledReminderCheck } from './lib/server/reminder-scheduler.js';
 import type { FinancingWorkerEnv } from './worker-types.js';
 
+export { DebtImportWorkflow } from './workflows/debt-import.js';
+
 const worker = {
 	fetch(request, env, ctx) {
 		if (typeof svelteKitWorker.fetch !== 'function') {

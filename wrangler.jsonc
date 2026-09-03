@@ -21,6 +21,13 @@
 			"remote": true
 		}
 	],
+	"workflows": [
+		{
+			"binding": "DEBT_IMPORT_WORKFLOW",
+			"name": "financing-debt-import",
+			"class_name": "DebtImportWorkflow"
+		}
+	],
 	"assets": {
 		"binding": "ASSETS",
 		"directory": ".svelte-kit/cloudflare"

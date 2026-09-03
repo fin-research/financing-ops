@@ -1,3 +1,4 @@
+// @ts-nocheck
 const BOND_SUBTYPES = new Set(['小公募', '私募债', '次级债', '短期融资券', '科创债', '公司债']);
 
 function normalise(value) {

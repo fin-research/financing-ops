@@ -8,6 +8,7 @@ import { cacheSessionUser, invalidateCachedSession, readCachedSessionUser } from
 import { createNeonAuthClient, jwtFromResponseHeaders, NEON_SESSION_COOKIE, sessionMaxAgeFromSetCookie, sessionTokenFromSetCookie } from '../src/lib/server/neon-auth-client.js';
 import { dataApiUrlFromAuthUrl } from '../src/lib/neon-urls.js';
 import { deleteProjectWithReminders } from '../src/lib/server/project-deletion.js';
+import { importDebtWorkbook, refreshDebtImportDerivatives } from '../src/lib/server/debt-importer.js';
 import { actionNameFromUrl, isAuthorizedRequest, isSafeRequestMethod } from '../src/lib/server/request-authorization.js';
 
 function migrationSql(name) {
@@ -56,7 +57,8 @@ async function installSchema(db, { beforeReminderMigration } = {}) {
 		'0017_normalize_refinancing_name.sql',
 		'0018_liability_report_data_api.sql',
 		'0019_allow_authenticated_liability_report_rpc.sql',
-		'0020_optimize_liability_report_query.sql'
+		'0020_optimize_liability_report_query.sql',
+		'0021_online_debt_import_workflow.sql'
 	]) {
 		if (name === '0008_sop_node_reminder_periods.sql' && beforeReminderMigration) {
 			await beforeReminderMigration(db);
@@ -101,6 +103,8 @@ test('write authorization is enforced by role and named action', () => {
 	}
 	assert.equal(isAuthorizedRequest('reviewer', '/people', 'POST', 'updatePerson'), false);
 	assert.equal(isAuthorizedRequest('reviewer', '/sop', 'POST', 'createReminder'), false);
+	assert.equal(isAuthorizedRequest('reviewer', '/data/import', 'POST'), false);
+	assert.equal(isAuthorizedRequest('handler', '/data/import', 'POST'), false);
 });
 
 test('reviewer creation and own-task writes retain server-side field boundaries', () => {
@@ -290,6 +294,80 @@ test('closed-month financing metrics are filled once and remain frozen on later 
 	`)).rows[0];
 	assert.equal(Number(frozen.balance_yi), 1);
 	assert.equal(Number(frozen.weighted_rate_pct), 2);
+
+	const importRefresh = await refreshDebtImportDerivatives(
+		db,
+		new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
+	);
+	assert.ok(importRefresh.refreshedCount > 0);
+	const refreshed = (await db.query(`
+		SELECT balance_yi, weighted_rate_pct
+		FROM financing.monthly_financing_metrics
+		WHERE month_end = date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date)::date - 1
+	`)).rows[0];
+	assert.equal(Number(refreshed.balance_yi), 2);
+	assert.equal(Number(refreshed.weighted_rate_pct), 3);
+});
+
+test('online debt imports are Worker-only, single-active, and clear staged payloads with the run', async (t) => {
+	const db = new PGlite();
+	t.after(() => db.close());
+	await installSchema(db);
+	await db.query("INSERT INTO financing.people (id, name, role) VALUES ('import-admin', '导入管理员', 'admin')");
+	await db.query(`
+		INSERT INTO financing.debt_import_runs (
+			id, workflow_instance_id, source_file_name, source_size_bytes,
+			status, stage, progress, message, created_by_person_id
+		) VALUES (
+			'import-one', 'debt-import-one', '台账.xlsx', 1024,
+			'queued', 'queued', 45, '等待执行', 'import-admin'
+		)
+	`);
+	await assert.rejects(db.query(`
+		INSERT INTO financing.debt_import_runs (
+			id, workflow_instance_id, source_file_name, source_size_bytes,
+			status, stage, progress, message, created_by_person_id
+		) VALUES (
+			'import-two', 'debt-import-two', '另一台账.xlsx', 1024,
+			'parsing', 'parsing', 10, '解析中', 'import-admin'
+		)
+	`), /duplicate key value|unique constraint/i);
+	await db.query("INSERT INTO financing.debt_import_payloads (run_id, payload) VALUES ('import-one', '{\"debts\": []}'::jsonb)");
+	await db.query("DELETE FROM financing.debt_import_runs WHERE id = 'import-one'");
+	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.debt_import_payloads')).rows[0].count, 0);
+	await db.exec('SET ROLE authenticated');
+	await assert.rejects(db.query('SELECT * FROM financing.debt_import_runs'), /permission denied/i);
+	await assert.rejects(db.query('SELECT * FROM financing.debt_import_payloads'), /permission denied/i);
+	await db.exec('RESET ROLE');
+});
+
+test('shared debt importer is idempotent and updates mutable workbook fields', async (t) => {
+	const db = new PGlite();
+	t.after(() => db.close());
+	await installSchema(db);
+	const transformed = {
+		snapshot: { asOfDate: '2026-09-03', totalYi: 1 },
+		debts: [{
+			sourceKey: 'group-loan-1', table: 'debt', debtType: '集团借款', subtype: null,
+			name: '集团借款·集团公司·2026-09-01', legacyName: '集团借款·集团公司·2026-09-01',
+			counterparty: '集团公司', amount: 100000000, interestPayable: 0,
+			annualRate: 0.02, issueDate: '2026-09-01', maturityDate: '2027-09-01',
+			activatedAt: '2026-09-01', settledAt: null, closedAt: null, extension: {}
+		}],
+		cashflows: [],
+		balances: [{ asOfDate: '2026-09-03', debtType: '集团借款', subtype: '', amount: 100000000 }]
+	};
+	const inserted = await importDebtWorkbook(db, transformed);
+	assert.equal(inserted.insertedDebtCount, 1);
+	assert.equal(inserted.updatedDebtCount, 0);
+	transformed.debts[0].annualRate = 0.025;
+	const updated = await importDebtWorkbook(db, transformed);
+	assert.equal(updated.insertedDebtCount, 0);
+	assert.equal(updated.updatedDebtCount, 1);
+	const rows = (await db.query("SELECT amount, annual_rate FROM financing.debt WHERE name = '集团借款·集团公司·2026-09-01'")).rows;
+	assert.equal(rows.length, 1);
+	assert.equal(Number(rows[0].amount), 100000000);
+	assert.equal(Number(rows[0].annual_rate), 0.025);
 });
 
 test('Data API RLS lets every active financing role edit and writes audit records', async (t) => {

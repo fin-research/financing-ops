@@ -1,6 +1,9 @@
 <script lang="ts">
 	import '../management.css';
 	import DataAdminTable from '$lib/DataAdminTable.svelte';
+	import DebtImportPanel from '$lib/DebtImportPanel.svelte';
+
+	let { data } = $props();
 </script>
 
 <svelte:head>
@@ -8,6 +11,9 @@
 </svelte:head>
 
 <div class="management-page data-page">
+	{#if data.user?.role === 'admin'}
+		<DebtImportPanel />
+	{/if}
 	<DataAdminTable />
 </div>
 

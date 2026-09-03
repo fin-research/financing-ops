@@ -33,6 +33,9 @@
 - `GET /financing/data/token`：一次返回当前 Neon Auth 会话签发的短期 Data API JWT 与 HTTPS Data API URL；强制绕过身份缓存，并使用 `private, no-store`。
 - `GET /financing/projects/options`：按需返回项目表单选项。
 - `GET /financing/sop/reminders/more`：用 `(delivery_date, created_at, id)` 游标加载下一批最多 50 条发送历史。
+- `GET /financing/data/import`：管理员读取最近 8 次台账导入记录；私有、禁用缓存。
+- `POST /financing/data/import`：管理员以请求体上传单个 `.xlsx`，同源校验后直接解析并创建 Workflow；成功返回 202 和单一导入任务，不保存原始文件。
+- `GET /financing/data/import/[id]`：管理员读取单个导入任务的阶段、百分比、勾稽结果和安全错误；前端仅在活跃状态轮询。
 
 ## Neon Data API
 
@@ -46,4 +49,5 @@
 
 - 输入错误使用 400；未登录 401；无权限 403；不存在 404；并发或唯一性冲突 409；Auth 暂不可用 503。
 - 错误消息应可直接指导用户修正，不泄露 SQL、Secret、Cookie 或上游响应正文。
+- 已有台账任务活跃时再次上传返回 409；文件名、大小、格式或工作簿口径错误返回 400；Workflow 绑定不可用返回 503。
 - action 失败保留对应表单字段与 section 标识，便于当前页面就地显示。

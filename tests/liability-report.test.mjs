@@ -539,7 +539,7 @@ test('weekly report snapshots overwrite the existing eastmoney liability-report 
 });
 
 test('importer has a migration-era swap identity fallback', () => {
-	const source = fs.readFileSync(new URL('../scripts/import-debts.mjs', import.meta.url), 'utf8');
+	const source = fs.readFileSync(new URL('../src/lib/server/debt-importer.js', import.meta.url), 'utf8');
 	assert.match(source, /source\.debt_type = '互换便利'/);
 	assert.match(source, /existing\.maturity_date IS NOT DISTINCT FROM source\.maturity_date/);
 });

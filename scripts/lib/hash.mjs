@@ -1,4 +1,5 @@
-// Local workbook-maintenance helper; never imported by the Worker bundle.
+// @ts-nocheck
+// Shared by the local maintenance command and the online import endpoint.
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 
