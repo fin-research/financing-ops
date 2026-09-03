@@ -10,6 +10,27 @@
 	--report-amber: #d97706;
 }
 
+.report-empty-state {
+	display: grid;
+	min-height: min(34rem, 70vh);
+	place-content: center;
+	gap: 0.75rem;
+	padding: 2rem;
+	border: 0.0625rem dashed var(--report-line);
+	border-radius: 0.75rem;
+	background: #fff;
+	color: var(--report-muted);
+	text-align: center;
+}
+
+.report-empty-state h2 {
+	margin: 0;
+	color: var(--report-ink);
+	font-size: clamp(1.125rem, 2vw, 1.5rem);
+}
+
+.report-empty-state p { margin: 0; }
+
 .report-pages {
 	font-family: "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", sans-serif;
 	color: var(--report-ink);

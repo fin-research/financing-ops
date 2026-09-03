@@ -36,11 +36,10 @@ function dateShift(date, days) {
 	return value.toISOString().slice(0, 10);
 }
 
-function previousCompleteWeek(asOfDate) {
+function reportWeek(asOfDate) {
 	const value = new Date(`${asOfDate}T00:00:00Z`);
 	const daysSinceMonday = (value.getUTCDay() + 6) % 7;
-	const startDate = dateShift(asOfDate, -(daysSinceMonday + 7));
-	return { startDate, endDate: dateShift(startDate, 4) };
+	return { startDate: dateShift(asOfDate, -daysSinceMonday), endDate: asOfDate };
 }
 
 function choiceUrl(base, pathname, params) {
@@ -59,10 +58,11 @@ function isPrimitive(value) {
 
 export function buildManualLiabilityRequests(asOfDate) {
 	if (!/^\d{4}-\d{2}-\d{2}$/.test(String(asOfDate ?? ''))) throw new Error('负债周报数据日期无效');
-	const startDate = dateShift(asOfDate, -7);
+	const startDate = `${asOfDate.slice(0, 4)}-01-01`;
+	const weekWindow = reportWeek(asOfDate);
 	return {
-		window: { startDate, endDate: asOfDate },
-		registrationWindow: previousCompleteWeek(asOfDate),
+		issuanceWindow: { startDate, endDate: asOfDate },
+		weekWindow,
 		ctrRequest: {
 			reportName: CTR_REPORT,
 			indicators: CTR_INDICATORS,
@@ -152,7 +152,7 @@ export async function fetchManualLiabilitySources({
 	retryDelayMs = 250
 }) {
 	if (!dataApiUrl) throw new Error('未配置统一数据 API 地址');
-	const { window, registrationWindow, ctrRequest, registrationRequest } = buildManualLiabilityRequests(asOfDate);
+	const { issuanceWindow, weekWindow, ctrRequest, registrationRequest } = buildManualLiabilityRequests(asOfDate);
 	const options = { maxAttempts, retryDelayMs };
 	const [ctr, registration] = await Promise.all([Promise.resolve(fetchChoiceTable(
 		dataApiUrl,
@@ -165,7 +165,7 @@ export async function fetchManualLiabilitySources({
 		(reason) => ({ status: 'rejected', reason })
 	), Promise.resolve(fetchBrokerBondRegistrations(
 		dataApiUrl,
-		registrationWindow,
+		weekWindow,
 		registrationRequest,
 		fetchImpl,
 		options
@@ -174,8 +174,8 @@ export async function fetchManualLiabilitySources({
 		(reason) => ({ status: 'rejected', reason })
 	)]);
 	return {
-		window,
-		registrationWindow,
+		issuanceWindow,
+		weekWindow,
 		ctr: ctr.status === 'fulfilled'
 			? {
 				status: 'available', path: '/choice/ctr',
@@ -201,6 +201,124 @@ export async function fetchManualLiabilitySources({
 	};
 }
 
+const PEER_BOND_TYPES = new Set(['证券公司债', '证券公司次级债', '证券公司短期融资券']);
+
+function nullableNumber(value, field) {
+	if (value === null || value === undefined || value === '' || value === '-') return null;
+	const number = Number(value);
+	if (!Number.isFinite(number) || number < 0) throw new Error(`Choice CTR 字段 ${field} 无效`);
+	return number;
+}
+
+function ctrText(value, field, { required = false } = {}) {
+	if (value === null || value === undefined || value === '') {
+		if (required) throw new Error(`Choice CTR 字段 ${field} 无效`);
+		return null;
+	}
+	const text = String(value).trim();
+	if (!text || text.length > 500) throw new Error(`Choice CTR 字段 ${field} 无效`);
+	return text;
+}
+
+function peerBondType(value, originalTermYears) {
+	if (value === '证券公司债') return originalTermYears != null && originalTermYears <= 1 ? '短期公司债' : '公募债';
+	if (value === '证券公司次级债') return '次级债';
+	if (value === '证券公司短期融资券') return '短期融资券';
+	return null;
+}
+
+function peerMarket(securityCode) {
+	if (securityCode.endsWith('.IB')) return '银行间';
+	if (securityCode.endsWith('.SH')) return '上交所';
+	if (securityCode.endsWith('.SZ')) return '深交所';
+	return null;
+}
+
+function normalizeCtr(value, ctrRequest, issuanceWindow, weekWindow) {
+	if (!value || value.status !== 'available') {
+		return {
+			ctr: {
+				status: 'missing', path: '/choice/ctr', request: ctrRequest,
+				error: String(value?.error ?? '本次尚未手动拉取 Choice CTR。').slice(0, 500)
+			},
+			peerIssuances: [],
+			peerIssueSummary: []
+		};
+	}
+	if (String(value.function ?? '').toUpperCase() !== 'CTR') throw new Error('Choice CTR 返回函数类型无效');
+	if (!Array.isArray(value.fields) || value.fields.join(',') !== CTR_INDICATORS) {
+		throw new Error('Choice CTR 字段列表无效');
+	}
+	if (!Array.isArray(value.rows) || value.rows.length > 10_000) throw new Error('Choice CTR 数据行数无效');
+	const rows = [];
+	const unique = new Set();
+	for (const row of value.rows) {
+		if (!row || Array.isArray(row) || typeof row !== 'object') throw new Error('Choice CTR 数据行结构无效');
+		const normalized = {};
+		for (const field of CTR_INDICATOR_LIST) {
+			if (!(field in row)) continue;
+			if (!isPrimitive(row[field])) throw new Error(`Choice CTR 字段 ${field} 的值无效`);
+			normalized[field] = row[field];
+		}
+		rows.push(normalized);
+	}
+
+	const yearRows = [];
+	for (const row of rows) {
+		const sourceBondType = ctrText(row.BOND_TYPE, 'BOND_TYPE');
+		const issuerName = ctrText(row.ISSUER_NAME, 'ISSUER_NAME');
+		const issueDate = ctrText(row.ISSUE_DATE, 'ISSUE_DATE');
+		if (!PEER_BOND_TYPES.has(sourceBondType) || !issuerName?.includes('证券')) continue;
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate ?? '') || issueDate < issuanceWindow.startDate || issueDate > issuanceWindow.endDate) continue;
+		const securityCode = ctrText(row.SECUCODE, 'SECUCODE', { required: true });
+		const bondName = ctrText(row.BOND_NAME_ABBR, 'BOND_NAME_ABBR', { required: true });
+		const actualIssueAmountYi = nullableNumber(row.ACTUAL_ISSUE_SCALE, 'ACTUAL_ISSUE_SCALE');
+		const originalTermYears = nullableNumber(row.BOND_EXPIRE_YEAR ?? row.TOMRTY_YEAR, 'BOND_EXPIRE_YEAR');
+		const normalizedBondType = peerBondType(sourceBondType, originalTermYears);
+		const key = `${securityCode}|${issueDate}`;
+		if (unique.has(key)) continue;
+		unique.add(key);
+		yearRows.push({
+			securityCode,
+			bondName,
+			issuerName,
+			bondType: normalizedBondType,
+			actualIssueAmountYi,
+			issueTenor: ctrText(row.DEC_TOMRTYYEAR1, 'DEC_TOMRTYYEAR1') ?? (originalTermYears == null ? null : `${originalTermYears}年`),
+			issueDate,
+			maturityDate: null,
+			market: peerMarket(securityCode),
+			couponRatePct: nullableNumber(row.ISSUERATE_REFERENCE, 'ISSUERATE_REFERENCE')
+		});
+	}
+	const issuerTotals = new Map();
+	for (const row of yearRows) {
+		issuerTotals.set(row.issuerName, (issuerTotals.get(row.issuerName) ?? 0) + Number(row.actualIssueAmountYi ?? 0));
+	}
+	const topIssuers = new Set([...issuerTotals.entries()]
+		.sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], 'zh-CN'))
+		.slice(0, 15)
+		.map(([issuerName]) => issuerName));
+	const summary = new Map();
+	for (const row of yearRows) {
+		if (!topIssuers.has(row.issuerName) || row.actualIssueAmountYi == null) continue;
+		const key = `${row.issuerName}|${row.bondType}`;
+		const current = summary.get(key) ?? { issuerName: row.issuerName, bondType: row.bondType, amountYi: 0 };
+		current.amountYi += row.actualIssueAmountYi;
+		summary.set(key, current);
+	}
+	return {
+		ctr: {
+			status: 'available', path: '/choice/ctr', request: ctrRequest,
+			function: 'CTR', fields: CTR_INDICATOR_LIST, rows
+		},
+		peerIssuances: yearRows
+			.filter((row) => row.issueDate >= weekWindow.startDate && row.issueDate <= weekWindow.endDate)
+			.sort((left, right) => right.issueDate.localeCompare(left.issueDate) || left.bondName.localeCompare(right.bondName, 'zh-CN')),
+		peerIssueSummary: [...summary.values()]
+	};
+}
+
 function requiredText(value, field) {
 	const text = String(value ?? '').trim();
 	if (!text || text.length > 500) throw new Error(`DM 券商债券申报字段 ${field} 无效`);
@@ -221,7 +339,7 @@ function registrationAmount(value) {
 	return result;
 }
 
-function normalizeRegistration(value, registrationWindow, registrationRequest) {
+function normalizeRegistration(value, weekWindow, registrationRequest) {
 	if (!value || value.status !== 'available') {
 		return {
 			status: 'missing', path: '/broker-bond-registrations', request: registrationRequest,
@@ -238,7 +356,7 @@ function normalizeRegistration(value, registrationWindow, registrationRequest) {
 	for (const row of value.rows) {
 		if (!row || Array.isArray(row) || typeof row !== 'object') throw new Error('DM 券商债券申报数据行结构无效');
 		const updateDate = requiredText(row.updateDate, 'updateDate');
-		if (!/^\d{4}-\d{2}-\d{2}$/.test(updateDate) || updateDate < registrationWindow.startDate || updateDate > registrationWindow.endDate) {
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(updateDate) || updateDate < weekWindow.startDate || updateDate > weekWindow.endDate) {
 			throw new Error('DM 券商债券申报更新日期超出周报区间');
 		}
 		const normalized = {
@@ -266,34 +384,14 @@ function normalizeRegistration(value, registrationWindow, registrationRequest) {
 
 /** Rebuild and validate all browser-supplied report sources before persisting them. */
 export function normalizeManualLiabilitySources(value, asOfDate) {
-	const { window, registrationWindow, ctrRequest, registrationRequest } = buildManualLiabilityRequests(asOfDate);
-	const ctr = value?.ctr;
-	if (!ctr || ctr.status !== 'available') throw new Error('Choice CTR 尚未成功返回，不能保存周报快照');
-	if (String(ctr.function ?? '').toUpperCase() !== 'CTR') throw new Error('Choice CTR 返回函数类型无效');
-	if (!Array.isArray(ctr.fields) || ctr.fields.length > 64) throw new Error('Choice CTR 字段列表无效');
-	const allowedFields = new Set(CTR_INDICATOR_LIST);
-	const fields = ctr.fields.map((field) => String(field));
-	if (new Set(fields).size !== fields.length || fields.some((field) => !allowedFields.has(field))) {
-		throw new Error('Choice CTR 返回了未请求的字段');
-	}
-	if (!Array.isArray(ctr.rows) || ctr.rows.length > 10_000) throw new Error('Choice CTR 数据行数无效');
-	const rows = ctr.rows.map((row) => {
-		if (!row || Array.isArray(row) || typeof row !== 'object') throw new Error('Choice CTR 数据行结构无效');
-		const normalized = {};
-		for (const field of fields) {
-			if (!(field in row)) continue;
-			if (!isPrimitive(row[field])) throw new Error(`Choice CTR 字段 ${field} 的值无效`);
-			normalized[field] = row[field];
-		}
-		return normalized;
-	});
+	const { issuanceWindow, weekWindow, ctrRequest, registrationRequest } = buildManualLiabilityRequests(asOfDate);
+	const issuance = normalizeCtr(value?.ctr, ctrRequest, issuanceWindow, weekWindow);
 	return {
-		window,
-		registrationWindow,
-		ctr: {
-			status: 'available', path: '/choice/ctr', request: ctrRequest,
-			function: 'CTR', fields, rows
-		},
-		registration: normalizeRegistration(value?.registration, registrationWindow, registrationRequest)
+		issuanceWindow,
+		weekWindow,
+		ctr: issuance.ctr,
+		peerIssuances: issuance.peerIssuances,
+		peerIssueSummary: issuance.peerIssueSummary,
+		registration: normalizeRegistration(value?.registration, weekWindow, registrationRequest)
 	};
 }

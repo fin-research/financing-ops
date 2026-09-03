@@ -47,7 +47,8 @@ async function installSchema(db, { beforeReminderMigration } = {}) {
 		'0010_liability_report_daily_overwrite.sql',
 		'0015_income_certificate_dates_and_names.sql',
 		'0016_income_certificate_name_edge_cases.sql',
-		'0017_normalize_refinancing_name.sql'
+		'0017_normalize_refinancing_name.sql',
+		'0018_liability_report_data_api.sql'
 	]) {
 		if (name === '0008_sop_node_reminder_periods.sql' && beforeReminderMigration) {
 			await beforeReminderMigration(db);
@@ -291,6 +292,17 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 	assert.ok(columns.includes('avatar_data_url'));
 	const debtColumns = (await db.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'financing' AND table_name = 'debt'")).rows.map((row) => row.column_name);
 	assert.equal(debtColumns.includes('project_id'), false);
+	for (const table of ['liability_market_observations', 'liability_peer_issuances', 'liability_registration_progress']) {
+		assert.equal((await db.query('SELECT to_regclass($1) AS table_name', [`financing.${table}`])).rows[0].table_name, null);
+	}
+	assert.equal(
+		(await db.query("SELECT to_regprocedure('financing.liability_weekly_report_data(date)')::text AS function_name")).rows[0].function_name,
+		'financing.liability_weekly_report_data(date)'
+	);
+	assert.equal(
+		(await db.query("SELECT has_function_privilege('authenticated', 'financing.liability_weekly_report_data(date)', 'EXECUTE') AS allowed")).rows[0].allowed,
+		true
+	);
 
 	await db.query("INSERT INTO financing.people (id, name, email, role) VALUES ('one', '甲', 'user@example.com', 'handler')");
 	await assert.rejects(db.query("INSERT INTO financing.people (id, name, email, role) VALUES ('two', '乙', 'USER@example.com', 'reviewer')"), /duplicate key value|unique constraint/i);

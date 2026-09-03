@@ -1,16 +1,13 @@
 // @ts-nocheck
 import { randomUUID } from 'node:crypto';
-import { getLiabilityWeeklyReportData } from './queries.js';
 import { prepareAudit } from './audit.js';
 import { normalizeManualLiabilitySources } from '../liability-choice.js';
+import { normalizeLiabilityReportDatabasePayload } from '../liability-report-data.js';
 
 const SOURCE_FILES = {
-	peer: '底稿/【每周五替换】可比券商底稿/债券发行明细.xlsx',
-	registrationFallback: '底稿/【每周五替换】可比券商底稿/项目注册进程2026-08-28.xlsx',
 	parameters: [
 		'底稿/【每月初替换】负债测算/净资本数据.xlsx',
-		'底稿/【每月初替换】负债测算/负债测算2026.7.xlsx',
-		'安装包 skill/liability-weekly-report-win/SKILL.md'
+		'底稿/【每月初替换】负债测算/负债测算2026.7.xlsx'
 	]
 };
 
@@ -27,10 +24,11 @@ const CALIBER = {
 	projects: '推进中融资计划只读 financing.projects 的 planning/in_progress/at_risk，项目字段缺失不隐藏。',
 	dynamics: '近期动态只含实际发行、到期和付息；收益凭证发行日优先取认购日，融资计划不计入动态金额。',
 	market: '利率走势只读 Neon public.edb；Choice EDB 由 dashboard 每日定时增量更新，页面访问和手动生成都不调用 EDB。',
-	choice: '用户点击生成后由浏览器直接发起一次 Choice CTR 逻辑请求，financing 服务端只校验并保存返回数据。',
-	registration: '用户点击生成后由浏览器通过统一 Data API 分页读取 DM 券商债券申报；按上一完整周的周一至周五、证券业二级行业及指定申报品种过滤，失败时回退生产库底稿并明确提示。',
+	choice: '用户点击生成后由浏览器直接发起一次 Choice CTR 年初至报告日逻辑请求；周表取报告日所在周周一至报告日，年度图取年初至报告日。',
+	registration: '用户点击生成后由浏览器通过统一 Data API 分页读取 DM 券商债券申报；区间为报告日所在周周一至报告日，不使用数据库底稿回退。',
+	database: '融资工作台数据由浏览器使用短期 JWT 直接调用 Neon Data API 聚合 RPC；数据库内完成集合查询，financing Worker 只校验并固化快照。',
 	due30: '未来30天与年内到期核心指标统计全量已安排负债并纳入尚未发行记录；仅未来30天到期明细排除同业拆借和浮动收益凭证，独立付息现金流不计作负债到期。',
-	parameters: '净资本、净资产和资产负债率沿用安装包报告期；月末字段按自然月末日期记录。'
+	parameters: '净资本、净资产和资产负债率读取 financing.finance_parameters 当前维护值；月末字段按自然月末日期记录。'
 };
 
 function hex(buffer) {
@@ -42,76 +40,38 @@ async function sha256(value) {
 }
 
 
-export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, sources = {
+export function getLiabilityWeeklyReportSourceStatus(report, sources = {
 	ctr: { status: 'missing', error: '本次尚未手动拉取 Choice CTR。' },
 	registration: { status: 'missing', error: '本次尚未手动拉取 DM 券商债券申报。' }
 }) {
-	const counts = await db.prepare(`
-		WITH args AS (
-			SELECT ?::date AS as_of_date
-		), report_week AS (
-			SELECT date_trunc('week', as_of_date)::date - 7 AS start_date,
-				date_trunc('week', as_of_date)::date - 3 AS end_date
-			FROM args
-		), required_parameters(code) AS (
-			VALUES
-				('prior_month_net_capital'), ('securities_prior_year_net_assets'),
-				('group_prior_year_net_assets'), ('total_assets'),
-				('total_liabilities'), ('agency_brokerage_funds'),
-				('asset_liability_ratio'), ('adjusted_asset_liability_ratio')
-		), required_market_series(code) AS (
-			SELECT unnest(?::text[])
-		), missing_maturity AS (
-			SELECT id, name, counterparty, amount
-			FROM debt CROSS JOIN args
-			WHERE activated_at IS NOT NULL AND activated_at <= args.as_of_date
-				AND maturity_date IS NULL AND closed_at IS NULL
-				AND status IN ('active', 'matured')
-		)
-		SELECT
-			(SELECT COUNT(*) FROM required_market_series required
-				WHERE EXISTS (
-					SELECT 1 FROM public.edb observation CROSS JOIN args
-					WHERE observation.indicator_code = required.code
-						AND observation.observation_date BETWEEN date_trunc('year', args.as_of_date)::date AND args.as_of_date
-				)) AS market_series_count,
-			(SELECT string_agg(required.code, ', ' ORDER BY required.code)
-				FROM required_market_series required
-				WHERE NOT EXISTS (
-					SELECT 1 FROM public.edb observation CROSS JOIN args
-					WHERE observation.indicator_code = required.code
-						AND observation.observation_date BETWEEN date_trunc('year', args.as_of_date)::date AND args.as_of_date
-				)) AS missing_market_series,
-			(SELECT MAX(observation.synced_at) FROM public.edb observation
-				WHERE observation.indicator_code IN (SELECT code FROM required_market_series)) AS market_synced_at,
-			(SELECT COUNT(*) FROM liability_peer_issuances peer CROSS JOIN report_week week
-				WHERE peer.issue_date BETWEEN week.start_date AND week.end_date
-					AND peer.issuer_name LIKE '%证券%'
-					AND peer.bond_type IN ('证券公司债', '证券公司次级债', '证券公司短期融资券')) AS peer_count,
-			(SELECT COUNT(*) FROM liability_peer_issuances peer CROSS JOIN report_week week
-				WHERE peer.issue_date BETWEEN week.start_date AND week.end_date
-					AND peer.issuer_name LIKE '%证券%'
-					AND peer.bond_type IN ('证券公司债', '证券公司次级债', '证券公司短期融资券')
-					AND peer.coupon_rate_pct IS NOT NULL) AS peer_coupon_count,
-			(SELECT COUNT(*) FROM liability_registration_progress registration CROSS JOIN report_week week
-				WHERE registration.update_date BETWEEN week.start_date AND week.end_date
-					AND registration.issuer_name LIKE '%证券%'
-					AND registration.variety IN ('小公募', '私募')) AS registration_fallback_count,
-			(SELECT COUNT(*) FROM finance_parameters WHERE code IN (SELECT code FROM required_parameters) AND value_yi IS NOT NULL) AS parameter_count,
-			(SELECT COUNT(*) FROM missing_maturity) AS missing_maturity_count,
-			(SELECT COALESCE(SUM(amount), 0) / 100000000 FROM missing_maturity) AS missing_maturity_amount_yi,
-			(SELECT string_agg(item.name || ' · ' || COALESCE(item.counterparty, '对手方缺失') || ' · ' || round(item.amount / 100000000, 4)::text || '亿元', '；' ORDER BY item.amount DESC, item.id)
-				FROM (SELECT * FROM missing_maturity ORDER BY amount DESC, id LIMIT 5) item) AS missing_maturity_details,
-			(SELECT string_agg(required.code, ', ' ORDER BY required.code)
-				FROM required_parameters required
-				WHERE NOT EXISTS (
-					SELECT 1 FROM finance_parameters parameter
-					WHERE parameter.code = required.code AND parameter.value_yi IS NOT NULL
-				)) AS missing_parameter_codes,
-			(SELECT COUNT(*) FROM projects WHERE status IN ('planning', 'in_progress', 'at_risk') AND
-				(expected_rate_min IS NULL OR expected_rate_max IS NULL OR funding_cost_rate IS NULL
-					OR tenor_description IS NULL OR amount_description IS NULL)) AS incomplete_project_count
-	`).get(asOfDate, LIABILITY_REPORT_EDB_CODES);
+	const requiredParameters = [
+		'prior_month_net_capital', 'securities_prior_year_net_assets', 'group_prior_year_net_assets',
+		'total_assets', 'total_liabilities', 'agency_brokerage_funds',
+		'asset_liability_ratio', 'adjusted_asset_liability_ratio'
+	];
+	const marketSeries = new Set((report.marketHistory ?? []).map((item) => item.seriesId));
+	const missingMarketSeries = LIABILITY_REPORT_EDB_CODES.filter((code) => !marketSeries.has(code));
+	const missingParameterCodes = requiredParameters.filter((code) => report.parameters?.[code]?.valueYi == null);
+	const incompleteProjects = (report.projects ?? []).filter((project) =>
+		project.expectedRateMin == null || project.expectedRateMax == null || project.fundingCostRate == null
+		|| project.tenorDescription == null || project.amountDescription == null
+	);
+	const peerCount = sources.peerIssuances?.length ?? 0;
+	const peerCouponCount = (sources.peerIssuances ?? []).filter((item) => item.couponRatePct != null).length;
+	const counts = {
+		market_series_count: LIABILITY_REPORT_EDB_CODES.length - missingMarketSeries.length,
+		missing_market_series: missingMarketSeries.join(', ') || null,
+		market_as_of_date: (report.marketHistory ?? []).reduce((latest, item) => item.observationDate > latest ? item.observationDate : latest, ''),
+		peer_count: peerCount,
+		peer_coupon_count: peerCouponCount,
+		registration_count: sources.registration.status === 'available' ? sources.registration.rows.length : 0,
+		parameter_count: requiredParameters.length - missingParameterCodes.length,
+		missing_parameter_codes: missingParameterCodes.join(', ') || null,
+		missing_maturity_count: report.quality.missingMaturityCount,
+		missing_maturity_amount_yi: report.quality.missingMaturityAmountYi,
+		missing_maturity_details: report.quality.missingMaturityDetails,
+		incomplete_project_count: incompleteProjects.length
+	};
 	const missingModules = [];
 	if (Number(counts.market_series_count ?? 0) < LIABILITY_REPORT_EDB_CODES.length) {
 		missingModules.push({
@@ -120,18 +80,14 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, sources
 			detail: `定时同步数据缺少指标：${counts.missing_market_series ?? '未识别'}。`
 		});
 	}
-	if (Number(counts.peer_count ?? 0) === 0 && sources.ctr.status !== 'available') {
-		missingModules.push({ code: 'peer_issuance', title: '可比券商发行明细', detail: '底稿与本次 Choice CTR 均未返回可用发行明细。' });
+	if (sources.ctr.status !== 'available') {
+		missingModules.push({ code: 'peer_issuance', title: '可比券商发行明细', detail: sources.ctr.error });
 	}
 	if (Number(counts.peer_count ?? 0) > Number(counts.peer_coupon_count ?? 0)) {
 		missingModules.push({ code: 'peer_coupon_rate', title: '可比券商发行利率', detail: `本周 ${counts.peer_count} 条券商发行中有 ${Number(counts.peer_count) - Number(counts.peer_coupon_count ?? 0)} 条缺少票面利率。` });
 	}
 	if (sources.registration.status !== 'available') {
-		if (Number(counts.registration_fallback_count ?? 0) === 0) {
-			missingModules.push({ code: 'registration_progress', title: '可比券商注册进程', detail: '本次 DM 券商债券申报不可用，且生产库没有本周底稿记录。' });
-		} else {
-			missingModules.push({ code: 'dm_registration', title: '本次 DM 券商债券申报', detail: `${sources.registration.error} 当前使用生产库中的底稿记录。` });
-		}
+		missingModules.push({ code: 'registration_progress', title: '可比券商注册进程', detail: sources.registration.error });
 	}
 	if (Number(counts.parameter_count ?? 0) < 8) {
 		missingModules.push({ code: 'finance_parameters', title: '净资本、净资产与资产负债规模', detail: `生产库缺少参数：${counts.missing_parameter_codes ?? '未识别'}。` });
@@ -146,33 +102,26 @@ export async function getLiabilityWeeklyReportSourceStatus(db, asOfDate, sources
 	if (Number(counts.incomplete_project_count ?? 0) > 0) {
 		missingModules.push({ code: 'project_fields', title: '推进中项目字段', detail: `${counts.incomplete_project_count} 个推进中项目缺少预计利率、资金成本、期限描述或规模说明中的一项。` });
 	}
-	if (sources.ctr.status !== 'available') {
-		missingModules.push({ code: 'choice_ctr', title: '本次 Choice CTR', detail: sources.ctr.error });
+	if (!report.quality.liveDerivedReliable) {
+		missingModules.push({
+			code: 'reconciliation',
+			title: '负债明细与余额快照勾稽',
+			detail: `明细余额与 ${report.quality.balanceSnapshotDate ?? report.asOfDate} 快照相差 ${Math.abs(report.quality.reconciliationDeltaYi).toFixed(4)} 亿元；保留明细展示，但金额须核对。`
+		});
 	}
-	return {
-		counts: {
-			...counts,
-			registration_count: sources.registration.status === 'available'
-				? sources.registration.rows.length
-				: Number(counts.registration_fallback_count ?? 0),
-			registration_source: sources.registration.status === 'available' ? 'dm' : 'database_fallback'
-		},
-		missingModules
-	};
+	return { counts, missingModules };
 }
 
-export async function getLiabilityWeeklyReportHistory(database, limit = 30) {
-	const safeLimit = Math.min(Math.max(Number(limit) || 30, 1), 100);
+export async function getLiabilityWeeklyReportRunByDate(database, asOfDate) {
 	return database.prepare(`
 		SELECT id, as_of_date AS "asOfDate", generated_at AS "generatedAt",
 			generated_by_person_id AS "generatedByPersonId", r2_key AS "r2Key",
 			content_sha256 AS "contentSha256", status, source_manifest AS "sourceManifest",
 			missing_modules AS "missingModules", error_message AS "errorMessage"
 		FROM liability_weekly_report_runs
-		WHERE status = 'complete'
-		ORDER BY generated_at DESC, id DESC
-		LIMIT ?
-	`).all(safeLimit);
+		WHERE as_of_date = ? AND status = 'complete'
+		LIMIT 1
+	`).get(asOfDate);
 }
 
 export async function readLiabilityWeeklyReportSnapshot(env, run) {
@@ -183,50 +132,46 @@ export async function readLiabilityWeeklyReportSnapshot(env, run) {
 	return object.json();
 }
 
-export async function saveLiabilityWeeklyReportSnapshot({ database, env, actor, sources: submittedSources, expectedAsOfDate }) {
+export async function saveLiabilityWeeklyReportSnapshot({ database, env, actor, databasePayload, sources: submittedSources, expectedAsOfDate }) {
 	const bucket = env?.LIABILITY_REPORT_SNAPSHOTS;
 	if (!bucket) throw new Error('R2 绑定 LIABILITY_REPORT_SNAPSHOTS 不可用');
-	const baseReport = await getLiabilityWeeklyReportData(database);
-	const asOfDate = baseReport.asOfDate;
-	if (expectedAsOfDate !== asOfDate) {
-		throw new Error(`周报数据日期已由 ${expectedAsOfDate} 更新为 ${asOfDate}，请刷新页面后重试`);
-	}
+	const baseReport = normalizeLiabilityReportDatabasePayload(databasePayload, expectedAsOfDate);
+	const asOfDate = expectedAsOfDate;
 	const manualSources = normalizeManualLiabilitySources(submittedSources, asOfDate);
-	const sourceStatus = await getLiabilityWeeklyReportSourceStatus(database, asOfDate, manualSources);
 	const report = {
 		...baseReport,
-		registrationProgress: manualSources.registration.status === 'available'
-			? manualSources.registration.rows
-			: baseReport.registrationProgress
+		peerIssuances: manualSources.peerIssuances,
+		peerIssueSummary: manualSources.peerIssueSummary,
+		registrationProgress: manualSources.registration.status === 'available' ? manualSources.registration.rows : []
 	};
-	if (!baseReport.quality.liveDerivedReliable) {
-		sourceStatus.missingModules.push({
-			code: 'reconciliation',
-			title: '负债明细与余额快照勾稽',
-			detail: `明细余额与 ${asOfDate} 快照相差 ${Math.abs(baseReport.quality.reconciliationDeltaYi).toFixed(4)} 亿元；保留明细展示，但金额须核对。`
-		});
-	}
+	const sourceStatus = getLiabilityWeeklyReportSourceStatus(report, manualSources);
 	const generatedAt = new Date().toISOString();
 	const snapshot = {
-		version: 3,
+		version: 4,
 		generatedAt,
 		asOfDate,
 		report,
 		sources: manualSources,
 		provenance: {
 			generation: 'manual',
-			choiceQuota: { edbLogicalRequests: 0, ctrLogicalRequests: 1, maxAttemptsPerRequest: 3, requestOrigin: 'browser' },
+			choiceQuota: { edbLogicalRequests: 0, ctrLogicalRequests: 1, maxAttemptsPerRequest: 3, requestOrigin: 'browser', window: manualSources.issuanceWindow },
+			neonDataApi: {
+				path: '/rpc/liability_weekly_report_data',
+				asOfDate,
+				requestOrigin: 'browser',
+				aggregation: 'postgres'
+			},
 			dmRegistrations: {
 				path: '/broker-bond-registrations',
-				window: manualSources.registrationWindow,
+				window: manualSources.weekWindow,
 				status: manualSources.registration.status,
 				rowCount: manualSources.registration.status === 'available' ? manualSources.registration.rows.length : 0,
 				requestOrigin: 'browser'
 			},
 			databaseSources: {
 				marketRates: 'public.edb',
-				marketRatesSyncedAt: sourceStatus.counts.market_synced_at ?? null,
-				registrationFallback: sourceStatus.counts.registration_source === 'database_fallback'
+				marketRatesAsOf: sourceStatus.counts.market_as_of_date || null,
+				balanceSnapshotDate: report.quality.balanceSnapshotDate
 			},
 			sourceFiles: SOURCE_FILES,
 			caliber: CALIBER,

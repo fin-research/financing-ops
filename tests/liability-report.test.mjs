@@ -1,17 +1,38 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { fetchManualLiabilitySources, normalizeManualLiabilitySources } from '../src/lib/liability-choice.js';
+import {
+	CTR_INDICATOR_LIST,
+	fetchManualLiabilitySources,
+	normalizeManualLiabilitySources
+} from '../src/lib/liability-choice.js';
+import { normalizeLiabilityReportDatabasePayload } from '../src/lib/liability-report-data.js';
+
+function ctrRow(overrides = {}) {
+	return {
+		...Object.fromEntries(CTR_INDICATOR_LIST.map((field) => [field, null])),
+		SECUCODE: '123456.SH',
+		BOND_NAME_ABBR: '26测试01',
+		BOND_TYPE: '证券公司债',
+		ISSUE_DATE: '2026-09-02',
+		ACTUAL_ISSUE_SCALE: 20,
+		BOND_EXPIRE_YEAR: 3,
+		ISSUERATE_REFERENCE: 2.18,
+		DEC_TOMRTYYEAR1: '3年',
+		ISSUER_NAME: '测试证券股份有限公司',
+		...overrides
+	};
+}
 
 test('browser-safe liability report fetch uses CTR and paged DM registrations without EDB', async () => {
 	const requests = [];
 	const result = await fetchManualLiabilitySources({
 		dataApiUrl: 'https://data.example/data',
-		asOfDate: '2026-08-31',
+		asOfDate: '2026-09-03',
 		fetchImpl: async (url) => {
 			requests.push(String(url));
 			return String(url).includes('/choice/ctr')
-				? Response.json({ function: 'CTR', fields: [], rows: [] })
+				? Response.json({ function: 'CTR', fields: CTR_INDICATOR_LIST, rows: [] })
 				: Response.json({ hasNextPage: false, rows: [] });
 		}
 	});
@@ -28,27 +49,27 @@ test('browser-safe liability report fetch uses CTR and paged DM registrations wi
 	assert.match(ctrOptions, /Frequency=1/);
 	assert.match(ctrOptions, /Issue_Date_Type=2/);
 	assert.match(ctrOptions, /Company_Type=-/);
-	assert.equal(result.window.startDate, '2026-08-24');
+	assert.deepEqual(result.issuanceWindow, { startDate: '2026-01-01', endDate: '2026-09-03' });
+	assert.deepEqual(result.weekWindow, { startDate: '2026-08-31', endDate: '2026-09-03' });
 	assert.equal(result.ctr.status, 'available');
-	assert.deepEqual(result.registrationWindow, { startDate: '2026-08-24', endDate: '2026-08-28' });
 	const registrationUrl = new URL(requests.find((url) => url.includes('/broker-bond-registrations')));
 	assert.equal(registrationUrl.searchParams.get('pageNum'), '1');
 	assert.equal(registrationUrl.searchParams.get('pageSize'), '50');
-	assert.equal(registrationUrl.searchParams.get('startDate'), '2026-08-24');
-	assert.equal(registrationUrl.searchParams.get('endDate'), '2026-08-28');
+	assert.equal(registrationUrl.searchParams.get('startDate'), '2026-08-31');
+	assert.equal(registrationUrl.searchParams.get('endDate'), '2026-09-03');
 	assert.match(registrationUrl.searchParams.get('fields'), /projectName,issuerName,status,variety,amountYi/);
 	assert.equal(result.registration.status, 'available');
 });
 
 test('server snapshot validation rebuilds expected CTR and DM request contracts', () => {
 	const sources = normalizeManualLiabilitySources({
-		window: { startDate: 'tampered', endDate: 'tampered' },
+		issuanceWindow: { startDate: 'tampered', endDate: 'tampered' },
 		ctr: {
 			status: 'available',
 			function: 'CTR',
 			request: { reportName: 'tampered' },
-			fields: ['SECUCODE'],
-			rows: [{ SECUCODE: '123456.SH', ignored: 'not-requested' }]
+			fields: CTR_INDICATOR_LIST,
+			rows: [{ ...ctrRow(), ignored: 'not-requested' }]
 		},
 		registration: {
 			status: 'available',
@@ -58,30 +79,55 @@ test('server snapshot validation rebuilds expected CTR and DM request contracts'
 			],
 			rows: [{
 				projectName: '测试项目', issuerName: '测试证券股份有限公司', status: '已受理',
-				variety: '小公募', amountYi: 100, updateDate: '2026-08-28'
+				variety: '小公募', amountYi: 100, updateDate: '2026-09-02'
 			}]
 		}
-	}, '2026-08-31');
-	assert.deepEqual(sources.window, { startDate: '2026-08-24', endDate: '2026-08-31' });
-	assert.deepEqual(sources.registrationWindow, { startDate: '2026-08-24', endDate: '2026-08-28' });
+	}, '2026-09-03');
+	assert.deepEqual(sources.issuanceWindow, { startDate: '2026-01-01', endDate: '2026-09-03' });
+	assert.deepEqual(sources.weekWindow, { startDate: '2026-08-31', endDate: '2026-09-03' });
 	assert.equal(sources.ctr.request.reportName, 'BondIssueDetail');
-	assert.deepEqual(sources.ctr.rows, [{ SECUCODE: '123456.SH' }]);
+	assert.equal(sources.ctr.rows[0].ignored, undefined);
+	assert.deepEqual(sources.peerIssuances[0], {
+		securityCode: '123456.SH', bondName: '26测试01', issuerName: '测试证券股份有限公司',
+		bondType: '公募债', actualIssueAmountYi: 20, issueTenor: '3年', issueDate: '2026-09-02',
+		maturityDate: null, market: '上交所', couponRatePct: 2.18
+	});
+	assert.deepEqual(sources.peerIssueSummary, [{ issuerName: '测试证券股份有限公司', bondType: '公募债', amountYi: 20 }]);
 	assert.deepEqual(sources.registration.rows, [{
 		projectName: '测试项目', issuerName: '测试证券股份有限公司', status: '已受理',
 		variety: '小公募', amountYi: 100, region: null, industry: null,
 		leadUnderwriter: null, noticeNumber: null, venue: null,
-		registrationOrFiling: null, updateDate: '2026-08-28'
+		registrationOrFiling: null, updateDate: '2026-09-02'
 	}]);
+	assert.deepEqual(normalizeManualLiabilitySources({ ctr: { status: 'missing' } }, '2026-09-03').peerIssuances, []);
+});
+
+test('Neon report RPC payload is date-bound and normalized before snapshotting', () => {
+	const payload = {
+		version: 1,
+		report: {
+			asOfDate: '2026-09-03', today: '2026-09-03', balanceYi: 12,
+			previousMonthBalanceYi: 10, previousYearBalanceYi: 8, liveBalanceYi: 12,
+			longBalanceYi: 7, shortBalanceYi: 5, cumulativeBorrowingYi: 2,
+			parameters: {}, composition: [{ type: '公募债', amountYi: 12 }]
+		},
+		limits: []
+	};
+	const report = normalizeLiabilityReportDatabasePayload(payload, '2026-09-03');
+	assert.equal(report.asOfDate, '2026-09-03');
+	assert.equal(report.metrics.balanceMonthChangeYi, 2);
+	assert.equal(report.metrics.longBalanceRatio, 7 / 12 * 100);
+	assert.deepEqual(report.composition, [{ type: '公募债', amountYi: 12 }]);
 	assert.throws(
-		() => normalizeManualLiabilitySources({ ctr: { status: 'missing' } }, '2026-08-31'),
-		/尚未成功返回/
+		() => normalizeLiabilityReportDatabasePayload(payload, '2026-09-02'),
+		/与所选日期 2026-09-02 不一致/
 	);
 });
 
 test('Choice CTR failures are retried while the DM registration request remains independent', async () => {
 	let calls = 0;
 	const result = await fetchManualLiabilitySources({
-		dataApiUrl: 'https://data.example/data', asOfDate: '2026-08-31',
+		dataApiUrl: 'https://data.example/data', asOfDate: '2026-09-03',
 		fetchImpl: async (url) => {
 			calls += 1;
 			return String(url).includes('/choice/ctr')
@@ -101,7 +147,7 @@ test('DM registration pages are exhausted before the report payload is saved', a
 		dataApiUrl: 'https://data.example/data', asOfDate: '2026-08-31',
 		fetchImpl: async (url) => {
 			const parsed = new URL(url);
-			if (parsed.pathname.endsWith('/choice/ctr')) return Response.json({ function: 'CTR', fields: [], rows: [] });
+			if (parsed.pathname.endsWith('/choice/ctr')) return Response.json({ function: 'CTR', fields: CTR_INDICATOR_LIST, rows: [] });
 			const pageNum = Number(parsed.searchParams.get('pageNum'));
 			registrationPages.push(pageNum);
 			return Response.json({
@@ -111,7 +157,7 @@ test('DM registration pages are exhausted before the report payload is saved', a
 					status: '已受理', variety: '小公募', amountYi: pageNum,
 					region: null, industry: '证券', leadUnderwriter: null,
 					noticeNumber: null, venue: '上交所', registrationOrFiling: '注册',
-					updateDate: '2026-08-28'
+					updateDate: '2026-09-02'
 				}]
 			});
 		},
@@ -155,12 +201,12 @@ test('weekly page renders the complete report directly in the workspace', () => 
 	assert.doesNotMatch(source, /生产数据库口径/);
 	assert.doesNotMatch(source, /近期动态口径/);
 	assert.doesNotMatch(source, /详见第七部分/);
-	assert.doesNotMatch(source, /生成本期周报/);
+	assert.match(source, /页面不会自动拉取业务数据/);
 	assert.doesNotMatch(source, /数据缺失与来源状态|数据源：public\.edb ｜ 每日更新|历史周报快照/);
 	assert.equal((source.match(/class="report-section"/g) ?? []).length, 7);
 });
 
-test('weekly report actions and history date selector stay in the application header', () => {
+test('weekly report actions and report-date calendar stay in the application header', () => {
 	const layout = fs.readFileSync(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8');
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
 	assert.match(layout, /report-header-actions/);
@@ -168,8 +214,9 @@ test('weekly report actions and history date selector stay in the application he
 	assert.match(layout, /window\.print\(\)/);
 	assert.doesNotMatch(layout, /liability-report#history|历史快照/);
 	assert.match(layout, /class="report-history-picker"/);
-	assert.match(layout, /<label for="report-history-date">历史日期<\/label>/);
-	assert.match(layout, /<select[\s\S]*name="run"[\s\S]*liabilityReportHistory/);
+	assert.match(layout, /<label for="report-history-date">报告日<\/label>/);
+	assert.match(layout, /<input[\s\S]*type="date"[\s\S]*name="date"[\s\S]*value=\{selectedLiabilityReportDate\(\)\}/);
+	assert.doesNotMatch(layout, /<select[\s\S]*liabilityReportHistory/);
 	assert.doesNotMatch(page, /history-picker|report-history-date/);
 });
 
@@ -192,23 +239,25 @@ test('weekly report preserves the 1080px desktop canvas when scaled to A4', () =
 	assert.ok(headerRules.every((rule) => !/min-height/.test(rule)));
 });
 
-test('weekly report query supplies every chart data contract', () => {
-	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
-	for (const field of ['maturityByType', 'annualMaturity', 'balanceRateTrend', 'issuanceTrend', 'marketHistory', 'peerIssueSummary']) {
-		assert.match(queries, new RegExp(`AS ${field}`));
+test('Neon report RPC supplies every chart data contract', () => {
+	const queries = fs.readFileSync(new URL('../migrations/0018_liability_report_data_api.sql', import.meta.url), 'utf8');
+	for (const field of ['maturityByType', 'annualMaturity', 'balanceRateTrend', 'issuanceTrend', 'marketHistory']) {
+		assert.match(queries, new RegExp(`AS "${field}"`));
 	}
-	assert.match(queries, /'bondType', bond_type/);
+	assert.match(queries, /jsonb_build_object\('type', type, 'amountYi', amount_yi\)/);
 	assert.match(queries, /principal_yi/);
 	assert.match(queries, /interest_yi/);
 	assert.match(queries, /FROM public\.edb/);
 	assert.match(queries, /market_spread_history/);
-	assert.doesNotMatch(queries.slice(queries.indexOf('export async function getLiabilityWeeklyReportData'), queries.indexOf('export async function getProjectGanttData')), /FROM liability_market_observations/);
+	assert.doesNotMatch(queries, /FROM liability_market_observations/);
 });
 
 test('recent liability dynamics keep the agreed weekly exclusions while plans remain separate', () => {
-	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
-	const eventRows = queries.slice(queries.indexOf('), event_rows AS'), queries.indexOf('), due_detail_rows AS'));
+	const queries = fs.readFileSync(new URL('../migrations/0018_liability_report_data_api.sql', import.meta.url), 'utf8');
+	const eventRows = queries.slice(queries.indexOf('), event_rows AS'), queries.indexOf('), due_detail AS'));
 	assert.equal((eventRows.match(/NOT IN \('同业拆借', '浮动收益凭证'\)/g) ?? []).length, 3);
+	assert.equal((eventRows.match(/BETWEEN week\.week_start AND week\.as_of_date/g) ?? []).length, 3);
+	assert.equal((eventRows.match(/BETWEEN week\.week_start \+ 7 AND week\.week_start \+ 11/g) ?? []).length, 3);
 	assert.doesNotMatch(eventRows, /SELECT 'project'|project\.planned_issue_date/);
 	assert.match(eventRows, /certificate\.subscription_date/);
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
@@ -218,10 +267,9 @@ test('recent liability dynamics keep the agreed weekly exclusions while plans re
 });
 
 test('core maturity metrics include all arranged debt while only 30-day details apply exclusions', () => {
-	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
-	const weeklyQuery = queries.slice(queries.indexOf('export async function getLiabilityWeeklyReportData'), queries.indexOf('export async function getProjectGanttData'));
+	const weeklyQuery = fs.readFileSync(new URL('../migrations/0018_liability_report_data_api.sql', import.meta.url), 'utf8');
 	const scheduledMetrics = weeklyQuery.slice(weeklyQuery.indexOf('), scheduled_maturity_metrics AS'), weeklyQuery.indexOf('), largest_borrowing AS'));
-	const dueDetails = weeklyQuery.slice(weeklyQuery.indexOf('), due_detail_rows AS'), weeklyQuery.indexOf('), due_detail AS'));
+	const dueDetails = weeklyQuery.slice(weeklyQuery.indexOf('), due_detail AS'), weeklyQuery.indexOf('), active_projects AS'));
 	assert.match(scheduledMetrics, /FROM debt d CROSS JOIN latest/);
 	assert.match(scheduledMetrics, /AS due_30_yi/);
 	assert.match(scheduledMetrics, /AS due_year_yi/);
@@ -269,14 +317,18 @@ test('monitoring gauges use strong threshold colors and keep the value clear of 
 	assert.match(page, /监管监控/);
 });
 
-test('weekly peer tables follow the installation-package weekly filters and coupon field', () => {
-	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
-	const reportQuery = queries.slice(queries.indexOf('export async function getLiabilityWeeklyReportData'), queries.indexOf('export async function getProjectGanttData'));
-	assert.match(reportQuery, /peer\.issue_date BETWEEN week\.week_start - 7 AND week\.week_start - 3/);
-	assert.match(reportQuery, /peer\.bond_type IN \('证券公司债', '证券公司次级债', '证券公司短期融资券'\)/);
-	assert.match(reportQuery, /registration\.variety IN \('小公募', '私募'\)/);
-	const importer = fs.readFileSync(new URL('../scripts/import-liability-weekly-data.mjs', import.meta.url), 'utf8');
-	assert.match(importer, /couponRatePct: number\(row\[30\]\)/);
+test('weekly peer tables use current-week external APIs and remove imported staging tables', () => {
+	const choice = fs.readFileSync(new URL('../src/lib/liability-choice.js', import.meta.url), 'utf8');
+	const migration = fs.readFileSync(new URL('../migrations/0018_liability_report_data_api.sql', import.meta.url), 'utf8');
+	const packageJson = fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8');
+	assert.match(choice, /ISSUERATE_REFERENCE/);
+	assert.match(choice, /row\.issueDate >= weekWindow\.startDate/);
+	assert.match(choice, /startDate: dateShift\(asOfDate, -daysSinceMonday\), endDate: asOfDate/);
+	for (const table of ['liability_peer_issuances', 'liability_registration_progress', 'liability_market_observations']) {
+		assert.match(migration, new RegExp(`DROP TABLE IF EXISTS ${table}`));
+	}
+	assert.doesNotMatch(packageJson, /db:import:weekly/);
+	assert.equal(fs.existsSync(new URL('../scripts/import-liability-weekly-data.mjs', import.meta.url)), false);
 });
 
 test('weekly broker registrations continue in the right column after pricing', () => {
@@ -284,7 +336,7 @@ test('weekly broker registrations continue in the right column after pricing', (
 	const css = fs.readFileSync(new URL('../src/routes/liability-report/weekly-report.css', import.meta.url), 'utf8');
 	const peerSection = page.slice(page.indexOf('section-6-title'), page.indexOf('section-7-title'));
 	assert.match(peerSection, /class="peer-columns"/);
-	assert.match(page, /splitPeerRegistrations\(report\.registrationProgress/);
+	assert.match(page, /splitPeerRegistrations\(report\?\.registrationProgress/);
 	assert.match(page, /rows\.slice\(0, leftCount\), rows\.slice\(leftCount\)/);
 	assert.match(peerSection, /本周券商债券申报动态（续表）/);
 	assert.match(peerSection, /peerRegistrationColumns\[1\]\.length/);
@@ -336,13 +388,14 @@ test('all liability report charts use the shared ECharts host instead of hand-dr
 	assert.match(charting, /MarkPointComponent/);
 });
 
-test('liability charts and source queries follow the installation-package chart contract', () => {
+test('liability charts and Neon RPC follow the report chart contract', () => {
 	const balance = fs.readFileSync(new URL('../src/routes/liability-report/ReportBalanceRateChart.svelte', import.meta.url), 'utf8');
 	const issuance = fs.readFileSync(new URL('../src/routes/liability-report/ReportIssuanceChart.svelte', import.meta.url), 'utf8');
 	const stacked = fs.readFileSync(new URL('../src/routes/liability-report/ReportStackedBarChart.svelte', import.meta.url), 'utf8');
 	const chartTypes = fs.readFileSync(new URL('../src/lib/liability-report-charts.ts', import.meta.url), 'utf8');
 	const page = fs.readFileSync(new URL('../src/routes/liability-report/+page.svelte', import.meta.url), 'utf8');
-	const queries = fs.readFileSync(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8');
+	const queries = fs.readFileSync(new URL('../migrations/0018_liability_report_data_api.sql', import.meta.url), 'utf8');
+	const choice = fs.readFileSync(new URL('../src/lib/liability-choice.js', import.meta.url), 'utf8');
 
 	assert.match(balance, /areaStyle:/);
 	assert.match(balance, /firstIndexOfEachYear/);
@@ -364,14 +417,14 @@ test('liability charts and source queries follow the installation-package chart 
 	assert.match(page, /sort\(\(a, b\) => b\[1\] - a\[1\]\)/);
 
 	assert.match(queries, /trend_snapshot_totals AS/);
-	assert.match(queries, /LEFT JOIN balance_snapshot snapshot ON snapshot\.as_of_date = trend_snapshot_dates\.snapshot_date/);
+	assert.match(queries, /SELECT MAX\(snapshot\.as_of_date\)[\s\S]*snapshot\.as_of_date <= trend_months\.month_end/);
 	assert.match(queries, /SELECT LEAST\(/);
 	assert.match(queries, /classified_issuances AS/);
 	assert.match(queries, /issuance_types\(type\) AS/);
 	assert.match(queries, /FROM issuance_months CROSS JOIN issuance_types/);
 	assert.match(queries, /THEN '3年公募债'/);
 	assert.match(queries, /THEN '5年次级债'/);
-	assert.match(queries, /maturity_date - issue_date <= 366 THEN '短期公司债'/);
+	assert.match(choice, /originalTermYears <= 1 \? '短期公司债' : '公募债'/);
 	assert.match(queries, /raw_market_history AS/);
 	assert.doesNotMatch(queries, /raw_market_history_with_neighbors|category <> 'state_owned_bank_ncd'/);
 	assert.doesNotMatch(queries, /ABS\(value - previous_value\)|ABS\(value - next_value\)/);
@@ -401,8 +454,8 @@ test('liability market rates come from scheduled public.edb data, not manual Cho
 	];
 	assert.match(service, /public\.edb/);
 	assert.match(service, /edbLogicalRequests: 0/);
-	assert.match(service, /peer\.bond_type IN \('证券公司债', '证券公司次级债', '证券公司短期融资券'\)/);
-	assert.match(service, /registration\.variety IN \('小公募', '私募'\)/);
+	assert.match(choice, /PEER_BOND_TYPES/);
+	assert.match(choice, /\/broker-bond-registrations/);
 	assert.match(service, /manualSources\.registration\.status === 'available'/);
 	assert.match(service, /registrationProgress: manualSources\.registration\.status/);
 	assert.match(service, /path: '\/broker-bond-registrations'/);

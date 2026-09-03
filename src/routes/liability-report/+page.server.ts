@@ -1,26 +1,29 @@
 import type { PageServerLoad } from './$types';
-import { getLiabilityWeeklyReportData } from '$lib/server/queries.js';
 import { getDatabase } from '$lib/server/db.js';
 import { fail } from '@sveltejs/kit';
 import {
-	getLiabilityWeeklyReportHistory,
-	getLiabilityWeeklyReportSourceStatus,
+	getLiabilityWeeklyReportRunByDate,
 	readLiabilityWeeklyReportSnapshot,
 	saveLiabilityWeeklyReportSnapshot
 } from '$lib/server/liability-weekly-reports.js';
 
 const MAX_SOURCE_PAYLOAD_LENGTH = 4_000_000;
 
+function dateInShanghai() {
+	return new Intl.DateTimeFormat('en-CA', {
+		timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+	}).format(new Date());
+}
+
 export const load: PageServerLoad = async ({ url, platform }) => {
 	const database = getDatabase();
-	const [liveReport, history] = await Promise.all([
-		getLiabilityWeeklyReportData(),
-		getLiabilityWeeklyReportHistory(database)
-	]);
-	const selectedRunId = url.searchParams.get('run');
-	const reportHistory = history as any[];
-	const selectedRun = reportHistory.find((item) => item.id === selectedRunId) ?? reportHistory[0] ?? null;
-	let report: any = liveReport;
+	const today = dateInShanghai();
+	const requestedDate = String(url.searchParams.get('date') ?? '');
+	const selectedReportDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) && requestedDate <= today
+		? requestedDate
+		: today;
+	const selectedRun = await getLiabilityWeeklyReportRunByDate(database, selectedReportDate);
+	let report: any = null;
 	let snapshotError: string | null = null;
 	if (selectedRun && platform?.env?.LIABILITY_REPORT_SNAPSHOTS) {
 		try {
@@ -30,44 +33,29 @@ export const load: PageServerLoad = async ({ url, platform }) => {
 			snapshotError = String(error?.message ?? error);
 		}
 	}
-	if (!report.provenance) {
-		const sourceStatus = await getLiabilityWeeklyReportSourceStatus(database, report.asOfDate);
-		const missingModules = [...sourceStatus.missingModules];
-		if (!report.quality.liveDerivedReliable) {
-			missingModules.push({
-				code: 'reconciliation',
-				title: '负债明细与余额快照勾稽',
-				detail: `明细余额与 ${report.asOfDate} 快照相差 ${Math.abs(report.quality.reconciliationDeltaYi).toFixed(4)} 亿元；保留明细展示，但金额须核对。`
-			});
-		}
-		report.provenance = {
-			generation: 'live-preview',
-			missingModules
-		};
-	}
 	const configuredDataApiUrl = platform?.env?.CHOICE_DATA_API_URL;
-	const dataApiUrl = String(configuredDataApiUrl || new URL('/data', url.origin))
+	const externalDataApiUrl = String(configuredDataApiUrl || new URL('/data', url.origin))
 		.replace(/\/$/, '');
 	return {
 		report,
-		reportHistory,
-		selectedRunId: selectedRun?.id ?? null,
+		selectedReportDate,
+		today,
+		hasSnapshot: Boolean(report),
 		snapshotError,
-		liveAsOfDate: liveReport.asOfDate,
-		dataApiUrl
+		externalDataApiUrl
 	};
 };
 
 export const actions = {
 	saveSnapshot: async (event) => {
 		const data = await event.request.formData();
-		const sourcesPayload = String(data.get('sources') ?? '');
+		const sourcesPayload = String(data.get('payload') ?? '');
 		if (!sourcesPayload || sourcesPayload.length > MAX_SOURCE_PAYLOAD_LENGTH) {
 			return fail(400, { message: '周报数据源为空或超过快照大小限制' });
 		}
-		let sources;
-		try {
-			sources = JSON.parse(sourcesPayload);
+			let payload;
+			try {
+				payload = JSON.parse(sourcesPayload);
 		} catch {
 			return fail(400, { message: '周报数据源格式无效' });
 		}
@@ -76,7 +64,8 @@ export const actions = {
 				database: getDatabase(event),
 				env: event.platform?.env,
 				actor: event.locals.user,
-				sources,
+					databasePayload: payload.database,
+					sources: payload.external,
 				expectedAsOfDate: String(data.get('asOfDate') ?? '')
 			});
 			return {

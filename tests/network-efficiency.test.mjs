@@ -107,16 +107,17 @@ test('data administration gets its endpoint with the private token request', asy
 	assert.doesNotMatch(page, /dataApiUrl/);
 });
 
-test('liability weekly report loads bounded collection queries without N+1 reads', async () => {
-	const [page, queries] = await Promise.all([
+test('liability report page reads only the selected snapshot and generation calls one Neon aggregate RPC', async () => {
+	const [page, service, client, layout] = await Promise.all([
 		readFile(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8'),
-		readFile(new URL('../src/lib/server/queries.js', import.meta.url), 'utf8')
+		readFile(new URL('../src/lib/server/liability-weekly-reports.js', import.meta.url), 'utf8'),
+		readFile(new URL('../src/lib/neon-data-api.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8')
 	]);
-	assert.match(page, /getLiabilityWeeklyReportData\(\)/);
-	const start = queries.indexOf('export async function getLiabilityWeeklyReportData');
-	const end = queries.indexOf('export async function getProjectGanttData', start);
-	const weeklyQuery = queries.slice(start, end);
-	assert.equal((weeklyQuery.match(/database\.prepare\(/g) ?? []).length, 1);
-	assert.match(weeklyQuery, /getDebtLimitSummary\(database\)/);
-	assert.doesNotMatch(weeklyQuery, /for\s*\([^)]*\)\s*\{[^}]*database\.prepare/s);
+	assert.match(page, /getLiabilityWeeklyReportRunByDate\(database, selectedReportDate\)/);
+	assert.match(page, /if \(selectedRun && platform\?\.env\?\.LIABILITY_REPORT_SNAPSHOTS\)/);
+	assert.doesNotMatch(page, /getLiabilityWeeklyReportData|fetchManualLiabilitySources|liabilityWeeklyReport\(/);
+	assert.equal((service.match(/database\.prepare\(/g) ?? []).length, 3);
+	assert.match(client, /#request\('rpc\/liability_weekly_report_data'/);
+	assert.match(layout, /Promise\.all\(\[[\s\S]*fetchManualLiabilitySources[\s\S]*new NeonDataApi\(\)\.liabilityWeeklyReport/);
 });

@@ -12,20 +12,20 @@
 
 	let { data } = $props();
 	let report = $derived(data.report);
-	let currentEvents = $derived(report.events.filter((item: any) => item.week === 'current' && isDynamicEvent(item)));
-	let nextEvents = $derived(report.events.filter((item: any) => item.week === 'next' && isDynamicEvent(item)));
-	let dynamicProjects = $derived(report.projects.filter((item: any) => !['同业拆借', '浮动收益凭证'].includes(String(item.debtType ?? ''))));
-	let compositionTotal = $derived(report.composition.reduce((sum: number, item: any) => sum + Number(item.amountYi ?? 0), 0));
-	let maturityLabels = $derived(report.maturityDistribution.map((item: any) => item.month));
-	let maturityTypes = $derived(orderedTypes(report.maturityByType ?? []));
-	let maturityRows = $derived((report.maturityByType ?? []).map((item: any) => ({ label: item.month, type: item.type, value: Number(item.amountYi ?? 0) })));
-	let annualLabels = $derived([...new Set((report.annualMaturity ?? []).map((item: any) => item.bucket))] as string[]);
-	let annualTypes = $derived(orderedTypes(report.annualMaturity ?? []));
-	let annualRows = $derived((report.annualMaturity ?? []).map((item: any) => ({ label: item.bucket, type: item.type, value: Number(item.amountYi ?? 0) })));
-	let peerRows = $derived(normalizePeerRows(report.peerIssueSummary ?? []));
+	let currentEvents = $derived((report?.events ?? []).filter((item: any) => item.week === 'current' && isDynamicEvent(item)));
+	let nextEvents = $derived((report?.events ?? []).filter((item: any) => item.week === 'next' && isDynamicEvent(item)));
+	let dynamicProjects = $derived((report?.projects ?? []).filter((item: any) => !['同业拆借', '浮动收益凭证'].includes(String(item.debtType ?? ''))));
+	let compositionTotal = $derived((report?.composition ?? []).reduce((sum: number, item: any) => sum + Number(item.amountYi ?? 0), 0));
+	let maturityLabels = $derived((report?.maturityDistribution ?? []).map((item: any) => item.month));
+	let maturityTypes = $derived(orderedTypes(report?.maturityByType ?? []));
+	let maturityRows = $derived((report?.maturityByType ?? []).map((item: any) => ({ label: item.month, type: item.type, value: Number(item.amountYi ?? 0) })));
+	let annualLabels = $derived([...new Set((report?.annualMaturity ?? []).map((item: any) => item.bucket))] as string[]);
+	let annualTypes = $derived(orderedTypes(report?.annualMaturity ?? []));
+	let annualRows = $derived((report?.annualMaturity ?? []).map((item: any) => ({ label: item.bucket, type: item.type, value: Number(item.amountYi ?? 0) })));
+	let peerRows = $derived(normalizePeerRows(report?.peerIssueSummary ?? []));
 	let peerLabels = $derived(peerIssuerLabels(peerRows));
 	let peerTypes = $derived(orderedPeerTypes(peerRows));
-	let peerRegistrationColumns = $derived(splitPeerRegistrations(report.registrationProgress ?? [], report.peerIssuances?.length ?? 0));
+	let peerRegistrationColumns = $derived(splitPeerRegistrations(report?.registrationProgress ?? [], report?.peerIssuances?.length ?? 0));
 	const marketCategories = [
 		{ key: 'state_owned_bank_ncd', title: '国有行同业存单发行利率走势' },
 		{ key: 'credit_spread_broker_govt_1y', title: 'AAA-券商与国债到期收益率及利差（1年）' },
@@ -34,7 +34,7 @@
 	];
 
 	function orderedTypes(rows: any[]) {
-		const compositionOrder = report.composition.map((item: any) => item.type);
+		const compositionOrder = (report?.composition ?? []).map((item: any) => item.type);
 		return [...new Set(rows.map((item: any) => String(item.type)))].sort((a, b) => {
 			const left = compositionOrder.indexOf(a);
 			const right = compositionOrder.indexOf(b);
@@ -130,6 +130,7 @@
 
 <svelte:head><title>东方财富证券 · 资金管理部负债周报</title></svelte:head>
 
+{#if report}
 <div class="report-pages">
 	<article class="report-page">
 		<div class="report-page-body">
@@ -227,3 +228,9 @@
 		<footer class="bento-footer" aria-label="第 6 页"><span>东方财富证券股份有限公司 · 资金管理部</span><span>第 6 页 · 共 6 页</span></footer>
 	</article>
 </div>
+{:else}
+	<section class="report-empty-state" aria-labelledby="report-empty-title">
+		<h2 id="report-empty-title">{data.selectedReportDate} 暂无周报快照</h2>
+		<p>{data.snapshotError ?? '页面不会自动拉取业务数据。请确认报告日后，点击右上角“生成本期周报”。'}</p>
+	</section>
+{/if}

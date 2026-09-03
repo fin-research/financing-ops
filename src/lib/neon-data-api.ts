@@ -110,4 +110,13 @@ export class NeonDataApi {
 		const rows = await response.json() as DataRow[];
 		if (!rows.length) throw new Error('记录已被其他人修改或已经删除');
 	}
+
+	async liabilityWeeklyReport(reportDate: string) {
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) throw new Error('负债周报日期无效');
+		const response = await this.#request('rpc/liability_weekly_report_data', {
+			method: 'POST',
+			body: JSON.stringify({ p_report_date: reportDate })
+		});
+		return await response.json() as Record<string, unknown>;
+	}
 }

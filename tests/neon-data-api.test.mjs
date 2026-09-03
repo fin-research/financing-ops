@@ -93,3 +93,29 @@ test('data client refreshes both token and endpoint once after a 401', async () 
 		globalThis.fetch = originalFetch;
 	}
 });
+
+test('liability report uses one authenticated aggregate RPC request', async () => {
+	const { NeonDataApi } = await loadNeonDataApi();
+	const originalFetch = globalThis.fetch;
+	const calls = [];
+	globalThis.fetch = async (input, init = {}) => {
+		const url = String(input);
+		if (url === '/financing/data/token') {
+			return Response.json({ token: 'report-token', dataApiUrl: 'https://data.example.test' });
+		}
+		calls.push({ url, method: init.method, headers: new Headers(init.headers), body: init.body });
+		return Response.json({ version: 1, report: { asOfDate: '2026-09-03' }, limits: [] });
+	};
+	try {
+		const result = await new NeonDataApi().liabilityWeeklyReport('2026-09-03');
+		assert.equal(result.version, 1);
+		assert.equal(calls.length, 1);
+		assert.equal(calls[0].url, 'https://data.example.test/rpc/liability_weekly_report_data');
+		assert.equal(calls[0].method, 'POST');
+		assert.equal(calls[0].headers.get('content-profile'), 'financing');
+		assert.equal(calls[0].body, JSON.stringify({ p_report_date: '2026-09-03' }));
+		await assert.rejects(new NeonDataApi().liabilityWeeklyReport('invalid'), /日期无效/);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});

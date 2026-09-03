@@ -9,7 +9,7 @@
 - `DATABASE_URL` 只保存在 gitignored `.env.database`，供本地初始化、迁移、Excel 和提醒脚本使用。
 - 禁止 Worker 全局 `Pool`、跨请求 client、未参数化 SQL 和 N+1 查询。
 
-融资业务表继续只写 `financing` schema。负债周报可通过同一 Hyperdrive 只读跨应用共享的 `public.edb`；该表由 dashboard 的每日 Workflow 统一维护，financing 不新增迁移、不写入、不建立平行市场利率表。
+融资业务表继续只写 `financing` schema。负债周报聚合函数可只读跨应用共享的 `public.edb`；该表由 dashboard 的每日 Workflow 统一维护，financing 不写入、不建立平行市场利率表。
 
 ## 负债模型
 
@@ -34,6 +34,7 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 - `balance_snapshot` 以 `(as_of_date, debt_type, subtype)` 保存历史余额。
 - 常用读取优先使用 `debt_overview`、`cashflow_overview`、`data_overview` 或明确的集合查询。
 - 页面数据缺口不能通过新建冗余汇总表临时解决；先评估视图或集合查询。
+- `liability_weekly_report_runs` 只保存报告日、R2 key、来源清单、缺失模块和内容哈希；完整报告保存在 R2。安装包导入的 `liability_market_observations`、`liability_peer_issuances`、`liability_registration_progress` 已删除，不得重新作为回退数据源。
 
 ## 项目、SOP 与提醒
 
@@ -48,6 +49,7 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 - Data API 只暴露 `financing` schema，数据库角色为 `authenticated`。
 - 可编辑表必须同时进入 `src/lib/data-admin.ts` 白名单、显式 GRANT、RLS policy 和写入审计触发器。
 - 当前数据后台只开放负债品种表、`finance_parameters` 与 `debt_limit_configs`。
+- Data API 支持 PostgREST 过滤、关联和聚合，也支持调用数据库函数；负债周报使用固定的 `liability_weekly_report_data(date)` RPC 在 PostgreSQL 内完成复杂聚合，只向 `authenticated` 授予执行权限，不开放底层只读表。
 - 现金流、历史余额和审计记录不展示，且 `authenticated` 不得通过 Data API 访问。
 - 活跃且关联 Neon Auth 的三种业务角色均可按现有 RLS 编辑数据后台表；SvelteKit 管理 actions 仍由服务端角色规则单独控制。
 - 更新和删除携带 `updated_at` 做乐观并发检查；主键和计算列只读。
