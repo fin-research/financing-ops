@@ -273,6 +273,8 @@ test('weekly page renders the complete report directly in the workspace', () => 
 	assert.doesNotMatch(source, /详见第七部分/);
 	assert.match(source, /emptyLiabilityWeeklyReport\(data\.selectedReportDate\)/);
 	assert.match(source, /let hasSnapshot = \$derived\(Boolean\(data\.hasSnapshot\)\)/);
+	assert.match(source, /item\.calculationMode === 'net_capital_60'[\s\S]*按上月末净资本×60%/);
+	assert.match(source, /<td>\{approvalRule\(item\)\}<\/td>/);
 	assert.match(source, /hasSnapshot \? amount\(compositionTotal\) : '数据缺失'/);
 	assert.match(source, /sumEvents[\s\S]*hasSnapshot/);
 	assert.match(source, /\{#if !hasSnapshot\}[\s\S]*当前报告日还没有数据快照[\s\S]*生成本期周报/);
