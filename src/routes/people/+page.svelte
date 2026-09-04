@@ -12,12 +12,14 @@
 		Pencil,
 		Plus,
 		Save,
+		Settings2,
 		ShieldCheck,
 		Trash2,
 		UserX,
 		Users
 	} from '@lucide/svelte';
-	import { hasInternalTestFullAccess, ROLE_DEFINITIONS, roleLabel } from '$lib/roles';
+	import { ROLE_DEFINITIONS, roleLabel } from '$lib/roles';
+	import { hasPermission, PERMISSION_CODES, PERMISSION_DEFINITIONS } from '$lib/permissions.js';
 	import { globalMessages } from '$lib/global-messages';
 	import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
 
@@ -30,20 +32,58 @@
 		status: 'idle' | 'pending';
 	}>({ key: '', status: 'idle' });
 
-	const fallback = { people: [] };
+	const fallback = {
+		people: [],
+		rolePermissions: { admin: [], handler: [], reviewer: [] }
+	};
 	let displayedPeople = $state<any[]>(untrack(() => [...(data?.peopleAccess?.people ?? fallback.people)]));
+	const initialRolePermissions = untrack(() => ({
+		...fallback.rolePermissions,
+		...(data?.peopleAccess?.rolePermissions ?? {})
+	})) as Record<string, string[]>;
+	let displayedRolePermissions = $state<Record<string, string[]>>(initialRolePermissions);
+	let permissionDrafts = $state<Record<string, string[]>>(Object.fromEntries(
+		Object.entries(initialRolePermissions).map(([role, permissions]) => [role, [...permissions]])
+	));
 	const peopleAccess = $derived({ people: displayedPeople });
 	const roleCount = (role: string) =>
 		displayedPeople.filter((person: any) => person.role === role).length;
-	const canManage = $derived(hasInternalTestFullAccess(data?.user?.role));
+	const canManage = $derived(hasPermission(data?.permissions, 'people_manage'));
+	const canConfigurePermissions = $derived(hasPermission(data?.permissions, 'permission_manage'));
 	const canCreate = $derived(canManage);
 	const creatableRoles = ROLE_DEFINITIONS;
+	const rolePermissionCount = (role: string) => permissionDrafts[role]?.length ?? 0;
+	const rolePermissionsDirty = (role: string) => {
+		const saved = displayedRolePermissions[role] ?? [];
+		const draft = permissionDrafts[role] ?? [];
+		return saved.length !== draft.length || saved.some((permission) => !draft.includes(permission));
+	};
+
+	function toggleRolePermission(role: string, permission: string, checked: boolean) {
+		const current = permissionDrafts[role] ?? [];
+		permissionDrafts[role] = checked
+			? [...new Set([...current, permission])]
+			: current.filter((item) => item !== permission);
+	}
+
+	function setAllRolePermissions(role: string, granted: boolean) {
+		permissionDrafts[role] = granted ? [...PERMISSION_CODES] : [];
+	}
 
 	const enhanceAction = (key: string, closeDialog = false): SubmitFunction => {
 		return () => {
 			actionState = { key, status: 'pending' };
 			return async ({ result, update }) => {
 				if (result.type === 'success') {
+					const returnedRolePermissions = result.data?.rolePermissions ?? null;
+					if (returnedRolePermissions?.role) {
+						const role = String(returnedRolePermissions.role);
+						const permissions = Array.isArray(returnedRolePermissions.permissions)
+							? returnedRolePermissions.permissions.map(String)
+							: [];
+						displayedRolePermissions[role] = permissions;
+						permissionDrafts[role] = [...permissions];
+					}
 					const returnedPerson = result.data?.person ?? null;
 					if (returnedPerson) {
 						const exists = displayedPeople.some((person: any) => person.id === returnedPerson.id);
@@ -58,6 +98,9 @@
 					await update({ reset: false, invalidateAll: false });
 					if (result.data?.refreshIdentity) {
 						await invalidate('financing:identity');
+					}
+					if (returnedRolePermissions) {
+						await invalidate('financing:permissions');
 					}
 					if (returnedPerson && editingPerson?.id === returnedPerson.id) editingPerson = returnedPerson;
 					globalMessages.success(String(result.data?.message ?? '人员与账号信息已保存'), {
@@ -104,6 +147,72 @@
 				<span class="role-count">{roleCount(role.code)} 人</span>
 			</article>
 		{/each}
+	</section>
+
+	<section class="section-card permission-config-card">
+		<div class="card-header">
+			<div class="header-icon blue"><Settings2 size={19} /></div>
+			<div class="permission-heading">
+				<h2>角色权限配置</h2>
+				<p>权限按角色统一生效；当前三种角色初始均为全量授权。</p>
+			</div>
+			<span class="count-badge">{PERMISSION_DEFINITIONS.length} 类</span>
+		</div>
+
+		{#if canConfigurePermissions}
+			<div class="permission-grid">
+				{#each ROLE_DEFINITIONS as role}
+					<form
+						class={`permission-role-card role-${role.code}`}
+						method="post"
+						action="?/saveRolePermissions"
+						use:enhance={enhanceAction(`permissions-${role.code}`)}
+					>
+						<input type="hidden" name="role" value={role.code} />
+						<div class="permission-role-header">
+							<div>
+								<strong>{role.label}</strong>
+								<span>{rolePermissionCount(role.code)} / {PERMISSION_DEFINITIONS.length} 已授权</span>
+							</div>
+							<div class="permission-shortcuts" aria-label={`${role.label}权限快捷操作`}>
+								<button type="button" onclick={() => setAllRolePermissions(role.code, true)}>全选</button>
+								<button type="button" onclick={() => setAllRolePermissions(role.code, false)}>清空</button>
+							</div>
+						</div>
+						<fieldset>
+							<legend class="sr-only">{role.label}权限类型</legend>
+							{#each PERMISSION_DEFINITIONS as permission}
+								<label class="permission-option">
+									<input
+										type="checkbox"
+										name="permissions"
+										value={permission.code}
+										checked={permissionDrafts[role.code]?.includes(permission.code)}
+										onchange={(event) => toggleRolePermission(role.code, permission.code, event.currentTarget.checked)}
+									/>
+									<span>
+										<strong>{permission.label}</strong>
+										<small>{permission.description}</small>
+									</span>
+								</label>
+							{/each}
+						</fieldset>
+						<button
+							class="save-role-permissions"
+							type="submit"
+							disabled={actionState.status === 'pending' || !rolePermissionsDirty(role.code)}
+						>
+							<Save size={15} />
+							{actionState.status === 'pending' && actionState.key === `permissions-${role.code}`
+								? '保存中…'
+								: `保存${role.label}权限`}
+						</button>
+					</form>
+				{/each}
+			</div>
+		{:else}
+			<p class="permission-read-only">当前角色可以查看人员信息，但没有“权限配置”权限。</p>
+		{/if}
 	</section>
 
 	<section class="section-card identity-card">
@@ -185,7 +294,7 @@
 								</button>
 							</form>
 						{:else}
-							<span class="read-only-copy">仅管理员可维护</span>
+							<span class="read-only-copy">没有人员与账号维护权限</span>
 						{/if}
 					</div>
 				</div>
@@ -217,8 +326,8 @@
 			<div class="modal-header">
 				<div>
 					<p class="eyebrow">UNIFIED IDENTITY</p>
-					<h2>{editingPerson ? '编辑人员与账号' : canManage ? '添加人员与账号' : '添加人员主档'}</h2>
-					<p>{canManage ? '工作邮箱同时作为登录标识，项目责任关系直接使用该人员主档。' : '添加后可直接分配项目和任务；登录账号由管理员另行开通。'}</p>
+					<h2>{editingPerson ? '编辑人员与账号' : '添加人员与账号'}</h2>
+					<p>工作邮箱同时作为登录标识，项目责任关系直接使用该人员主档。</p>
 				</div>
 				<button type="button" aria-label="关闭" onclick={() => personDialog?.close()}>×</button>
 			</div>
@@ -248,7 +357,7 @@
 					</label>
 				{:else}
 					<input type="hidden" name="accountEnabled" value="0" />
-					<p class="permission-note wide">复核角色可添加人员主档；登录账号、管理员角色及后续维护由管理员配置。</p>
+					<p class="permission-note wide">当前角色没有人员与账号维护权限。</p>
 				{/if}
 				{#if canManage && accountEnabled}
 					<label class="wide">
@@ -276,6 +385,18 @@
 </div>
 
 <style>
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
+	}
+
 	.role-grid {
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -325,6 +446,135 @@
 		font-weight: 650;
 		color: #475467;
 		background: #f2f4f7;
+	}
+
+	.permission-config-card { margin-bottom: 1rem; }
+	.permission-heading { min-width: 0; flex: 1; }
+	.permission-heading p {
+		margin: 0.1875rem 0 0;
+		font-size: 0.75rem;
+		color: #475467;
+	}
+
+	.permission-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+		gap: 0.875rem;
+		padding: 1rem;
+		border-top: 1px solid var(--line);
+	}
+
+	.permission-role-card {
+		display: flex;
+		min-width: 0;
+		flex-direction: column;
+		padding: 0.875rem;
+		border: 1px solid #dbe3ef;
+		border-top: 0.1875rem solid #2f6fed;
+		border-radius: 0.625rem;
+		background: #fff;
+	}
+
+	.permission-role-card.role-admin { border-top-color: #5925dc; }
+	.permission-role-card.role-reviewer { border-top-color: #067647; }
+
+	.permission-role-header,
+	.permission-shortcuts,
+	.permission-option,
+	.save-role-permissions {
+		display: flex;
+		align-items: center;
+	}
+
+	.permission-role-header {
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding-bottom: 0.75rem;
+		border-bottom: 1px solid var(--line);
+	}
+
+	.permission-role-header > div:first-child {
+		display: grid;
+		gap: 0.125rem;
+	}
+
+	.permission-role-header strong { color: #1d2939; }
+	.permission-role-header span { font-size: 0.75rem; color: #475467; }
+	.permission-shortcuts { gap: 0.375rem; }
+	.permission-shortcuts button {
+		min-width: 2.75rem;
+		min-height: 2.75rem;
+		padding: 0.375rem 0.625rem;
+		border: 1px solid #d0d5dd;
+		border-radius: 0.4375rem;
+		font-size: 0.75rem;
+		font-weight: 650;
+		color: #475467;
+		background: #fff;
+		transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease;
+	}
+
+	.permission-shortcuts button:hover {
+		border-color: #84adff;
+		color: #175cd3;
+		background: #f8faff;
+	}
+
+	.permission-role-card fieldset {
+		display: grid;
+		gap: 0.375rem;
+		margin: 0;
+		padding: 0.75rem 0;
+		border: 0;
+	}
+
+	.permission-option {
+		min-height: 3.5rem;
+		gap: 0.625rem;
+		padding: 0.5rem 0.625rem;
+		border: 1px solid transparent;
+		border-radius: 0.5rem;
+		cursor: pointer;
+		transition: border-color 180ms ease, background-color 180ms ease;
+	}
+
+	.permission-option:hover,
+	.permission-option:has(input:checked) {
+		border-color: #dbe6fb;
+		background: #f8faff;
+	}
+
+	.permission-option input {
+		width: 1.125rem;
+		height: 1.125rem;
+		flex: 0 0 auto;
+		accent-color: #2f6fed;
+	}
+
+	.permission-option span { display: grid; gap: 0.125rem; min-width: 0; }
+	.permission-option strong { font-size: 0.875rem; color: #344054; }
+	.permission-option small { font-size: 0.75rem; line-height: 1.45; color: #475467; }
+
+	.save-role-permissions {
+		min-height: 2.75rem;
+		justify-content: center;
+		gap: 0.375rem;
+		margin-top: auto;
+		border: 1px solid #2f6fed;
+		border-radius: 0.5rem;
+		font-weight: 700;
+		color: #fff;
+		background: #2f6fed;
+		transition: border-color 180ms ease, background-color 180ms ease, opacity 180ms ease;
+	}
+
+	.save-role-permissions:hover:not(:disabled) { border-color: #175cd3; background: #175cd3; }
+	.save-role-permissions:disabled { cursor: not-allowed; opacity: 0.48; }
+	.permission-read-only {
+		margin: 0;
+		padding: 1rem 1.125rem;
+		border-top: 1px solid var(--line);
+		color: #475467;
 	}
 
 	.identity-card { margin-bottom: 1rem; }
@@ -473,6 +723,9 @@
 
 	@media (prefers-reduced-motion: reduce) {
 		.identity-row,
-		.person-actions button { transition: none; }
+		.person-actions button,
+		.permission-option,
+		.permission-shortcuts button,
+		.save-role-permissions { transition: none; }
 	}
 </style>

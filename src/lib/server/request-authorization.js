@@ -1,4 +1,4 @@
-import { hasInternalTestFullAccess } from '../role-access.js';
+import { isPermissionAuthorizedRequest } from '../permissions.js';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -19,12 +19,11 @@ export function actionNameFromUrl(url) {
 }
 
 /**
- * @param {string | null | undefined} role
+ * @param {string[] | null | undefined} permissions
  * @param {string | null} routeId
  * @param {string} method
  * @param {string} actionName
  */
-export function isAuthorizedRequest(role, routeId, method, actionName = 'default') {
-	if (isSafeRequestMethod(method)) return true;
-	return hasInternalTestFullAccess(role);
+export function isAuthorizedRequest(permissions, routeId, method, actionName = 'default') {
+	return isPermissionAuthorizedRequest(permissions, routeId, method, actionName);
 }

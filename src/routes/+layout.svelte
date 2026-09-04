@@ -22,6 +22,7 @@
 		Workflow
 	} from '@lucide/svelte';
 	import { roleLabel } from '$lib/roles';
+	import { hasPermission } from '$lib/permissions.js';
 	import GlobalMessages from '$lib/GlobalMessages.svelte';
 	import { globalMessages } from '$lib/global-messages';
 
@@ -38,8 +39,15 @@
 		{ href: '/data', label: '数据后台', mobileLabel: '数据', icon: FileSpreadsheet },
 		{ href: '/people', label: '人员与权限', mobileLabel: '人员', icon: ShieldCheck }
 	];
-	const navItems = [...workspaceItems, ...managementItems];
-	const mobileItems = [...workspaceItems, managementItems[0], managementItems[1]];
+	const visibleManagementItems = $derived(
+		managementItems.filter((item) => item.href !== '/data' || hasPermission(data.permissions, 'data_manage'))
+	);
+	const navItems = $derived([...workspaceItems, ...visibleManagementItems]);
+	const mobileItems = $derived([
+		...workspaceItems,
+		managementItems[0],
+		hasPermission(data.permissions, 'data_manage') ? managementItems[1] : managementItems[2]
+	]);
 
 	const isActive = (href: string) => {
 		const pathname = withoutBase(page.url.pathname);
@@ -253,7 +261,7 @@
 				</a>
 			{/each}
 			<p class="nav-caption nav-caption-spaced">数据管理</p>
-			{#each managementItems as item}
+			{#each visibleManagementItems as item}
 				<a
 					class:active={isActive(item.href)}
 					class:pending={isPending(item.href)}
@@ -303,14 +311,16 @@
 						<button class="header-action" type="button" disabled={!Boolean((page.data as any)?.hasSnapshot)} onclick={() => window.print()} aria-label="导出 PDF" title="导出 PDF">
 							<Printer size={17} /><span class="header-action-label">导出 PDF</span>
 						</button>
-						<form bind:this={reportSnapshotForm} method="POST" action={withBase('/liability-report?/saveSnapshot')} use:enhance={enhanceReportSnapshotSaving}>
-							<input type="hidden" name="asOfDate" value={selectedLiabilityReportDate()} />
-							<input type="hidden" name="payload" value={reportSourcesPayload} />
-							<button class="header-action header-primary-action" type="button" disabled={reportGenerating} onclick={prepareReportSnapshot} aria-label={reportGenerating ? '正在生成本期周报' : '生成本期周报'} title="生成本期周报">
-								<LoaderCircle class={reportGenerating ? 'spinning' : ''} size={17} />
-								<span>{reportGenerating ? '生成中…' : '生成本期周报'}</span>
-							</button>
-						</form>
+						{#if hasPermission(data.permissions, 'report_generate')}
+							<form bind:this={reportSnapshotForm} method="POST" action={withBase('/liability-report?/saveSnapshot')} use:enhance={enhanceReportSnapshotSaving}>
+								<input type="hidden" name="asOfDate" value={selectedLiabilityReportDate()} />
+								<input type="hidden" name="payload" value={reportSourcesPayload} />
+								<button class="header-action header-primary-action" type="button" disabled={reportGenerating} onclick={prepareReportSnapshot} aria-label={reportGenerating ? '正在生成本期周报' : '生成本期周报'} title="生成本期周报">
+									<LoaderCircle class={reportGenerating ? 'spinning' : ''} size={17} />
+									<span>{reportGenerating ? '生成中…' : '生成本期周报'}</span>
+								</button>
+							</form>
+						{/if}
 					</div>
 				{/if}
 				<a class="profile-button" href={withBase('/settings')} aria-label="打开个人设置">

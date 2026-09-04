@@ -7,6 +7,7 @@ declare global {
 			database: import('$lib/server/db.js').PostgresDatabase | null;
 			dataApiJwt: string | null;
 			authCacheStatus: 'hit' | 'miss' | 'bypass';
+			permissions: string[];
 			user: {
 				id: string;
 				email: string | null;
@@ -19,6 +20,7 @@ declare global {
 		}
 		interface PageData {
 			user?: App.Locals['user'];
+			permissions?: string[];
 		}
 		// interface PageState {}
 		interface Platform {

@@ -4,6 +4,7 @@
 	import { FileText } from '@lucide/svelte';
 	import { liabilityTypeColor } from '$lib/liability-report-charts';
 	import { emptyLiabilityWeeklyReport } from '$lib/liability-report-data.js';
+	import { hasPermission } from '$lib/permissions.js';
 	import ReportBalanceRateChart from './ReportBalanceRateChart.svelte';
 	import ReportDonutChart from './ReportDonutChart.svelte';
 	import ReportGaugeChart from './ReportGaugeChart.svelte';
@@ -15,6 +16,7 @@
 	let { data } = $props();
 	let report = $derived(data.report ?? emptyLiabilityWeeklyReport(data.selectedReportDate));
 	let hasSnapshot = $derived(Boolean(data.hasSnapshot));
+	let canGenerate = $derived(hasPermission(data.permissions, 'report_generate'));
 	let currentEvents = $derived((report?.events ?? []).filter((item: any) => item.week === 'current' && isDynamicEvent(item)));
 	let nextEvents = $derived((report?.events ?? []).filter((item: any) => item.week === 'next' && isDynamicEvent(item)));
 	let dynamicProjects = $derived((report?.projects ?? []).filter((item: any) => !['同业拆借', '浮动收益凭证'].includes(String(item.debtType ?? ''))));
@@ -147,7 +149,7 @@
 		{:else}
 			<p>当前报告日还没有数据快照。</p>
 		{/if}
-		<p>请点击右上角“生成本期周报”获取数据。</p>
+		<p>{canGenerate ? '请点击右上角“生成本期周报”获取数据。' : '当前角色没有周报生成权限，请联系权限配置人员。'}</p>
 	</section>
 {:else}
 {#key data.snapshotVersion}

@@ -104,7 +104,7 @@ test('data administration gets its endpoint with the private token request', asy
 	assert.match(client, /dataApiUrl\?: string/);
 	assert.match(client, /parsed\.protocol !== 'https:'/);
 	assert.match(page, /<DataAdminTable \/>/);
-	assert.match(page, /hasInternalTestFullAccess\(data\.user\?\.role\)/);
+	assert.match(page, /hasPermission\(data\.permissions, 'data_manage'\)/);
 	assert.match(page, /<DebtImportPanel \/>/);
 	assert.match(table, /new NeonDataApi\(\)/);
 	assert.doesNotMatch(page, /dataApiUrl/);

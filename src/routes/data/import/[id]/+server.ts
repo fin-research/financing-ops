@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { debtImportRun } from '$lib/server/debt-import-workflow.js';
 import type { RequestHandler } from './$types';
-import { hasInternalTestFullAccess } from '$lib/roles';
+import { hasPermission } from '$lib/permissions.js';
 
 const INSTANCE_ID_PATTERN = /^debt-v1-[0-9a-f]{64}$/;
 const PRIVATE_JSON_HEADERS = {
@@ -10,7 +10,7 @@ const PRIVATE_JSON_HEADERS = {
 };
 
 export const GET: RequestHandler = async ({ params, locals, platform }) => {
-	if (!hasInternalTestFullAccess(locals.user?.role)) {
+	if (!hasPermission(locals.permissions, 'data_manage')) {
 		return json({ error: '当前角色无权查看台账导入进度' }, { status: 403 });
 	}
 	if (!INSTANCE_ID_PATTERN.test(params.id)) return json({ error: '导入任务编号无效' }, { status: 400 });

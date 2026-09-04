@@ -114,11 +114,22 @@ test('only global identity or reminder data is invalidated after relevant deltas
 		readFile(new URL('../src/routes/people/+page.svelte', import.meta.url), 'utf8'),
 		readFile(new URL('../src/routes/settings/+page.svelte', import.meta.url), 'utf8')
 	]);
-	assert.match(layout, /depends\('financing:identity', 'financing:reminders'\)/);
+	assert.match(layout, /depends\('financing:identity', 'financing:permissions', 'financing:reminders'\)/);
 	assert.match(projects, /invalidate\('financing:reminders'\)/);
 	assert.match(projectDetail, /invalidate\('financing:reminders'\)/);
 	assert.match(people, /invalidate\('financing:identity'\)/);
 	assert.match(settings, /invalidate\('financing:identity'\)/);
+	assert.match(people, /invalidate\('financing:permissions'\)/);
+});
+
+test('role permission changes return and apply one confirmed role delta', async () => {
+	const [server, client] = await Promise.all([
+		readFile(new URL('../src/routes/people/+page.server.ts', import.meta.url), 'utf8'),
+		readFile(new URL('../src/routes/people/+page.svelte', import.meta.url), 'utf8')
+	]);
+	assert.match(server, /rolePermissions:\s*\{ role, permissions: confirmed\[role\] \?\? \[\] \}/);
+	assert.match(client, /result\.data\?\.rolePermissions/);
+	assert.match(client, /displayedRolePermissions\[role\] = permissions/);
 });
 
 test('project and SOP edit forms auto-save without per-item save buttons', async () => {

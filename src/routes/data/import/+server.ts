@@ -8,7 +8,7 @@ import {
 import { debtImportRun } from '$lib/server/debt-import-workflow.js';
 import { sha256Hex } from '../../../../scripts/lib/hash.mjs';
 import type { RequestHandler } from './$types';
-import { hasInternalTestFullAccess } from '$lib/roles';
+import { hasPermission } from '$lib/permissions.js';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const PRIVATE_JSON_HEADERS = {
@@ -17,7 +17,7 @@ const PRIVATE_JSON_HEADERS = {
 };
 
 function canImportDebtLedger(locals: App.Locals) {
-	return hasInternalTestFullAccess(locals.user?.role);
+	return hasPermission(locals.permissions, 'data_manage');
 }
 
 function uploadFileName(request: Request) {

@@ -5,7 +5,7 @@ import { getDatabase } from '$lib/server/db.js';
 import { getProjectGanttData } from '$lib/server/queries.js';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 import { deleteProjectWithReminders } from '$lib/server/project-deletion.js';
-import { hasInternalTestFullAccess } from '$lib/roles';
+import { hasPermission } from '$lib/permissions.js';
 
 const PROJECT_STATUSES = new Set(['planning', 'in_progress', 'at_risk', 'completed', 'cancelled']);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -52,7 +52,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
 	createProject: async (event) => {
-		if (!hasInternalTestFullAccess(event.locals.user?.role)) {
+		if (!hasPermission(event.locals.permissions, 'project_manage')) {
 			return fail(403, { message: '当前角色无权新增项目' });
 		}
 		const data = await event.request.formData();

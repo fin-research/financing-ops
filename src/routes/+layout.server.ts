@@ -2,7 +2,7 @@ import type { LayoutServerLoad } from './$types';
 import { getLayoutData } from '$lib/server/queries.js';
 
 export const load: LayoutServerLoad = async ({ locals, depends }) => {
-	depends('financing:identity', 'financing:reminders');
+	depends('financing:identity', 'financing:permissions', 'financing:reminders');
 	const todayIso = new Intl.DateTimeFormat('en-CA', {
 		timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
 	}).format(new Date());
@@ -19,6 +19,7 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
 		: { reminders: { items: [], total: 0 } };
 	return {
 		user: locals.user,
+		permissions: locals.permissions,
 		reminders: layout.reminders
 	};
 };

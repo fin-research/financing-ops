@@ -5,7 +5,7 @@ import { getDatabase } from '$lib/server/db.js';
 import { getWorkflowSettingsData } from '$lib/server/queries.js';
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 import { parseReminderPeriods } from '$lib/reminder-periods.js';
-import { hasInternalTestFullAccess } from '$lib/roles';
+import { hasPermission } from '$lib/permissions.js';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -112,7 +112,7 @@ export const actions: Actions = {
 		};
 	},
 	createSop: async (event) => {
-		if (!hasInternalTestFullAccess(event.locals.user?.role)) {
+		if (!hasPermission(event.locals.permissions, 'sop_manage')) {
 			return fail(403, { message: '当前角色无权新增 SOP' });
 		}
 		const data = await event.request.formData();

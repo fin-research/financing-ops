@@ -11,6 +11,7 @@ import { deleteProjectWithReminders } from '../src/lib/server/project-deletion.j
 import { decodeDebtImportPayload, encodeDebtImportPayload } from '../src/lib/debt-import-codec.js';
 import { importDebtWorkbook, refreshDebtImportDerivatives } from '../src/lib/server/debt-importer.js';
 import { actionNameFromUrl, isAuthorizedRequest, isSafeRequestMethod } from '../src/lib/server/request-authorization.js';
+import { PERMISSION_CODES } from '../src/lib/permissions.js';
 
 function migrationSql(name) {
 	return fs.readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8')
@@ -60,7 +61,8 @@ async function installSchema(db, { beforeReminderMigration } = {}) {
 		'0019_allow_authenticated_liability_report_rpc.sql',
 		'0020_optimize_liability_report_query.sql',
 		'0021_online_debt_import_workflow.sql',
-		'0022_remove_debt_import_state.sql'
+		'0022_remove_debt_import_state.sql',
+		'0023_role_permissions.sql'
 	]) {
 		if (name === '0008_sop_node_reminder_periods.sql' && beforeReminderMigration) {
 			await beforeReminderMigration(db);
@@ -75,27 +77,37 @@ test('login emails are normalized and validated', () => {
 	assert.equal(isValidEmail('legacy-admin'), false);
 });
 
-test('internal testing grants every active business role full write access', () => {
+test('write authorization follows the persisted permission types', () => {
 	assert.equal(actionNameFromUrl(new URL('https://example.com/financing/logout')), 'default');
 	assert.equal(actionNameFromUrl(new URL('https://example.com/financing/projects?/createProject')), 'createProject');
 	for (const method of ['GET', 'HEAD', 'OPTIONS']) {
 		assert.equal(isSafeRequestMethod(method), true);
-		assert.equal(isAuthorizedRequest(null, '/projects', method), true);
+		assert.equal(isAuthorizedRequest([], '/projects', method), true);
 	}
 	assert.equal(isSafeRequestMethod('POST'), false);
-	for (const role of ['admin', 'handler', 'reviewer']) {
-		assert.equal(isAuthorizedRequest(role, '/logout', 'POST'), true);
-		assert.equal(isAuthorizedRequest(role, '/settings', 'POST', 'updateProfile'), true);
-		assert.equal(isAuthorizedRequest(role, '/settings', 'POST', 'updatePassword'), true);
-		assert.equal(isAuthorizedRequest(role, '/projects/[id]', 'POST', 'updateOwnTaskStatus'), true);
-		assert.equal(isAuthorizedRequest(role, '/projects/[id]', 'POST', 'updateTask'), true);
-		assert.equal(isAuthorizedRequest(role, '/logout', 'DELETE'), true);
-		assert.equal(isAuthorizedRequest(role, '/people', 'POST', 'updatePerson'), true);
-		assert.equal(isAuthorizedRequest(role, '/sop', 'POST', 'createReminder'), true);
-		assert.equal(isAuthorizedRequest(role, '/data/import', 'POST'), true);
+	assert.equal(isAuthorizedRequest([], '/logout', 'POST'), true);
+	assert.equal(isAuthorizedRequest([], '/settings', 'POST', 'updateProfile'), true);
+	assert.equal(isAuthorizedRequest(PERMISSION_CODES, '/projects/[id]', 'POST', 'updateTask'), true);
+	assert.equal(isAuthorizedRequest(['own_task_update'], '/projects/[id]', 'POST', 'updateOwnTaskStatus'), true);
+	assert.equal(isAuthorizedRequest([], '/projects/[id]', 'POST', 'updateOwnTaskStatus'), false);
+	assert.equal(isAuthorizedRequest(['people_manage'], '/people', 'POST', 'updatePerson'), true);
+	assert.equal(isAuthorizedRequest([], '/people', 'POST', 'updatePerson'), false);
+	assert.equal(isAuthorizedRequest(['permission_manage'], '/people', 'POST', 'saveRolePermissions'), true);
+	assert.equal(isAuthorizedRequest(['data_manage'], '/data/import', 'POST'), true);
+	for (const [permission, routeId, actions] of [
+		['people_manage', '/people', ['createPerson', 'updatePerson', 'togglePerson', 'deletePerson']],
+		['project_manage', '/projects', ['createProject', 'updateProject', 'deleteProject']],
+		['project_manage', '/projects/[id]', ['updateProject', 'updateTask', 'addTask']],
+		['sop_manage', '/sop', ['createReminder', 'createSop']],
+		['sop_manage', '/sop/[id]', ['updateTemplate', 'toggleTemplate', 'addNode', 'updateNode', 'reorderNodes', 'deleteNode']],
+		['report_generate', '/liability-report', ['saveSnapshot']]
+	]) {
+		for (const actionName of actions) {
+			assert.equal(isAuthorizedRequest([permission], routeId, 'POST', actionName), true, `${routeId}:${actionName}`);
+			assert.equal(isAuthorizedRequest([], routeId, 'POST', actionName), false, `${routeId}:${actionName}`);
+		}
 	}
-	assert.equal(isAuthorizedRequest(null, '/projects', 'POST', 'createProject'), false);
-	assert.equal(isAuthorizedRequest('unknown', '/projects', 'POST', 'createProject'), false);
+	assert.equal(isAuthorizedRequest(PERMISSION_CODES, '/projects', 'POST', 'unknownAction'), false);
 });
 
 test('own-task action retains its narrow server-side field boundary', () => {
@@ -375,6 +387,13 @@ test('Data API RLS lets every active financing role edit and writes audit record
 	assert.equal(audit.count, 6);
 	const debtAudit = (await db.query("SELECT COUNT(*)::integer AS count FROM financing.audit_logs WHERE entity_type = 'debt' AND summary LIKE 'Data API %'")).rows[0];
 	assert.equal(debtAudit.count, 6);
+	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.role_permissions WHERE granted = TRUE')).rows[0].count, 21);
+
+	await db.query("UPDATE financing.role_permissions SET granted = FALSE WHERE role = 'handler' AND permission_code = 'data_manage'");
+	await db.query("SELECT set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000002', false)");
+	await db.exec('SET ROLE authenticated');
+	await assert.rejects(db.query("INSERT INTO financing.finance_parameters (code, label) VALUES ('rls-handler-denied', 'denied')"), /row-level security|policy/i);
+	await db.exec('RESET ROLE');
 
 	const inactiveAuthId = '00000000-0000-4000-8000-000000000009';
 	await db.query('INSERT INTO neon_auth."user" (id, name, email, "emailVerified", role) VALUES ($1, $2, $3, TRUE, $4)', [inactiveAuthId, 'inactive', 'inactive@example.com', 'reviewer']);
@@ -404,6 +423,7 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 	const columns = (await db.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'financing' AND table_name = 'people'")).rows.map((row) => row.column_name);
 	assert.ok(columns.includes('neon_auth_user_id'));
 	assert.ok(columns.includes('avatar_data_url'));
+	assert.equal((await db.query("SELECT to_regclass('financing.role_permissions') AS table_name")).rows[0].table_name, 'financing.role_permissions');
 	const debtColumns = (await db.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'financing' AND table_name = 'debt'")).rows.map((row) => row.column_name);
 	assert.equal(debtColumns.includes('project_id'), false);
 	for (const table of ['liability_market_observations', 'liability_peer_issuances', 'liability_registration_progress']) {

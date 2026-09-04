@@ -16,7 +16,7 @@
 	import { globalMessages } from '$lib/global-messages';
 	import { withBase } from '$lib/app-paths';
 	import { hasSameOrder, reorderByOffset, reorderRelative } from '$lib/reorder-items.js';
-	import { hasInternalTestFullAccess } from '$lib/roles';
+	import { hasPermission } from '$lib/permissions.js';
 
 	type SopNode = {
 		id: string;
@@ -49,7 +49,7 @@
 	let dragChanged = $state(false);
 	let keyboardGrabbedId = $state<string | null>(null);
 	let reorderAnnouncement = $state('');
-	const canManage = $derived(hasInternalTestFullAccess(data?.user?.role));
+	const canManage = $derived(hasPermission(data?.permissions, 'sop_manage'));
 	$effect(() => {
 		if (!form?.message || suppressFormFeedback || handledForm === form) return;
 		handledForm = form;

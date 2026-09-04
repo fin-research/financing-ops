@@ -6,8 +6,6 @@ export const ROLE_DEFINITIONS = [
 
 export type RoleCode = (typeof ROLE_DEFINITIONS)[number]["code"];
 
-export { INTERNAL_TEST_FULL_ACCESS, hasInternalTestFullAccess } from "./role-access.js";
-
 export const ROLE_LABELS: Record<RoleCode, string> = Object.fromEntries(
   ROLE_DEFINITIONS.map((role) => [role.code, role.label]),
 ) as Record<RoleCode, string>;

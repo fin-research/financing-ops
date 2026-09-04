@@ -10,7 +10,9 @@ import { getPeopleAccessData, getPersonAccessData } from '$lib/server/queries.js
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 import { isValidEmail, normalizeEmail } from '$lib/email.js';
 import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
-import { hasInternalTestFullAccess } from '$lib/roles';
+import { hasPermission, isPermissionCode } from '$lib/permissions.js';
+import { roleLabel } from '$lib/roles';
+import { getRolePermissionMatrix } from '$lib/server/role-permissions.js';
 
 const validRoles = new Set(['admin', 'handler', 'reviewer']);
 
@@ -56,7 +58,7 @@ function constraintMessage(error: unknown) {
 	if (error instanceof NeonAuthApiError) {
 		if (error.status === 409 || error.code?.includes('USER_ALREADY_EXISTS')) return '该邮箱已存在登录账号，请直接编辑现有人员或更换邮箱';
 		if (error.status === 429) return '认证操作过于频繁，请稍后重试';
-		if (error.status === 401 || error.status === 403) return '当前管理员会话无权执行该操作，请重新登录';
+		if (error.status === 401 || error.status === 403) return '当前会话无权执行该账号操作，请重新登录';
 		if (error.status === 503) return 'Neon Auth 暂时不可用，请稍后重试';
 		return 'Neon Auth 账号操作失败，请检查邮箱和密码后重试';
 	}
@@ -87,8 +89,7 @@ async function peopleSuccess(
 export const actions: Actions = {
 	createPerson: async (event) => {
 		const fields = identityFields(await event.request.formData());
-		const actorRole = event.locals.user?.role;
-		if (!hasInternalTestFullAccess(actorRole)) {
+		if (!hasPermission(event.locals.permissions, 'people_manage')) {
 			return fail(403, { message: '当前角色无权添加人员' });
 		}
 		const message = validationMessage(fields);
@@ -202,5 +203,60 @@ export const actions: Actions = {
 			return fail(409, { message: constraintMessage(error) });
 		}
 		return await peopleSuccess(`已删除 ${before.name} 及其 Neon Auth 登录权限`, { deletedPersonId: id });
+	},
+
+	saveRolePermissions: async (event) => {
+		if (!hasPermission(event.locals.permissions, 'permission_manage')) {
+			return fail(403, { message: '当前角色无权调整角色权限' });
+		}
+		const data = await event.request.formData();
+		const role = String(data.get('role') ?? '').trim();
+		const permissions = [...new Set(data.getAll('permissions').map(String))];
+		if (!validRoles.has(role) || permissions.some((permission) => !isPermissionCode(permission))) {
+			return fail(400, { message: '角色或权限类型无效，请刷新页面后重试' });
+		}
+
+		const db = getDatabase();
+		const roleName = roleLabel(role);
+		const before = await getRolePermissionMatrix(db);
+		if (!permissions.includes('permission_manage')) {
+			const alternativeManager = await db.prepare(`
+				SELECT 1
+				FROM role_permissions permission
+				JOIN people person ON person.role = permission.role
+				JOIN neon_auth."user" account ON account.id = person.neon_auth_user_id
+				WHERE permission.role <> ?
+					AND permission.permission_code = 'permission_manage'
+					AND permission.granted = TRUE
+					AND person.active = TRUE
+					AND NOT COALESCE(account.banned, FALSE)
+				LIMIT 1
+			`).get(role);
+			if (!alternativeManager) {
+				return fail(400, { message: '至少保留一个有启用登录账号的角色维护权限配置' });
+			}
+		}
+
+		await db.batch([
+			db.prepare(`
+				UPDATE role_permissions
+				SET granted = (permission_code = ANY(?::text[])),
+					updated_by_person_id = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE role = ?
+			`).bind(permissions, event.locals.user?.personId ?? null, role),
+			prepareAudit({
+				...auditRequestMeta(event), db,
+				action: 'role_permission.update', entityType: 'role_permission', entityId: role,
+				summary: `更新角色权限：${roleName}`,
+				before: { role, permissions: before[role] ?? [] },
+				after: { role, permissions }
+			})
+		]);
+		const confirmed = await getRolePermissionMatrix(db);
+		return {
+			success: true,
+			message: `${roleName}权限已保存`,
+			rolePermissions: { role, permissions: confirmed[role] ?? [] }
+		};
 	}
 };

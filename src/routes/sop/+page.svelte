@@ -18,7 +18,7 @@
 	import { globalMessages } from '$lib/global-messages';
 	import { withBase } from '$lib/app-paths';
 	import { MAX_REMINDER_PERIODS, reminderPeriodLabel } from '$lib/reminder-periods.js';
-	import { hasInternalTestFullAccess } from '$lib/roles';
+	import { hasPermission } from '$lib/permissions.js';
 
 	let { data } = $props();
 	let reminderDialog = $state<HTMLDialogElement>();
@@ -40,7 +40,7 @@
 		displayedSettings = data?.settings ?? fallback;
 	});
 	const settings = $derived(displayedSettings);
-	const canManage = $derived(hasInternalTestFullAccess(data?.user?.role));
+	const canManage = $derived(hasPermission(data?.permissions, 'sop_manage'));
 	const canCreateSop = $derived(canManage);
 	const activeSopTemplates = $derived(
 		settings.sopTemplates.filter((sop: { isActive: boolean }) => sop.isActive)

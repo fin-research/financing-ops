@@ -9,6 +9,7 @@ import {
 	shortDebtPredicateSql
 } from './dashboard-metrics.js';
 import { getDatabase } from './db.js';
+import { getRolePermissionMatrix } from './role-permissions.js';
 
 const number = (value) => Number(value ?? 0);
 const REPORTING_TYPE_SQL = reportingTypeSql;
@@ -594,7 +595,8 @@ export async function getWorkflowSettingsData() {
 }
 
 export async function getPeopleAccessData() {
-	const people = (await getDatabase().prepare(`
+	const db = getDatabase();
+	const people = (await db.prepare(`
 		SELECT p.id, p.name, p.email, p.role, p.active,
 			u.id::text AS accountId, NOT COALESCE(u.banned, FALSE) AS accountActive,
 			login.last_login_at AS lastLoginAt
@@ -611,6 +613,7 @@ export async function getPeopleAccessData() {
 	}));
 	return {
 		people,
+		rolePermissions: await getRolePermissionMatrix(db),
 		roleCounts: ['admin', 'handler', 'reviewer'].map((role) => ({
 			role, count: people.filter((person) => person.role === role).length
 		}))

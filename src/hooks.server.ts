@@ -3,6 +3,7 @@ import type { Handle } from '@sveltejs/kit';
 import { appCookiePath, appRoot, withBase } from '$lib/app-paths';
 import { invalidateCachedSession } from '$lib/server/auth-cache.js';
 import { closeDatabase } from '$lib/server/db.js';
+import { getRolePermissionCodes } from '$lib/server/role-permissions.js';
 import { actionNameFromUrl, isAuthorizedRequest, isSafeRequestMethod } from '$lib/server/request-authorization.js';
 import {
 	getSessionUser,
@@ -14,6 +15,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	try {
 		event.locals.dataApiJwt = null;
 		event.locals.authCacheStatus = 'bypass';
+		event.locals.permissions = [];
 		const routeId = event.route.id;
 		const isStaticAsset = event.url.pathname.startsWith(withBase('/_app/'));
 		const isPublic = routeId === '/login' || isStaticAsset;
@@ -42,9 +44,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 			const redirectTo = `${event.url.pathname}${event.url.search}`;
 			throw redirect(303, `${withBase('/login')}?redirectTo=${encodeURIComponent(redirectTo)}`);
 		}
+		if (event.locals.user) {
+			event.locals.permissions = await getRolePermissionCodes(event.locals.user.role);
+		}
 
 		const actionName = actionNameFromUrl(event.url);
-		if (!isPublic && !isAuthorizedRequest(event.locals.user?.role, routeId, event.request.method, actionName)) {
+		if (!isPublic && !isAuthorizedRequest(event.locals.permissions, routeId, event.request.method, actionName)) {
 			return new Response('当前账号无权执行该操作', { status: 403 });
 		}
 
