@@ -4,7 +4,6 @@
 		AlertCircle,
 		CheckCircle2,
 		Clock3,
-		Database,
 		FileSpreadsheet,
 		LoaderCircle,
 		UploadCloud
@@ -13,7 +12,7 @@
 	import { globalMessages } from './global-messages';
 
 	type ImportStatus = 'parsing' | 'queued' | 'running' | 'succeeded' | 'failed';
-	type ImportStage = 'parsing' | 'queued' | 'importing' | 'refreshing' | 'finalizing' | 'completed';
+	type ImportStage = 'parsing' | 'encoding' | 'queued' | 'importing' | 'completed';
 	type ImportRun = {
 		id: string;
 		fileName: string;
@@ -36,31 +35,43 @@
 		databaseCashflowCount: number | null;
 		historyDateCount: number | null;
 		derivedMetricCount: number | null;
-		createdAt: string;
+		createdAt: string | null;
 		completedAt: string | null;
 	};
 
 	const stages: Array<{ key: ImportStage; label: string }> = [
-		{ key: 'parsing', label: '解析校验' },
+		{ key: 'parsing', label: '本地解析' },
+		{ key: 'encoding', label: '编码压缩' },
 		{ key: 'queued', label: '等待执行' },
-		{ key: 'importing', label: '更新台账' },
-		{ key: 'refreshing', label: '刷新衍生' },
-		{ key: 'finalizing', label: '最终核对' },
+		{ key: 'importing', label: '原子更新' },
 		{ key: 'completed', label: '完成' }
 	];
+	const RUN_POINTER_KEY = 'financing.debt-import.workflow';
+	const WORKFLOW_ID_PATTERN = /^debt-v1-[0-9a-f]{64}$/;
 
 	let selectedFile = $state<File | null>(null);
-	let runs = $state<ImportRun[]>([]);
-	let loadingHistory = $state(true);
+	let currentRun = $state<ImportRun | null>(null);
+	let restoringRun = $state(true);
 	let uploading = $state(false);
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
-	const activeRun = $derived(runs.find((run) => ['parsing', 'queued', 'running'].includes(run.status)) ?? null);
-	const displayedRun = $derived(activeRun ?? runs[0] ?? null);
+	let activeWorker: Worker | null = null;
+	const activeRun = $derived(currentRun && ['parsing', 'queued', 'running'].includes(currentRun.status) ? currentRun : null);
+	const displayedRun = $derived(currentRun);
 
-	function upsertRun(run: ImportRun) {
-		runs = [run, ...runs.filter((item) => item.id !== run.id)]
-			.sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
-			.slice(0, 8);
+	function setRun(run: ImportRun) {
+		currentRun = run;
+		if (typeof localStorage !== 'undefined' && WORKFLOW_ID_PATTERN.test(run.id)) {
+			localStorage.setItem(RUN_POINTER_KEY, JSON.stringify({
+				id: run.id,
+				fileName: run.fileName,
+				fileSizeBytes: run.fileSizeBytes,
+				createdAt: run.createdAt
+			}));
+		}
+	}
+
+	function updateRun(values: Partial<ImportRun>) {
+		if (currentRun) setRun({ ...currentRun, ...values });
 	}
 
 	function formatFileSize(bytes: number) {
@@ -100,17 +111,18 @@
 			const response = await fetch(withBase(`/data/import/${encodeURIComponent(runId)}`), {
 				headers: { Accept: 'application/json' }
 			});
-			if (response.status === 404 && uploading) {
-				schedulePoll(runId, 500);
+			if (response.status === 404) {
+				localStorage.removeItem(RUN_POINTER_KEY);
+				if (currentRun?.id === runId) currentRun = null;
 				return;
 			}
 			const payload = await response.json();
 			if (!response.ok) throw new Error(payload.error ?? '导入进度读取失败');
-			upsertRun(payload.run);
+			if (!currentRun || currentRun.id !== runId) return;
+			setRun({ ...currentRun, ...payload.run });
 			if (['parsing', 'queued', 'running'].includes(payload.run.status)) schedulePoll(runId);
 		} catch (error) {
-			const current = runs.find((run) => run.id === runId);
-			if (uploading || (current && ['parsing', 'queued', 'running'].includes(current.status))) {
+			if (currentRun?.id === runId && ['parsing', 'queued', 'running'].includes(currentRun.status)) {
 				schedulePoll(runId, 3000);
 			} else {
 				globalMessages.error(error instanceof Error ? error.message : String(error), {
@@ -121,27 +133,94 @@
 		}
 	}
 
-	async function loadRuns() {
-		loadingHistory = true;
+	async function restoreRun() {
 		try {
-			const response = await fetch(withBase('/data/import'), { headers: { Accept: 'application/json' } });
-			const payload = await response.json();
-			if (!response.ok) throw new Error(payload.error ?? '导入记录读取失败');
-			runs = payload.runs ?? [];
-			const active = runs.find((run) => ['parsing', 'queued', 'running'].includes(run.status));
-			if (active) schedulePoll(active.id, 500);
-		} catch (error) {
-			globalMessages.error(error instanceof Error ? error.message : String(error), {
-				key: 'debt-import-history',
-				title: '导入记录读取失败'
+			const raw = localStorage.getItem(RUN_POINTER_KEY);
+			if (!raw) return;
+			const saved = JSON.parse(raw);
+			if (!WORKFLOW_ID_PATTERN.test(saved.id)) return;
+			setRun({
+				id: saved.id,
+				fileName: saved.fileName || '借入资金汇总表.xlsx',
+				fileSizeBytes: Number(saved.fileSizeBytes) || 0,
+				status: 'queued',
+				stage: 'queued',
+				progress: 45,
+				message: '正在恢复 Workflow 状态',
+				errorMessage: null,
+				asOfDate: null,
+				totalYi: null,
+				sourceDebtCount: null,
+				sourceCashflowCount: null,
+				sourceBalanceCount: null,
+				insertedDebtCount: null,
+				updatedDebtCount: null,
+				insertedCashflowCount: null,
+				updatedCashflowCount: null,
+				databaseDebtCount: null,
+				databaseCashflowCount: null,
+				historyDateCount: null,
+				derivedMetricCount: null,
+				createdAt: saved.createdAt ?? null,
+				completedAt: null
 			});
+			await pollRun(saved.id);
+		} catch {
+			localStorage.removeItem(RUN_POINTER_KEY);
 		} finally {
-			loadingHistory = false;
+			restoringRun = false;
 		}
 	}
 
 	function chooseFile(event: Event) {
 		selectedFile = (event.currentTarget as HTMLInputElement).files?.[0] ?? null;
+	}
+
+	function ownedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+		const copy = new Uint8Array(new ArrayBuffer(bytes.byteLength));
+		copy.set(bytes);
+		return copy.buffer;
+	}
+
+	async function sha256Hex(bytes: Uint8Array) {
+		const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', ownedArrayBuffer(bytes)));
+		return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('');
+	}
+
+	async function prepareWorkbook(file: File) {
+		const workbookData = await file.arrayBuffer();
+		const worker = new Worker(new URL('./debt-import.worker.js', import.meta.url), { type: 'module' });
+		activeWorker = worker;
+		return new Promise<Uint8Array>((resolve, reject) => {
+			worker.addEventListener('message', (event) => {
+				if (event.data.type === 'parsed') {
+					updateRun({
+						stage: 'encoding',
+						progress: 30,
+						message: '解析完成，正在生成 Protobuf 并压缩',
+						asOfDate: event.data.summary.asOfDate,
+						totalYi: event.data.summary.totalYi,
+						sourceDebtCount: event.data.summary.debtCount,
+						sourceCashflowCount: event.data.summary.cashflowCount,
+						sourceBalanceCount: event.data.summary.balanceCount
+					});
+					return;
+				}
+				worker.terminate();
+				activeWorker = null;
+				if (event.data.type === 'complete') {
+					resolve(new Uint8Array(event.data.compressed));
+				} else {
+					reject(new Error(event.data.message || '工作簿解析失败'));
+				}
+			});
+			worker.addEventListener('error', (event) => {
+				worker.terminate();
+				activeWorker = null;
+				reject(new Error(event.message || '工作簿解析 Worker 启动失败'));
+			});
+			worker.postMessage({ workbookData, fileName: file.name }, [workbookData]);
+		});
 	}
 
 	async function uploadWorkbook() {
@@ -155,15 +234,15 @@
 			return;
 		}
 
-		const runId = crypto.randomUUID();
+		const file = selectedFile;
 		const optimistic: ImportRun = {
-			id: runId,
-			fileName: selectedFile.name,
-			fileSizeBytes: selectedFile.size,
+			id: `local-${crypto.randomUUID()}`,
+			fileName: file.name,
+			fileSizeBytes: file.size,
 			status: 'parsing',
 			stage: 'parsing',
 			progress: 10,
-			message: '正在上传并直接解析工作簿',
+			message: '正在浏览器内解析并校验工作簿',
 			errorMessage: null,
 			asOfDate: null,
 			totalYi: null,
@@ -182,31 +261,40 @@
 			completedAt: null
 		};
 		uploading = true;
-		upsertRun(optimistic);
-		schedulePoll(runId, 500);
+		localStorage.removeItem(RUN_POINTER_KEY);
+		setRun(optimistic);
 		try {
+			const compressed = await prepareWorkbook(file);
+			const runId = `debt-v1-${await sha256Hex(compressed)}`;
+			setRun({
+				...(currentRun ?? optimistic),
+				id: runId,
+				status: 'queued',
+				stage: 'queued',
+				progress: 42,
+				message: '编码完成，正在创建幂等 Workflow'
+			});
 			const response = await fetch(withBase('/data/import'), {
 				method: 'POST',
-				body: selectedFile,
+				body: ownedArrayBuffer(compressed),
 				headers: {
-					'content-type': selectedFile.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-					'x-import-filename': encodeURIComponent(selectedFile.name),
-					'x-import-file-size': String(selectedFile.size),
-					'x-import-run-id': runId,
+					'content-type': 'application/vnd.eastmoney.debt-import+protobuf',
+					'x-import-filename': encodeURIComponent(file.name),
+					'x-import-file-size': String(file.size),
 					Accept: 'application/json'
 				}
 			});
 			const payload = await response.json();
 			if (!response.ok) throw new Error(payload.error ?? '工作簿上传失败');
-			upsertRun(payload.run);
+			setRun({ ...(currentRun ?? optimistic), ...payload.run });
 			selectedFile = null;
 			const input = document.querySelector<HTMLInputElement>('#debt-import-file');
 			if (input) input.value = '';
 			schedulePoll(runId, 250);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			upsertRun({
-				...optimistic,
+			setRun({
+				...(currentRun ?? optimistic),
 				status: 'failed',
 				message: '导入失败，请按提示修正后重新上传',
 				errorMessage: message,
@@ -219,9 +307,10 @@
 	}
 
 	onMount(() => {
-		void loadRuns();
+		void restoreRun();
 		return () => {
 			if (pollTimer) clearTimeout(pollTimer);
+			activeWorker?.terminate();
 		};
 	});
 </script>
@@ -231,7 +320,7 @@
 		<div class="header-icon blue"><FileSpreadsheet size={20} /></div>
 		<div>
 			<h2 id="debt-import-title">在线导入借入资金汇总表</h2>
-			<p>上传后立即解析，原始 Excel 不留存；校验通过后由 Workflow 更新线上台账和衍生指标。</p>
+			<p>浏览器内解析并压缩，原始 Excel 不上传；Workflow 原子更新线上台账和衍生指标。</p>
 		</div>
 		<div class="header-actions">
 			<label class="secondary-action file-picker" class:disabled={Boolean(activeRun) || uploading}>
@@ -302,10 +391,10 @@
 					</div>
 				{/if}
 			</div>
-		{:else if loadingHistory}
-			<div class="loading-state"><LoaderCircle class="spin" size={18} /> 正在读取导入记录</div>
+		{:else if restoringRun}
+			<div class="loading-state"><LoaderCircle class="spin" size={18} /> 正在恢复 Workflow 状态</div>
 		{:else}
-			<div class="empty-import"><Database size={20} /> 暂无线上导入记录</div>
+			<div class="empty-import"><FileSpreadsheet size={20} /> 请选择待导入的借入资金汇总表</div>
 		{/if}
 	</div>
 </section>
@@ -334,7 +423,7 @@
 	.complete progress { accent-color: var(--teal); }
 	.failed progress { accent-color: var(--red); }
 	.progress-copy { font-size: .75rem; }
-	.stage-list { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .5rem; margin: 0; padding: 0; list-style: none; }
+	.stage-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .5rem; margin: 0; padding: 0; list-style: none; }
 	.stage-list li { display: flex; min-width: 0; align-items: center; gap: .375rem; color: var(--subtle); font-size: .75rem; }
 	.stage-list li span { display: grid; flex: 0 0 auto; place-items: center; }
 	.stage-list li.done { color: var(--teal); }

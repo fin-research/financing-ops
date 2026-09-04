@@ -1,4 +1,7 @@
 // @ts-nocheck
+import { debtRecordForImport } from '../debt-import-codec.js';
+
+const IMPORT_BATCH_SIZE = 1_000;
 
 const commonColumns = [
 	'id', 'debt_type', 'subtype', 'name', 'counterparty', 'amount', 'interest_payable',
@@ -51,15 +54,41 @@ function databaseNumber(value) {
 	return Number.isFinite(result) ? result : 0;
 }
 
+function chunks(values) {
+	const result = [];
+	for (let offset = 0; offset < values.length; offset += IMPORT_BATCH_SIZE) {
+		result.push(values.slice(offset, offset + IMPORT_BATCH_SIZE));
+	}
+	return result;
+}
+
+function importBatches(transformed, property, factory) {
+	if (typeof transformed[factory] === 'function') return transformed[factory]();
+	return chunks(transformed[property]);
+}
+
+function workbookSnapshot(transformed) {
+	return transformed.snapshot ?? {
+		asOfDate: transformed.asOfDate,
+		totalYi: transformed.totalYi
+	};
+}
+
 /**
  * Applies one parsed workbook to the financing base tables in one transaction.
  * Existing records are matched by stable business identity and updated; records
  * that exist only online are retained.
  */
-export async function importDebtWorkbook(database, transformed, { rollback = false } = {}) {
+export async function importDebtWorkbook(database, transformed, {
+	rollback = false,
+	refreshDerivatives = false,
+	onStage = async () => {}
+} = {}) {
+	const snapshot = workbookSnapshot(transformed);
 	await database.query('BEGIN');
 	try {
 		await database.query("SELECT pg_advisory_xact_lock(hashtext('financing.local_debt_maintenance'))");
+		await onStage({ stage: 'importing', progress: 65, message: '正在原子更新负债、现金流与余额历史' });
 		await database.query(`
 			CREATE TEMP TABLE maintenance_debt (
 				source_ordinal bigint GENERATED ALWAYS AS IDENTITY,
@@ -86,36 +115,41 @@ export async function importDebtWorkbook(database, transformed, { rollback = fal
 				is_new boolean NOT NULL DEFAULT false
 			) ON COMMIT DROP
 		`);
-		await database.query(`
-			INSERT INTO maintenance_debt (
-				source_key, target_table, debt_type, subtype, name, legacy_name, counterparty, amount,
-				interest_payable, annual_rate, issue_date, maturity_date, activated_at,
-				settled_at, closed_at, extension
-			)
-			SELECT * FROM jsonb_to_recordset($1::jsonb) AS source(
-				source_key text, target_table text, debt_type text, subtype text, name text, legacy_name text,
-				counterparty text, amount numeric, interest_payable numeric, annual_rate numeric,
-				issue_date date, maturity_date date, activated_at date, settled_at date,
-				closed_at date, extension jsonb
-			)
-		`, [JSON.stringify(transformed.debts.map((debt) => ({
-			source_key: debt.sourceKey,
-			target_table: debt.table,
-			debt_type: debt.debtType,
-			subtype: debt.subtype,
-			name: debt.name,
-			legacy_name: debt.legacyName,
-			counterparty: debt.counterparty,
-			amount: debt.amount,
-			interest_payable: debt.interestPayable,
-			annual_rate: debt.annualRate,
-			issue_date: debt.issueDate,
-			maturity_date: debt.maturityDate,
-			activated_at: debt.activatedAt,
-			settled_at: debt.settledAt,
-			closed_at: debt.closedAt,
-			extension: debt.extension
-		})))]);
+		for await (const batch of importBatches(transformed, 'debts', 'debtBatches')) {
+			await database.query(`
+				INSERT INTO maintenance_debt (
+					source_key, target_table, debt_type, subtype, name, legacy_name, counterparty, amount,
+					interest_payable, annual_rate, issue_date, maturity_date, activated_at,
+					settled_at, closed_at, extension
+				)
+				SELECT * FROM jsonb_to_recordset($1::jsonb) AS source(
+					source_key text, target_table text, debt_type text, subtype text, name text, legacy_name text,
+					counterparty text, amount numeric, interest_payable numeric, annual_rate numeric,
+					issue_date date, maturity_date date, activated_at date, settled_at date,
+					closed_at date, extension jsonb
+				)
+			`, [JSON.stringify(batch.map((sourceDebt) => {
+				const debt = debtRecordForImport(sourceDebt);
+				return {
+					source_key: debt.sourceKey,
+					target_table: debt.table,
+					debt_type: debt.debtType,
+					subtype: debt.subtype,
+					name: debt.name,
+					legacy_name: debt.legacyName,
+					counterparty: debt.counterparty,
+					amount: debt.amount,
+					interest_payable: debt.interestPayable,
+					annual_rate: debt.annualRate,
+					issue_date: debt.issueDate,
+					maturity_date: debt.maturityDate,
+					activated_at: debt.activatedAt,
+					settled_at: debt.settledAt,
+					closed_at: debt.closedAt,
+					extension: debt.extension
+				};
+			}))]);
+		}
 		await database.query(`
 			WITH ranked AS (
 				SELECT source_ordinal,
@@ -230,36 +264,50 @@ export async function importDebtWorkbook(database, transformed, { rollback = fal
 				accrual_start_date date,
 				accrual_end_date date,
 				note text,
+				source_sequence integer NOT NULL,
 				occurrence integer,
 				sequence integer,
 				is_new boolean NOT NULL DEFAULT false
 			) ON COMMIT DROP
 		`);
+		for await (const batch of importBatches(transformed, 'cashflows', 'cashflowBatches')) {
+			await database.query(`
+				INSERT INTO maintenance_cashflow (
+					source_key, cashflow_type, due_date, amount, paid_amount, paid_at,
+					accrual_start_date, accrual_end_date, note, source_sequence
+				)
+				SELECT source_key, cashflow_type, due_date, amount, paid_amount, paid_at,
+					accrual_start_date, accrual_end_date, note, source_sequence
+				FROM jsonb_to_recordset($1::jsonb) AS source(
+					source_key text, cashflow_type text, due_date date, amount numeric,
+					paid_amount numeric, paid_at date, accrual_start_date date, accrual_end_date date,
+					note text, source_sequence integer
+				)
+			`, [JSON.stringify(batch.map((flow) => ({
+				source_key: flow.sourceKey,
+				cashflow_type: flow.cashflowType,
+				due_date: flow.dueDate,
+				amount: flow.amount,
+				paid_amount: flow.paidAmount,
+				paid_at: flow.paidAt,
+				accrual_start_date: flow.accrualStartDate,
+				accrual_end_date: flow.accrualEndDate,
+				note: flow.note,
+				source_sequence: flow.sourceSequence ?? flow.sequence ?? 0
+			})))]);
+		}
 		await database.query(`
-			INSERT INTO maintenance_cashflow (
-				source_key, cashflow_type, due_date, amount, paid_amount, paid_at,
-				accrual_start_date, accrual_end_date, note, occurrence
+			WITH ranked AS (
+				SELECT ctid,
+					row_number() OVER (
+						PARTITION BY source_key, cashflow_type, due_date, amount
+						ORDER BY source_sequence
+					) AS occurrence
+				FROM maintenance_cashflow
 			)
-			SELECT source_key, cashflow_type, due_date, amount, paid_amount, paid_at,
-				accrual_start_date, accrual_end_date, note,
-				row_number() OVER (PARTITION BY source_key, cashflow_type, due_date, amount ORDER BY source_sequence)
-			FROM jsonb_to_recordset($1::jsonb) AS source(
-				source_key text, cashflow_type text, due_date date, amount numeric,
-				paid_amount numeric, paid_at date, accrual_start_date date, accrual_end_date date,
-				note text, source_sequence integer
-			)
-		`, [JSON.stringify(transformed.cashflows.map((flow) => ({
-			source_key: flow.sourceKey,
-			cashflow_type: flow.cashflowType,
-			due_date: flow.dueDate,
-			amount: flow.amount,
-			paid_amount: flow.paidAmount,
-			paid_at: flow.paidAt,
-			accrual_start_date: flow.accrualStartDate,
-			accrual_end_date: flow.accrualEndDate,
-			note: flow.note,
-			source_sequence: flow.sequence
-		})))]);
+			UPDATE maintenance_cashflow source SET occurrence = ranked.occurrence
+			FROM ranked WHERE source.ctid = ranked.ctid
+		`);
 		await database.query(`
 			UPDATE maintenance_cashflow flow SET debt_id = debt.debt_id
 			FROM maintenance_debt debt WHERE debt.source_key = flow.source_key
@@ -309,19 +357,21 @@ export async function importDebtWorkbook(database, transformed, { rollback = fal
 				accrual_start_date, accrual_end_date, note
 			FROM maintenance_cashflow WHERE is_new = true ORDER BY debt_id, sequence
 		`);
-		await database.query(`
-			INSERT INTO financing.balance_snapshot (as_of_date, debt_type, subtype, amount)
-			SELECT as_of_date, debt_type, subtype, amount
-			FROM jsonb_to_recordset($1::jsonb) AS source(
-				as_of_date date, debt_type text, subtype text, amount numeric
-			)
-			ON CONFLICT (as_of_date, debt_type, subtype) DO UPDATE SET amount = EXCLUDED.amount
-		`, [JSON.stringify(transformed.balances.map((item) => ({
-			as_of_date: item.asOfDate,
-			debt_type: item.debtType,
-			subtype: item.subtype,
-			amount: item.amount
-		})))]);
+		for await (const batch of importBatches(transformed, 'balances', 'balanceBatches')) {
+			await database.query(`
+				INSERT INTO financing.balance_snapshot (as_of_date, debt_type, subtype, amount)
+				SELECT as_of_date, debt_type, subtype, amount
+				FROM jsonb_to_recordset($1::jsonb) AS source(
+					as_of_date date, debt_type text, subtype text, amount numeric
+				)
+				ON CONFLICT (as_of_date, debt_type, subtype) DO UPDATE SET amount = EXCLUDED.amount
+			`, [JSON.stringify(batch.map((item) => ({
+				as_of_date: item.asOfDate,
+				debt_type: item.debtType,
+				subtype: item.subtype,
+				amount: item.amount
+				})))]);
+		}
 
 		const verification = await database.query(`
 			SELECT
@@ -333,16 +383,30 @@ export async function importDebtWorkbook(database, transformed, { rollback = fal
 				(SELECT COUNT(*) FROM maintenance_debt WHERE NOT is_new) AS updated_debt_count,
 				(SELECT COUNT(*) FROM maintenance_cashflow WHERE is_new) AS inserted_cashflow_count,
 				(SELECT COUNT(*) FROM maintenance_cashflow WHERE NOT is_new) AS updated_cashflow_count
-		`, [transformed.snapshot.asOfDate]);
+		`, [snapshot.asOfDate]);
 		const result = verification.rows[0];
-		if (Math.abs(Number(result.snapshot_total_yi) - Number(transformed.snapshot.totalYi)) > 0.0001) {
-			throw new Error(`余额核对失败：数据库 ${result.snapshot_total_yi} 亿元，工作簿 ${transformed.snapshot.totalYi} 亿元`);
+		if (Math.abs(Number(result.snapshot_total_yi) - Number(snapshot.totalYi)) > 0.0001) {
+			throw new Error(`余额核对失败：数据库 ${result.snapshot_total_yi} 亿元，工作簿 ${snapshot.totalYi} 亿元`);
 		}
+		let derivativeResult = { deletedCount: 0, refreshedCount: 0 };
+		if (refreshDerivatives) {
+			await onStage({ stage: 'refreshing', progress: 88, message: '正在重算月度融资衍生指标' });
+			const deleted = await database.query('DELETE FROM financing.monthly_financing_metrics');
+			const refreshed = await database.query(
+				'SELECT financing.refresh_monthly_financing_metrics($1::date) AS refreshed_count',
+				[snapshot.asOfDate]
+			);
+			derivativeResult = {
+				deletedCount: databaseNumber(deleted.rowCount),
+				refreshedCount: databaseNumber(refreshed.rows[0]?.refreshed_count)
+			};
+		}
+		await onStage({ stage: 'finalizing', progress: 96, message: '正在执行最终勾稽并提交事务' });
 		await database.query("SELECT setval('financing.debt_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM financing.debt), 1), true)");
 		await database.query(rollback ? 'ROLLBACK' : 'COMMIT');
 		return {
 			mode: rollback ? 'rollback' : 'committed',
-			asOfDate: transformed.snapshot.asOfDate,
+			asOfDate: snapshot.asOfDate,
 			totalYi: Number(result.snapshot_total_yi),
 			debtCount: databaseNumber(result.debt_count),
 			cashflowCount: databaseNumber(result.cashflow_count),
@@ -350,7 +414,8 @@ export async function importDebtWorkbook(database, transformed, { rollback = fal
 			insertedDebtCount: databaseNumber(result.inserted_debt_count),
 			updatedDebtCount: databaseNumber(result.updated_debt_count),
 			insertedCashflowCount: databaseNumber(result.inserted_cashflow_count),
-			updatedCashflowCount: databaseNumber(result.updated_cashflow_count)
+			updatedCashflowCount: databaseNumber(result.updated_cashflow_count),
+			derivedMetricCount: derivativeResult.refreshedCount
 		};
 	} catch (error) {
 		try {

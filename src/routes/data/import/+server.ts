@@ -1,19 +1,15 @@
-import { randomUUID } from 'node:crypto';
 import { json } from '@sveltejs/kit';
-import { getDatabase } from '$lib/server/db.js';
 import {
-	createDebtImportRun,
-	failDebtImportRun,
-	listDebtImportRuns,
-	stageDebtImportPayload
-} from '$lib/server/debt-import-runs.js';
-import { transformWorkbook } from '../../../../scripts/lib/debt-transform.mjs';
-import { parseDebtWorkbookData } from '../../../../scripts/lib/excel-import.mjs';
+	MAX_COMPRESSED_PAYLOAD_BYTES,
+	MAX_WORKFLOW_EVENT_BYTES,
+	workflowEventSize,
+	workflowPayloadBase64
+} from '$lib/debt-import-codec.js';
+import { debtImportRun } from '$lib/server/debt-import-workflow.js';
 import { sha256Hex } from '../../../../scripts/lib/hash.mjs';
 import type { RequestHandler } from './$types';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
-const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PRIVATE_JSON_HEADERS = {
 	'cache-control': 'no-store, private',
 	vary: 'Cookie'
@@ -38,106 +34,120 @@ function uploadFileName(request: Request) {
 	return name;
 }
 
-function uploadSize(request: Request) {
-	const value = request.headers.get('content-length') ?? request.headers.get('x-import-file-size');
-	const size = Number(value);
-	if (!Number.isInteger(size) || size <= 0) throw new Error('无法确认上传文件大小');
+function originalFileSize(request: Request) {
+	const size = Number(request.headers.get('x-import-file-size'));
+	if (!Number.isInteger(size) || size <= 0) throw new Error('无法确认原始文件大小');
 	if (size > MAX_UPLOAD_BYTES) throw new Error('文件超过 10 MB 上限');
 	return size;
 }
 
-function workbookSummary(transformed: ReturnType<typeof transformWorkbook>) {
-	return {
-		asOfDate: transformed.snapshot.asOfDate,
-		totalYi: transformed.snapshot.totalYi,
-		debtCount: transformed.debts.length,
-		cashflowCount: transformed.cashflows.length,
-		balanceCount: transformed.balances.length
-	};
+function compressedSize(request: Request) {
+	const size = Number(request.headers.get('content-length'));
+	if (!Number.isInteger(size) || size <= 0) throw new Error('无法确认编码后的导入数据大小');
+	if (size > MAX_COMPRESSED_PAYLOAD_BYTES) {
+		throw new Error('台账数据超过 Workflow 安全上限，请联系管理员调整导入方案');
+	}
+	return size;
 }
 
-function workbookError(error: unknown) {
+function safeError(error: unknown) {
 	const message = error instanceof Error ? error.message : String(error);
-	return message.slice(0, 1000) || '工作簿解析失败';
+	return message.slice(0, 1000) || '导入请求失败';
 }
-
-export const GET: RequestHandler = async ({ locals }) => {
-	if (!requireAdmin(locals)) return json({ error: '仅管理员可查看台账导入记录' }, { status: 403 });
-	const runs = await listDebtImportRuns(getDatabase(), 8);
-	return json({ runs }, { headers: PRIVATE_JSON_HEADERS });
-};
 
 export const POST: RequestHandler = async ({ request, url, locals, platform }) => {
 	if (!requireAdmin(locals)) return json({ error: '仅管理员可上传借入资金汇总表' }, { status: 403 });
 	if (request.headers.get('origin') !== url.origin) {
 		return json({ error: '上传请求来源无效，请刷新页面后重试' }, { status: 403 });
 	}
+	if (request.headers.get('content-type') !== 'application/vnd.eastmoney.debt-import+protobuf') {
+		return json({ error: '导入数据编码无效，请刷新页面后重试' }, { status: 415 });
+	}
 	if (!request.body) return json({ error: '请选择借入资金汇总表文件' }, { status: 400 });
+	if (!platform?.env?.DEBT_IMPORT_WORKFLOW) {
+		return json({ error: 'Workflow 暂不可用，请稍后重试' }, { status: 503 });
+	}
 
 	let fileName: string;
-	let claimedSize: number;
+	let fileSizeBytes: number;
+	let claimedCompressedSize: number;
 	try {
 		fileName = uploadFileName(request);
-		claimedSize = uploadSize(request);
+		fileSizeBytes = originalFileSize(request);
+		claimedCompressedSize = compressedSize(request);
 	} catch (error) {
-		return json({ error: workbookError(error) }, { status: 400 });
+		return json({ error: safeError(error) }, { status: 400, headers: PRIVATE_JSON_HEADERS });
 	}
 
-	const requestedRunId = request.headers.get('x-import-run-id')?.trim();
-	const runId = requestedRunId && RUN_ID_PATTERN.test(requestedRunId) ? requestedRunId : randomUUID();
-	const workflowInstanceId = `debt-import-${runId}`;
-	const database = getDatabase();
+	let payloadBytes: Uint8Array;
+	let payloadBase64: string;
+	let eventBytes: number;
+	let instanceId: string;
 	try {
-		await createDebtImportRun(database, {
-			id: runId,
-			workflowInstanceId,
-			fileName,
-			fileSizeBytes: claimedSize,
-			createdByPersonId: locals.user!.personId
-		});
-	} catch (error: any) {
-		if (error?.code === '23505') {
-			return json({ error: '已有台账正在解析或导入，请等待当前任务完成' }, { status: 409 });
+		payloadBytes = new Uint8Array(await request.arrayBuffer());
+		if (!payloadBytes.byteLength || payloadBytes.byteLength !== claimedCompressedSize) {
+			throw new Error('编码后的导入数据大小不一致，请重新上传');
 		}
-		throw error;
+		payloadBase64 = workflowPayloadBase64(payloadBytes);
+		eventBytes = workflowEventSize(payloadBase64, fileName, fileSizeBytes);
+		if (eventBytes > MAX_WORKFLOW_EVENT_BYTES) {
+			throw new Error('台账数据超过 Workflow 1 MiB 上限，请联系管理员调整导入方案');
+		}
+		instanceId = `debt-v1-${sha256Hex(payloadBytes)}`;
+	} catch (error) {
+		return json({ error: safeError(error) }, { status: 400, headers: PRIVATE_JSON_HEADERS });
 	}
 
-	let run;
 	try {
-		const workbookData = await request.arrayBuffer();
-		if (workbookData.byteLength > MAX_UPLOAD_BYTES) throw new Error('文件超过 10 MB 上限');
-		const signature = new Uint8Array(workbookData, 0, Math.min(4, workbookData.byteLength));
-		if (signature[0] !== 0x50 || signature[1] !== 0x4b) throw new Error('文件不是有效的 .xlsx 工作簿');
-		const parsed = parseDebtWorkbookData(workbookData, fileName);
-		const transformed = transformWorkbook(parsed);
-		run = await stageDebtImportPayload(database, {
-			runId,
-			payload: transformed,
-			sourceSha256: sha256Hex(workbookData),
-			fileSizeBytes: workbookData.byteLength,
-			parsed: workbookSummary(transformed)
-		});
+		let instance;
+		let details;
+		let created = false;
+		try {
+			[instance] = await platform.env.DEBT_IMPORT_WORKFLOW.createBatch([{
+				id: instanceId,
+				params: { payloadBase64, fileName, fileSizeBytes },
+				retention: {
+					successRetention: '1 day',
+					errorRetention: '1 day'
+				}
+			}]);
+			created = true;
+		} catch (createError) {
+			try {
+				instance = await platform.env.DEBT_IMPORT_WORKFLOW.get(instanceId);
+				details = await instance.status();
+				if (details.status === 'unknown') throw createError;
+			} catch {
+				throw createError;
+			}
+		}
+		if (!instance) throw new Error('Workflow 未返回实例');
+		details ??= await instance.status();
+		if (details.status === 'unknown') throw new Error('Workflow 实例状态未知');
+		let restarted = false;
+		if (!created && (details.status === 'errored' || details.status === 'terminated')) {
+			await instance.restart();
+			details = await instance.status();
+			if (details.status === 'errored' || details.status === 'terminated') {
+				details = { status: 'queued' };
+			}
+			restarted = true;
+		}
+		return json({
+			run: {
+				...debtImportRun(instanceId, details, {
+					fileName,
+					fileSizeBytes,
+					createdAt: new Date().toISOString()
+				}),
+				fileSizeBytes,
+				compressedSizeBytes: payloadBytes.byteLength,
+				workflowEventBytes: eventBytes,
+				restarted
+			}
+		}, { status: created || restarted ? 202 : 200, headers: PRIVATE_JSON_HEADERS });
 	} catch (error) {
-		const message = workbookError(error);
-		await failDebtImportRun(database, runId, message);
-		return json({ runId, error: message }, { status: 400, headers: PRIVATE_JSON_HEADERS });
-	}
-
-	if (!platform?.env?.DEBT_IMPORT_WORKFLOW) {
-		const message = 'Workflow 启动失败，请稍后重试';
-		await failDebtImportRun(database, runId, message);
-		return json({ runId, error: message }, { status: 503, headers: PRIVATE_JSON_HEADERS });
-	}
-	try {
-		await platform.env.DEBT_IMPORT_WORKFLOW.create({
-			id: workflowInstanceId,
-			params: { runId }
-		});
-		return json({ run }, { status: 202, headers: PRIVATE_JSON_HEADERS });
-	} catch (error) {
-		console.error('Failed to create debt import Workflow instance', error);
-		const message = 'Workflow 启动失败，请稍后重试';
-		await failDebtImportRun(database, runId, message);
-		return json({ runId, error: message }, { status: 503, headers: PRIVATE_JSON_HEADERS });
+		console.error('Failed to create idempotent debt import Workflow instance', error);
+		return json({ error: 'Workflow 启动失败，请稍后重试' }, { status: 503, headers: PRIVATE_JSON_HEADERS });
 	}
 };

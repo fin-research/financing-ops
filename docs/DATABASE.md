@@ -53,7 +53,7 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 - 当前数据后台只开放负债品种表、`finance_parameters` 与 `debt_limit_configs`。
 - Data API 支持 PostgREST 过滤、关联和聚合，也支持调用数据库函数；负债周报使用固定的 `liability_weekly_report_data(date)` RPC 聚合融资业务数据，并通过只读视图 `liability_market_rate_observations` 按指标和日期直接读取原始市场观测。RPC 与视图仅向 `authenticated` 开放，不再要求 JWT 用户关联 `people`；`monthly_financing_metrics` 与底层 `public.edb` 均不直接开放。
 - 现金流、历史余额和审计记录不展示，且 `authenticated` 不得通过 Data API 访问。
-- `debt_import_runs` 与 `debt_import_payloads` 只由 Worker 通过 Hyperdrive 访问，不授予 `authenticated` Data API 权限。
+- 导入载荷、运行状态和结果不写入 Neon；数据库只保存原子提交后的业务表与衍生表结果。
 - 活跃且关联 Neon Auth 的三种业务角色均可按现有 RLS 编辑数据后台表；SvelteKit 管理 actions 仍由服务端角色规则单独控制。
 - 更新和删除携带 `updated_at` 做乐观并发检查；主键和计算列只读。
 - DDL、视图、函数或列变化后必须显式刷新 Neon Data API schema cache：`neon data-api refresh-schema --database neondb`；migration 中的 PostgreSQL `NOTIFY pgrst` 不能替代 Neon 托管 Data API 的刷新动作。
@@ -67,8 +67,8 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 
 ## Excel 与 SQLite
 
-- 借入资金汇总表可由管理员通过线上内部接口上传。Worker 在上传请求内直接解析，原始 Excel 不写入 R2 或数据库；文件上限 10 MB，仅接受 `.xlsx` 和有效 ZIP 签名。
-- 解析校验后的结构化 JSON 临时写入 `debt_import_payloads`，Workflow 完成或失败即删除；`debt_import_runs` 长期保留来源文件名、SHA-256、阶段、数量、金额、结果和创建人，不保存原始行或单元格内容。
+- 借入资金汇总表可由管理员通过线上内部接口导入。浏览器内解析 `.xlsx` 并生成分批 Protobuf/Brotli 载荷，原始 Excel 不上传；文件上限 10 MB，压缩载荷上限 720 KiB。
+- 导入载荷、运行状态和结果只由 Cloudflare Workflow 按短保留期临时保存；Neon 不建立导入临时表、状态表或完成审计。Workflow 只通过 Hyperdrive 在单一事务中更新负债、现金流、余额历史和衍生指标。
 - `scripts/import-debts.mjs` 与线上 Workflow 共用同一单事务、advisory lock 和批量写入实现；收益凭证重导时先按规范简称匹配，存量历史数据可按原系列名回退匹配；不得删除线上新增数据。
 - SQLite 只作为一次性迁移来源；目标负债非空时迁移脚本应拒绝重复覆盖。
 - 解析变化先运行 `pnpm db:import -- --dry-run`；SQLite 变化先运行 `pnpm db:migrate:sqlite -- --dry-run`。

@@ -24,7 +24,7 @@
 - 修改前搜索现有 route、query、组件和共享函数；优先复用，不建立重复抽象，不重构无关代码。
 - UI 任务必须读取 `DESIGN.md`。桌面端保持高信息密度，移动端不得出现页面级横向滚动。
 - 融资项目与负债建档完全独立。项目使用单一“计划簿记”日期作为 SOP“计划发行当日”锚点；项目增删改不得绑定或修改负债。
-- 生产业务数据只在 Neon `financing` schema。借入资金汇总表允许管理员从数据后台线上导入：上传请求直接解析且不得持久化原始 Excel，校验后的结构化载荷只在 Neon 临时保存并由 Workflow 消费后删除；其他 Excel 仍仅由 `scripts/` 本地维护。
+- 生产业务数据只在 Neon `financing` schema。借入资金汇总表允许管理员从数据后台线上导入：浏览器复用 `scripts/lib/` 解析并用生成式 Protobuf 与 Brotli 编码，原始 Excel 不上传；编码载荷和运行状态只由 Workflow 临时保留，不得在 Neon、R2 或其他表另存导入载荷或状态。其他 Excel 仍仅由 `scripts/` 本地维护。
 - 数据库结构变化必须新增 migration；以全部 migration 顺序后的最终 schema 为事实来源，不直接修改线上表替代 migration。
 - Worker 只通过 `HYPERDRIVE.connectionString` 连接数据库。每个请求至多一个 `pg.Client`，存于 request locals 并在结束时关闭；禁止全局 `Pool`、跨请求连接和 N+1 查询。
 - 页面 mutation 只回传服务端确认的单一变更实体或删除 ID，前端就地合并；禁止成功后 `invalidateAll` 重读整页。只在确有需要时定向失效身份或提醒依赖。

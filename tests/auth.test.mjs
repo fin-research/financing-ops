@@ -8,6 +8,7 @@ import { cacheSessionUser, invalidateCachedSession, readCachedSessionUser } from
 import { createNeonAuthClient, jwtFromResponseHeaders, NEON_SESSION_COOKIE, sessionMaxAgeFromSetCookie, sessionTokenFromSetCookie } from '../src/lib/server/neon-auth-client.js';
 import { dataApiUrlFromAuthUrl } from '../src/lib/neon-urls.js';
 import { deleteProjectWithReminders } from '../src/lib/server/project-deletion.js';
+import { decodeDebtImportPayload, encodeDebtImportPayload } from '../src/lib/debt-import-codec.js';
 import { importDebtWorkbook, refreshDebtImportDerivatives } from '../src/lib/server/debt-importer.js';
 import { actionNameFromUrl, isAuthorizedRequest, isSafeRequestMethod } from '../src/lib/server/request-authorization.js';
 
@@ -58,7 +59,8 @@ async function installSchema(db, { beforeReminderMigration } = {}) {
 		'0018_liability_report_data_api.sql',
 		'0019_allow_authenticated_liability_report_rpc.sql',
 		'0020_optimize_liability_report_query.sql',
-		'0021_online_debt_import_workflow.sql'
+		'0021_online_debt_import_workflow.sql',
+		'0022_remove_debt_import_state.sql'
 	]) {
 		if (name === '0008_sop_node_reminder_periods.sql' && beforeReminderMigration) {
 			await beforeReminderMigration(db);
@@ -309,36 +311,16 @@ test('closed-month financing metrics are filled once and remain frozen on later 
 	assert.equal(Number(refreshed.weighted_rate_pct), 3);
 });
 
-test('online debt imports are Worker-only, single-active, and clear staged payloads with the run', async (t) => {
+test('online debt imports do not persist payload or status tables in Neon', async (t) => {
 	const db = new PGlite();
 	t.after(() => db.close());
 	await installSchema(db);
-	await db.query("INSERT INTO financing.people (id, name, role) VALUES ('import-admin', '导入管理员', 'admin')");
-	await db.query(`
-		INSERT INTO financing.debt_import_runs (
-			id, workflow_instance_id, source_file_name, source_size_bytes,
-			status, stage, progress, message, created_by_person_id
-		) VALUES (
-			'import-one', 'debt-import-one', '台账.xlsx', 1024,
-			'queued', 'queued', 45, '等待执行', 'import-admin'
-		)
-	`);
-	await assert.rejects(db.query(`
-		INSERT INTO financing.debt_import_runs (
-			id, workflow_instance_id, source_file_name, source_size_bytes,
-			status, stage, progress, message, created_by_person_id
-		) VALUES (
-			'import-two', 'debt-import-two', '另一台账.xlsx', 1024,
-			'parsing', 'parsing', 10, '解析中', 'import-admin'
-		)
-	`), /duplicate key value|unique constraint/i);
-	await db.query("INSERT INTO financing.debt_import_payloads (run_id, payload) VALUES ('import-one', '{\"debts\": []}'::jsonb)");
-	await db.query("DELETE FROM financing.debt_import_runs WHERE id = 'import-one'");
-	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.debt_import_payloads')).rows[0].count, 0);
-	await db.exec('SET ROLE authenticated');
-	await assert.rejects(db.query('SELECT * FROM financing.debt_import_runs'), /permission denied/i);
-	await assert.rejects(db.query('SELECT * FROM financing.debt_import_payloads'), /permission denied/i);
-	await db.exec('RESET ROLE');
+	const relations = (await db.query(`
+		SELECT to_regclass('financing.debt_import_runs') AS run_table,
+			to_regclass('financing.debt_import_payloads') AS payload_table
+	`)).rows[0];
+	assert.equal(relations.run_table, null);
+	assert.equal(relations.payload_table, null);
 });
 
 test('shared debt importer is idempotent and updates mutable workbook fields', async (t) => {
@@ -364,6 +346,10 @@ test('shared debt importer is idempotent and updates mutable workbook fields', a
 	const updated = await importDebtWorkbook(db, transformed);
 	assert.equal(updated.insertedDebtCount, 0);
 	assert.equal(updated.updatedDebtCount, 1);
+	const decoded = decodeDebtImportPayload(encodeDebtImportPayload(transformed));
+	const protobufUpdated = await importDebtWorkbook(db, decoded);
+	assert.equal(protobufUpdated.insertedDebtCount, 0);
+	assert.equal(protobufUpdated.updatedDebtCount, 1);
 	const rows = (await db.query("SELECT amount, annual_rate FROM financing.debt WHERE name = '集团借款·集团公司·2026-09-01'")).rows;
 	assert.equal(rows.length, 1);
 	assert.equal(Number(rows[0].amount), 100000000);

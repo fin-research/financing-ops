@@ -12,7 +12,7 @@ const FINANCING_TABLES = [
 	'reminder_rule_periods', 'reminder_deliveries',
 	'finance_parameters', 'debt_limit_configs', 'audit_logs',
 	'liability_weekly_report_runs', 'debt_overview',
-	'cashflow_overview', 'data_overview', 'debt_import_runs', 'debt_import_payloads',
+	'cashflow_overview', 'data_overview',
 	'monthly_financing_metrics'
 ];
 

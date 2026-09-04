@@ -10,8 +10,9 @@
 - SOP 管理：维护流程模板、节点顺序和提醒规则。
 - 人员与权限：使用邮箱登录，统一维护人员、业务角色和可选登录账号。
 - 提醒：按规则发送邮件并查询发送历史。
+- 在线台账导入：管理员在浏览器内解析借入资金汇总表，由 Workflow 幂等更新线上负债与衍生指标。
 
-应用统一位于 `/financing`。生产数据存放在 Neon PostgreSQL 的 `financing` schema，线上不提供 Excel 上传或导入入口。
+应用统一位于 `/financing`。生产数据存放在 Neon PostgreSQL 的 `financing` schema；在线导入不上传或留存原始 Excel。
 
 ## 本地使用
 

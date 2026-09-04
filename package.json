@@ -13,12 +13,14 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"proto:generate": "protoc -I proto --es_out=src/lib/generated --es_opt=target=js+dts,import_extension=js proto/debt_import.proto",
 		"db:init": "node --env-file-if-exists=.env --env-file-if-exists=.env.database scripts/init-database.mjs",
 		"db:import": "node --env-file-if-exists=.env --env-file-if-exists=.env.database scripts/import-debts.mjs",
 		"db:migrate:sqlite": "node --env-file-if-exists=.env --env-file-if-exists=.env.database scripts/migrate-sqlite-to-postgres.mjs",
 		"reminders:send": "node --env-file-if-exists=.env --env-file-if-exists=.env.database scripts/send-reminders.mjs"
 	},
 	"devDependencies": {
+		"@bufbuild/protoc-gen-es": "^2.14.1",
 		"@cloudflare/workers-types": "^5.20260818.1",
 		"@electric-sql/pglite": "^0.3.12",
 		"@sveltejs/adapter-cloudflare": "^7.2.9",
@@ -40,9 +42,11 @@
 		"xlsx": "^0.18.5"
 	},
 	"dependencies": {
+		"@bufbuild/protobuf": "^2.14.1",
 		"@lucide/svelte": "^1.27.0",
 		"@noble/hashes": "^2.3.0",
 		"@tanstack/svelte-table": "9.1.2",
+		"brotli-wasm": "^3.0.1",
 		"echarts": "^6.1.0",
 		"pg": "^8.16.3",
 		"resend": "^6.18.0"

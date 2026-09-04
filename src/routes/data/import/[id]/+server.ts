@@ -1,21 +1,32 @@
 import { json } from '@sveltejs/kit';
-import { getDatabase } from '$lib/server/db.js';
-import { getDebtImportRun } from '$lib/server/debt-import-runs.js';
+import { debtImportRun } from '$lib/server/debt-import-workflow.js';
 import type { RequestHandler } from './$types';
 
-const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const INSTANCE_ID_PATTERN = /^debt-v1-[0-9a-f]{64}$/;
+const PRIVATE_JSON_HEADERS = {
+	'cache-control': 'no-store, private',
+	vary: 'Cookie'
+};
 
-export const GET: RequestHandler = async ({ params, locals }) => {
+export const GET: RequestHandler = async ({ params, locals, platform }) => {
 	if (locals.user?.role !== 'admin') {
 		return json({ error: '仅管理员可查看台账导入进度' }, { status: 403 });
 	}
-	if (!RUN_ID_PATTERN.test(params.id)) return json({ error: '导入任务编号无效' }, { status: 400 });
-	const run = await getDebtImportRun(getDatabase(), params.id);
-	if (!run) return json({ error: '未找到导入任务' }, { status: 404 });
-	return json({ run }, {
-		headers: {
-			'cache-control': 'no-store, private',
-			vary: 'Cookie'
-		}
-	});
+	if (!INSTANCE_ID_PATTERN.test(params.id)) return json({ error: '导入任务编号无效' }, { status: 400 });
+	if (!platform?.env?.DEBT_IMPORT_WORKFLOW) {
+		return json({ error: 'Workflow 暂不可用，请稍后重试' }, { status: 503 });
+	}
+	try {
+		const instance = await platform.env.DEBT_IMPORT_WORKFLOW.get(params.id);
+		const details = await instance.status();
+		if (details.status === 'unknown') throw new Error('Workflow instance not found');
+		return json({
+			run: debtImportRun(params.id, details)
+		}, { headers: PRIVATE_JSON_HEADERS });
+	} catch {
+		return json({ error: '未找到导入任务，Workflow 临时状态可能已过保留期' }, {
+			status: 404,
+			headers: PRIVATE_JSON_HEADERS
+		});
+	}
 };

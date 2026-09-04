@@ -1,20 +1,21 @@
+import { brotliDecompressSync } from 'node:zlib';
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
+import {
+	decodeDebtImportPayload,
+	debtImportSummary,
+	MAX_COMPRESSED_PAYLOAD_BYTES,
+	MAX_PROTOBUF_PAYLOAD_BYTES,
+	workflowPayloadBytes
+} from '../lib/debt-import-codec.js';
 import { createPostgresDatabase } from '../lib/postgres.js';
-import {
-	completeDebtImportRun,
-	failDebtImportRun,
-	getDebtImportPayload,
-	updateDebtImportStage
-} from '../lib/server/debt-import-runs.js';
-import {
-	importDebtWorkbook,
-	refreshDebtImportDerivatives
-} from '../lib/server/debt-importer.js';
+import { importDebtWorkbook } from '../lib/server/debt-importer.js';
 import type { FinancingWorkerEnv } from '../worker-types.js';
 
 export interface DebtImportWorkflowParams {
-	runId: string;
+	payloadBase64: string;
+	fileName: string;
+	fileSizeBytes: number;
 }
 
 async function withDatabase<T>(
@@ -30,85 +31,87 @@ async function withDatabase<T>(
 	}
 }
 
-function userFacingWorkflowError(error: unknown, stage: string) {
+function nonRetryableMessage(error: unknown) {
 	const message = error instanceof Error ? error.message : String(error);
-	if (/^(余额核对失败|已有负债的继承类型与工作簿不一致)/u.test(message)) {
-		return message;
+	return message.slice(0, 1000) || '导入数据无效';
+}
+
+function isBusinessValidationError(error: unknown) {
+	const message = error instanceof Error ? error.message : String(error);
+	return /^(余额核对失败|已有负债的继承类型与工作簿不一致|台账)/u.test(message);
+}
+
+function decodeWorkflowPayload(payloadBase64: string) {
+	let compressed: Uint8Array;
+	try {
+		compressed = workflowPayloadBytes(payloadBase64);
+	} catch {
+		throw new NonRetryableError('Workflow 导入数据编码无效');
 	}
-	if (stage === 'refreshing') return '负债数据已写入，但衍生指标刷新失败；请重新上传或联系管理员';
-	if (stage === 'importing') return '线上数据库更新失败；Workflow 已重试，请联系管理员查看运行日志';
-	return '导入任务执行失败，请联系管理员查看 Workflow 运行日志';
+	if (!compressed.byteLength || compressed.byteLength > MAX_COMPRESSED_PAYLOAD_BYTES) {
+		throw new NonRetryableError('Workflow 导入数据超过安全上限');
+	}
+	try {
+		const protobuf = brotliDecompressSync(compressed, {
+			maxOutputLength: MAX_PROTOBUF_PAYLOAD_BYTES
+		});
+		return decodeDebtImportPayload(protobuf);
+	} catch (error) {
+		throw new NonRetryableError(`台账数据解码或校验失败：${nonRetryableMessage(error)}`);
+	}
 }
 
 export class DebtImportWorkflow extends WorkflowEntrypoint<FinancingWorkerEnv, DebtImportWorkflowParams> {
 	async run(event: WorkflowEvent<DebtImportWorkflowParams>, step: WorkflowStep) {
-		const { runId } = event.payload;
-		let activeStage = 'importing';
-		try {
-			const importResult = await step.do('import validated debt ledger', {
-				retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
-				timeout: '20 minutes'
-			}, async () => withDatabase(
-				this.env,
-				'eastmoney-financing-debt-import',
-				async (database) => {
-					await updateDebtImportStage(database, runId, {
-						stage: 'importing',
-						progress: 65,
-						message: '正在原子更新负债、现金流与余额历史'
-					});
-					const payload = await getDebtImportPayload(database, runId);
-					if (!payload) throw new NonRetryableError('导入临时数据不存在或已被清理');
-					return importDebtWorkbook(database, payload);
-				}
-			));
-
-			activeStage = 'refreshing';
-			const derivativeResult = await step.do('refresh debt derivatives', {
-				retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
-				timeout: '20 minutes'
-			}, async () => withDatabase(
-				this.env,
-				'eastmoney-financing-debt-derivatives',
-				async (database) => {
-					await updateDebtImportStage(database, runId, {
-						stage: 'refreshing',
-						progress: 88,
-						message: '正在重算月度融资衍生指标'
-					});
-					return refreshDebtImportDerivatives(database, importResult.asOfDate);
-				}
-			));
-
-			activeStage = 'finalizing';
-			return await step.do('finalize debt import', {
-				retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' }
-			}, async () => withDatabase(
-				this.env,
-				'eastmoney-financing-debt-import-finalize',
-				async (database) => {
-					await updateDebtImportStage(database, runId, {
-						stage: 'finalizing',
-						progress: 96,
-						message: '正在保存核对结果并清理临时数据'
-					});
-					return completeDebtImportRun(database, runId, importResult, derivativeResult);
-				}
-			));
-		} catch (error) {
-			const safeMessage = userFacingWorkflowError(error, activeStage);
-			try {
-				await step.do('mark debt import failed', {
-					retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' }
-				}, async () => withDatabase(
-					this.env,
-					'eastmoney-financing-debt-import-failed',
-					(database) => failDebtImportRun(database, runId, safeMessage)
-				));
-			} catch (statusError) {
-				console.error('Failed to persist debt import failure status', statusError);
-			}
-			throw error;
+		const { payloadBase64, fileName, fileSizeBytes } = event.payload;
+		if (
+			typeof payloadBase64 !== 'string'
+			|| typeof fileName !== 'string'
+			|| !fileName.toLowerCase().endsWith('.xlsx')
+			|| !Number.isInteger(fileSizeBytes)
+			|| fileSizeBytes <= 0
+			|| fileSizeBytes > 10 * 1024 * 1024
+		) {
+			throw new NonRetryableError('Workflow 导入参数无效');
 		}
+
+		return step.do('validate and atomically import debt ledger', {
+			retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
+			timeout: '20 minutes'
+		}, async () => {
+			const payload = decodeWorkflowPayload(payloadBase64);
+			const source = debtImportSummary(payload);
+			try {
+				const result = await withDatabase(
+					this.env,
+					'eastmoney-financing-debt-import',
+					(database) => importDebtWorkbook(database, payload, { refreshDerivatives: true })
+				);
+				return {
+					fileName,
+					fileSizeBytes,
+					asOfDate: result.asOfDate,
+					totalYi: result.totalYi,
+					sourceDebtCount: source.debtCount,
+					sourceCashflowCount: source.cashflowCount,
+					sourceBalanceCount: source.balanceCount,
+					insertedDebtCount: result.insertedDebtCount,
+					updatedDebtCount: result.updatedDebtCount,
+					insertedCashflowCount: result.insertedCashflowCount,
+					updatedCashflowCount: result.updatedCashflowCount,
+					databaseDebtCount: result.debtCount,
+					databaseCashflowCount: result.cashflowCount,
+					historyDateCount: result.historyDateCount,
+					derivedMetricCount: result.derivedMetricCount,
+					createdAt: event.timestamp.toISOString(),
+					completedAt: new Date().toISOString()
+				};
+			} catch (error) {
+				if (isBusinessValidationError(error)) {
+					throw new NonRetryableError(nonRetryableMessage(error));
+				}
+				throw error;
+			}
+		});
 	}
 }
