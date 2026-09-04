@@ -75,7 +75,7 @@ test('login emails are normalized and validated', () => {
 	assert.equal(isValidEmail('legacy-admin'), false);
 });
 
-test('write authorization is enforced by role and named action', () => {
+test('internal testing grants every active business role full write access', () => {
 	assert.equal(actionNameFromUrl(new URL('https://example.com/financing/logout')), 'default');
 	assert.equal(actionNameFromUrl(new URL('https://example.com/financing/projects?/createProject')), 'createProject');
 	for (const method of ['GET', 'HEAD', 'OPTIONS']) {
@@ -83,35 +83,22 @@ test('write authorization is enforced by role and named action', () => {
 		assert.equal(isAuthorizedRequest(null, '/projects', method), true);
 	}
 	assert.equal(isSafeRequestMethod('POST'), false);
-	assert.equal(isAuthorizedRequest('admin', '/sop/[id]', 'POST', 'deleteNode'), true);
-
-	for (const role of ['handler', 'reviewer']) {
+	for (const role of ['admin', 'handler', 'reviewer']) {
 		assert.equal(isAuthorizedRequest(role, '/logout', 'POST'), true);
 		assert.equal(isAuthorizedRequest(role, '/settings', 'POST', 'updateProfile'), true);
 		assert.equal(isAuthorizedRequest(role, '/settings', 'POST', 'updatePassword'), true);
 		assert.equal(isAuthorizedRequest(role, '/projects/[id]', 'POST', 'updateOwnTaskStatus'), true);
-		assert.equal(isAuthorizedRequest(role, '/projects/[id]', 'POST', 'updateTask'), false);
-		assert.equal(isAuthorizedRequest(role, '/logout', 'DELETE'), false);
+		assert.equal(isAuthorizedRequest(role, '/projects/[id]', 'POST', 'updateTask'), true);
+		assert.equal(isAuthorizedRequest(role, '/logout', 'DELETE'), true);
+		assert.equal(isAuthorizedRequest(role, '/people', 'POST', 'updatePerson'), true);
+		assert.equal(isAuthorizedRequest(role, '/sop', 'POST', 'createReminder'), true);
+		assert.equal(isAuthorizedRequest(role, '/data/import', 'POST'), true);
 	}
-
-	for (const [routeId, actionName] of [
-		['/people', 'createPerson'],
-		['/projects', 'createProject'],
-		['/sop', 'createSop'],
-		['/liability-report', 'saveSnapshot']
-	]) {
-		assert.equal(isAuthorizedRequest('reviewer', routeId, 'POST', actionName), true);
-		assert.equal(isAuthorizedRequest('handler', routeId, 'POST', actionName), false);
-	}
-	assert.equal(isAuthorizedRequest('reviewer', '/people', 'POST', 'updatePerson'), false);
-	assert.equal(isAuthorizedRequest('reviewer', '/sop', 'POST', 'createReminder'), false);
-	assert.equal(isAuthorizedRequest('reviewer', '/data/import', 'POST'), false);
-	assert.equal(isAuthorizedRequest('handler', '/data/import', 'POST'), false);
+	assert.equal(isAuthorizedRequest(null, '/projects', 'POST', 'createProject'), false);
+	assert.equal(isAuthorizedRequest('unknown', '/projects', 'POST', 'createProject'), false);
 });
 
-test('reviewer creation and own-task writes retain server-side field boundaries', () => {
-	const peopleSource = fs.readFileSync(new URL('../src/routes/people/+page.server.ts', import.meta.url), 'utf8');
-	assert.match(peopleSource, /actorRole === 'reviewer' && \(fields\.accountEnabled \|\| fields\.role === 'admin'\)/);
+test('own-task action retains its narrow server-side field boundary', () => {
 	const taskSource = fs.readFileSync(new URL('../src/routes/projects/[id]/+page.server.ts', import.meta.url), 'utf8');
 	assert.match(taskSource, /updateOwnTaskStatus:/);
 	assert.match(taskSource, /before\.assigneeId !== personId/);

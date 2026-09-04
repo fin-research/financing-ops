@@ -24,6 +24,7 @@
 	import { autoSave, completeAutoSave, getAutoSaveRevision } from '$lib/auto-save';
 	import { withBase } from '$lib/app-paths';
 	import { globalMessages } from '$lib/global-messages';
+	import { hasInternalTestFullAccess } from '$lib/roles';
 	import { buildProjectPageData } from '$lib/project-page.js';
 
 	let { data } = $props();
@@ -48,8 +49,8 @@
 	let actionState = $state<{ key: string; status: 'idle' | 'pending' }>({
 		key: '', status: 'idle'
 	});
-	const canManage = $derived(data?.user?.role === 'admin');
-	const canCreate = $derived(canManage || data?.user?.role === 'reviewer');
+	const canManage = $derived(hasInternalTestFullAccess(data?.user?.role));
+	const canCreate = $derived(canManage);
 
 	function showAutoSaved(message: string) {
 		globalMessages.success(message, { key: 'project-list-auto-save', duration: 3000, title: '项目已同步' });

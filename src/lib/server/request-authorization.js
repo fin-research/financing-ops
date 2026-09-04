@@ -1,16 +1,6 @@
+import { hasInternalTestFullAccess } from '../role-access.js';
+
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-const AUTHENTICATED_POST_ACTIONS = new Set([
-	'/logout:default',
-	'/settings:updateProfile',
-	'/settings:updatePassword',
-	'/projects/[id]:updateOwnTaskStatus'
-]);
-const REVIEWER_CREATE_ACTIONS = new Set([
-	'/people:createPerson',
-	'/projects:createProject',
-	'/sop:createSop',
-	'/liability-report:saveSnapshot'
-]);
 
 /** @param {string} method */
 export function isSafeRequestMethod(method) {
@@ -36,9 +26,5 @@ export function actionNameFromUrl(url) {
  */
 export function isAuthorizedRequest(role, routeId, method, actionName = 'default') {
 	if (isSafeRequestMethod(method)) return true;
-	if (role === 'admin') return true;
-	if (method !== 'POST' || (role !== 'handler' && role !== 'reviewer')) return false;
-	const actionKey = `${routeId ?? ''}:${actionName}`;
-	if (AUTHENTICATED_POST_ACTIONS.has(actionKey)) return true;
-	return role === 'reviewer' && REVIEWER_CREATE_ACTIONS.has(actionKey);
+	return hasInternalTestFullAccess(role);
 }

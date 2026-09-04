@@ -2,6 +2,7 @@
 	import '../management.css';
 	import DataAdminTable from '$lib/DataAdminTable.svelte';
 	import DebtImportPanel from '$lib/DebtImportPanel.svelte';
+	import { hasInternalTestFullAccess } from '$lib/roles';
 
 	let { data } = $props();
 </script>
@@ -11,7 +12,7 @@
 </svelte:head>
 
 <div class="management-page data-page">
-	{#if data.user?.role === 'admin'}
+	{#if hasInternalTestFullAccess(data.user?.role)}
 		<DebtImportPanel />
 	{/if}
 	<DataAdminTable />

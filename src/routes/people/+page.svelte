@@ -17,7 +17,7 @@
 		UserX,
 		Users
 	} from '@lucide/svelte';
-	import { ROLE_DEFINITIONS, roleLabel } from '$lib/roles';
+	import { hasInternalTestFullAccess, ROLE_DEFINITIONS, roleLabel } from '$lib/roles';
 	import { globalMessages } from '$lib/global-messages';
 	import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
 
@@ -35,11 +35,9 @@
 	const peopleAccess = $derived({ people: displayedPeople });
 	const roleCount = (role: string) =>
 		displayedPeople.filter((person: any) => person.role === role).length;
-	const canManage = $derived(data?.user?.role === 'admin');
-	const canCreate = $derived(canManage || data?.user?.role === 'reviewer');
-	const creatableRoles = $derived(
-		canManage ? ROLE_DEFINITIONS : ROLE_DEFINITIONS.filter((role) => role.code !== 'admin')
-	);
+	const canManage = $derived(hasInternalTestFullAccess(data?.user?.role));
+	const canCreate = $derived(canManage);
+	const creatableRoles = ROLE_DEFINITIONS;
 
 	const enhanceAction = (key: string, closeDialog = false): SubmitFunction => {
 		return () => {

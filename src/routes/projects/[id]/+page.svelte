@@ -14,7 +14,7 @@
 	} from '@lucide/svelte';
 	import { autoSave, completeAutoSave, getAutoSaveRevision } from '$lib/auto-save';
 	import { globalMessages } from '$lib/global-messages';
-	import { roleLabel } from '$lib/roles';
+	import { hasInternalTestFullAccess, roleLabel } from '$lib/roles';
 	import { withBase } from '$lib/app-paths';
 
 	let { data: routeData, form } = $props();
@@ -31,7 +31,7 @@
 	let suppressFormFeedback = $state(false);
 	let handledForm = $state<unknown>(null);
 	const pendingAction = $derived(pendingActions.at(-1) ?? '');
-	const canManage = $derived(data?.user?.role === 'admin');
+	const canManage = $derived(hasInternalTestFullAccess(data?.user?.role));
 	const canUpdateTaskStatus = (task: any) => canManage || task.assigneeId === data?.user?.personId;
 	$effect(() => {
 		if (!form?.message || suppressFormFeedback || handledForm === form) return;

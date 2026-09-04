@@ -8,6 +8,7 @@ import {
 import { debtImportRun } from '$lib/server/debt-import-workflow.js';
 import { sha256Hex } from '../../../../scripts/lib/hash.mjs';
 import type { RequestHandler } from './$types';
+import { hasInternalTestFullAccess } from '$lib/roles';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const PRIVATE_JSON_HEADERS = {
@@ -15,8 +16,8 @@ const PRIVATE_JSON_HEADERS = {
 	vary: 'Cookie'
 };
 
-function requireAdmin(locals: App.Locals) {
-	return locals.user?.role === 'admin';
+function canImportDebtLedger(locals: App.Locals) {
+	return hasInternalTestFullAccess(locals.user?.role);
 }
 
 function uploadFileName(request: Request) {
@@ -56,7 +57,7 @@ function safeError(error: unknown) {
 }
 
 export const POST: RequestHandler = async ({ request, url, locals, platform }) => {
-	if (!requireAdmin(locals)) return json({ error: '仅管理员可上传借入资金汇总表' }, { status: 403 });
+	if (!canImportDebtLedger(locals)) return json({ error: '当前角色无权上传借入资金汇总表' }, { status: 403 });
 	if (request.headers.get('origin') !== url.origin) {
 		return json({ error: '上传请求来源无效，请刷新页面后重试' }, { status: 403 });
 	}

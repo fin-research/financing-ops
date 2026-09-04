@@ -20,7 +20,7 @@
 - action 负责输入解析、业务校验、权限和事务调用。
 - 负债周报 `saveSnapshot` action 成功时返回快照 ID、内容版本、报告日对应的成功文案和缺失模块清单；浏览器随后显式导航到当前报告日并强制重跑页面 load，只读取刚保存的索引与 R2 快照，不重新请求 Neon、Choice 或 DM。页面只有在 load 返回同一内容版本后才宣告更新完成并重建报告视图；软导航没有取得新版本时自动整页重载，并在重载后恢复生成结果与待核对系统消息。
 - 进入负债周报或切换 `?date=yyyy-mm-dd` 时只按报告日读取已有快照；无快照时不发起数据拉取，且只显示点击“生成本期周报”的空状态。点击生成后并行请求统一数据服务的 `/data/choice/ctr`、`/data/broker-bond-registrations`，以及 Neon Data API 的 `/rpc/liability_weekly_report_data` 和 `/liability_market_rate_observations`。浏览器用原始市场观测计算信用利差并合并载荷；市场利率视图不可用时只将市场利率与信用利差模块留空并写入待核对项，不阻断其他业务数据生成和快照保存。明细余额只与报告日同日的余额快照勾稽；最近快照较早时只提示快照日期缺口，不报告跨日金额差。保存 action 只接收、白名单校验并固化结果，不在 financing Worker 内代理上游或执行报表聚合查询。
-- 写权限精确到 named action：`reviewer` 仅开放人员主档、项目和 SOP 的创建 action；所有启用角色的本人任务 action 只接收 `taskId` 与 `status`，并在查询和更新时双重校验 `assignee_id`。
+- 内部测试阶段，三种启用角色可调用全部业务 named action；本人任务 action 仍只接收 `taskId` 与 `status`，并在查询和更新时双重校验 `assignee_id`，为后续权限收紧保留安全边界。
 - 成功响应只返回一个新增/更新实体或删除 ID；浏览器就地合并。
 - 禁止在 action 成功后返回当前页面完整列表，禁止前端 `invalidateAll`。
 - 只有身份或顶栏提醒确实变化时才定向失效相应根布局依赖。

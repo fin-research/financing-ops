@@ -54,7 +54,7 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 - Data API 支持 PostgREST 过滤、关联和聚合，也支持调用数据库函数；负债周报使用固定的 `liability_weekly_report_data(date)` RPC 聚合融资业务数据，并通过只读视图 `liability_market_rate_observations` 按指标和日期直接读取原始市场观测。RPC 与视图仅向 `authenticated` 开放，不再要求 JWT 用户关联 `people`；`monthly_financing_metrics` 与底层 `public.edb` 均不直接开放。
 - 现金流、历史余额和审计记录不展示，且 `authenticated` 不得通过 Data API 访问。
 - 导入载荷、运行状态和结果不写入 Neon；数据库只保存原子提交后的业务表与衍生表结果。
-- 活跃且关联 Neon Auth 的三种业务角色均可按现有 RLS 编辑数据后台表；SvelteKit 管理 actions 仍由服务端角色规则单独控制。
+- 活跃且关联 Neon Auth 的三种业务角色均可按现有 RLS 编辑数据后台表；内部测试阶段 SvelteKit 管理 actions 同样向三种角色开放。
 - 更新和删除携带 `updated_at` 做乐观并发检查；主键和计算列只读。
 - DDL、视图、函数或列变化后必须显式刷新 Neon Data API schema cache：`neon data-api refresh-schema --database neondb`；migration 中的 PostgreSQL `NOTIFY pgrst` 不能替代 Neon 托管 Data API 的刷新动作。
 

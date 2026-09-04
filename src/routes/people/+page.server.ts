@@ -10,6 +10,7 @@ import { getPeopleAccessData, getPersonAccessData } from '$lib/server/queries.js
 import { auditRequestMeta, prepareAudit } from '$lib/server/audit.js';
 import { isValidEmail, normalizeEmail } from '$lib/email.js';
 import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
+import { hasInternalTestFullAccess } from '$lib/roles';
 
 const validRoles = new Set(['admin', 'handler', 'reviewer']);
 
@@ -87,11 +88,8 @@ export const actions: Actions = {
 	createPerson: async (event) => {
 		const fields = identityFields(await event.request.formData());
 		const actorRole = event.locals.user?.role;
-		if (actorRole !== 'admin' && actorRole !== 'reviewer') {
+		if (!hasInternalTestFullAccess(actorRole)) {
 			return fail(403, { message: '当前角色无权添加人员' });
-		}
-		if (actorRole === 'reviewer' && (fields.accountEnabled || fields.role === 'admin')) {
-			return fail(403, { message: '复核角色仅可添加非管理员人员主档，登录权限由管理员开通' });
 		}
 		const message = validationMessage(fields);
 		if (message) return fail(400, { message });

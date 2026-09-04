@@ -14,7 +14,7 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
 				today: todayIso,
 				toDate: reminderEnd,
 				personId: locals.user.personId,
-				ownOnly: locals.user.role === 'handler'
+				ownOnly: false
 			})
 		: { reminders: { items: [], total: 0 } };
 	return {
