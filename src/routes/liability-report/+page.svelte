@@ -1,6 +1,7 @@
 <script lang="ts">
 	import './weekly-report.css';
 	import { withBase } from '$lib/app-paths';
+	import { FileText } from '@lucide/svelte';
 	import { liabilityTypeColor } from '$lib/liability-report-charts';
 	import { emptyLiabilityWeeklyReport } from '$lib/liability-report-data.js';
 	import ReportBalanceRateChart from './ReportBalanceRateChart.svelte';
@@ -132,6 +133,19 @@
 
 <svelte:head><title>东方财富证券 · 资金管理部负债周报</title></svelte:head>
 
+{#if !hasSnapshot}
+	<section class="report-empty" aria-labelledby="report-empty-title">
+		<span class="report-empty-icon" aria-hidden="true"><FileText size={34} strokeWidth={1.7} /></span>
+		<h1 id="report-empty-title">暂无 {data.selectedReportDate} 负债周报</h1>
+		{#if data.snapshotError}
+			<p role="alert">周报快照读取失败：{data.snapshotError}</p>
+		{:else}
+			<p>当前报告日还没有数据快照。</p>
+		{/if}
+		<p>请点击右上角“生成本期周报”获取数据。</p>
+	</section>
+{:else}
+{#key data.snapshotVersion}
 <div class="report-pages">
 	<article class="report-page">
 		<div class="report-page-body">
@@ -140,9 +154,7 @@
 				<div class="report-period"><span>报表日期：{headerDate(report.asOfDate)}</span><span>编制：资金管理部 融资组</span></div>
 			</header>
 
-			{#if data.snapshotError}<p class="snapshot-error" role="alert">{data.snapshotError}</p>{/if}
-
-<section class="report-section" aria-labelledby="section-1-title">
+	<section class="report-section" aria-labelledby="section-1-title">
 	<div class="card-head"><div class="section-title-wrap"><span class="section-tag">第一部分</span><h2 id="section-1-title" class="section-title">近期负债发行与到期动态</h2></div></div>
 	<div class="bento-card dynamic-card"><div class="dynamic-grid">{#each [{ label: '本周', items: currentEvents, issueLabel: '负债缴款' }, { label: '下周', items: nextEvents, issueLabel: '负债发行' }] as group}<div class="template-week-card"><div class="week-summary">{group.label}{group.issueLabel} <strong class="positive">{amount(sumEvents(group.items, ['issue']))}</strong> 亿元，到期 <strong class="negative-text">{amount(sumEvents(group.items, ['maturity']))}</strong> 亿元，付息 <strong class="negative-text">{amount(sumEvents(group.items, ['interest']))}</strong> 亿元</div><div class="table-scroll"><table class="event-table"><tbody>{#each group.items as item}<tr><td>{weekdayDate(item.date)}</td><td><span class={`event-kind event-${item.kind}`}>{eventLabel(item.kind)}</span>：【{item.name}】</td><td>{amount(item.amountYi, 4)}E</td></tr>{:else}<tr><td colspan="3" class="table-empty">{hasSnapshot ? '暂无符合口径的动态' : '暂无可靠数据'}</td></tr>{/each}</tbody></table></div></div>{/each}</div><div class="template-plan-card"><div class="plan-title">推进中的融资计划</div><div class="table-scroll"><table class="plan-table"><thead><tr><th>品种</th><th>规模</th><th>期限</th><th>预计利率区间</th><th>发行/簿记日期</th></tr></thead><tbody>{#each dynamicProjects as project}<tr><td>{project.name}</td><td>{project.amountDescription ?? `${amount(project.amountYi)}E`}</td><td>{project.tenorDescription ?? '数据缺失'}</td><td>{projectRate(project)}</td><td>{dateLabel(project.plannedIssueDate)}</td></tr>{:else}<tr><td colspan="5" class="table-empty">{hasSnapshot ? '暂无符合口径的融资计划' : '暂无可靠数据'}</td></tr>{/each}</tbody></table></div></div></div>
 </section>
@@ -229,3 +241,5 @@
 		<footer class="bento-footer" aria-label="第 6 页"><span>东方财富证券股份有限公司 · 资金管理部</span><span>第 6 页 · 共 6 页</span></footer>
 	</article>
 </div>
+{/key}
+{/if}

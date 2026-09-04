@@ -131,6 +131,8 @@ test('liability report page reads one snapshot and generation splits business an
 	assert.match(layout, /Promise\.all\(\[[\s\S]*fetchManualLiabilitySources[\s\S]*liabilityWeeklyReportBusiness[\s\S]*marketRatesRequest/);
 	assert.match(layout, /attachLiabilityMarketRates\([\s\S]*marketRatesResult\.rows,[\s\S]*marketRatesResult\.error/);
 	assert.match(layout, /await update\(\{ reset: false, invalidateAll: false \}\)/);
-	assert.match(layout, /await goto\(page\.url, \{[\s\S]*invalidateAll: true[\s\S]*replaceState: true[\s\S]*noScroll: true/);
-	assert.match(layout, /周报快照已保存，但页面刷新失败，请手动刷新后查看/);
+	assert.match(page, /snapshotVersion: report \? selectedRun\?\.contentSha256 \?\? null : null/);
+	assert.match(layout, /await goto\(reportUrl, \{[\s\S]*invalidateAll: true[\s\S]*replaceState: true[\s\S]*noScroll: true/);
+	assert.match(layout, /page\.data as any\)\?\.snapshotVersion[\s\S]*window\.location\.replace\(reportUrl\)/);
+	assert.match(layout, /sessionStorage\.setItem\(REPORT_NOTICE_KEY/);
 });

@@ -41,6 +41,7 @@ export const load: PageServerLoad = async ({ url, platform }) => {
 		selectedReportDate,
 		today,
 		hasSnapshot: Boolean(report),
+		snapshotVersion: report ? selectedRun?.contentSha256 ?? null : null,
 		snapshotError,
 		externalDataApiUrl
 	};
@@ -71,6 +72,7 @@ export const actions = {
 			return {
 				success: true,
 				reportRunId: result.id,
+				snapshotVersion: result.contentSha256,
 				missingModules: result.missingModules,
 				message: `已生成 ${result.asOfDate} 周报快照`
 			};

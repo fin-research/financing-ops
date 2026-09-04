@@ -247,6 +247,9 @@ export function normalizeLiabilityReportDatabasePayload(value, expectedAsOfDate)
 	const reportParameters = parameters(raw.parameters);
 	const balanceYi = number(raw.balanceYi, '主动负债余额');
 	const liveBalanceYi = number(raw.liveBalanceYi, '实时明细余额');
+	const balanceSnapshotDate = date(raw.balanceSnapshotDate, '余额快照日期', { nullable: true });
+	const reconciliationComparable = balanceSnapshotDate === asOfDate;
+	const reconciliationDeltaYi = reconciliationComparable ? liveBalanceYi - balanceYi : null;
 	const longBalanceYi = number(raw.longBalanceYi, '长期负债余额');
 	const shortBalanceYi = number(raw.shortBalanceYi, '短期负债余额');
 	const weightedRate = number(raw.weightedRate, '加权融资利率', { nullable: true });
@@ -294,12 +297,13 @@ export function normalizeLiabilityReportDatabasePayload(value, expectedAsOfDate)
 			cumulativeGroupRatio: ratio(cumulativeBorrowingYi, groupNetAssets)
 		},
 		quality: {
-			balanceSnapshotDate: date(raw.balanceSnapshotDate, '余额快照日期', { nullable: true }),
+			balanceSnapshotDate,
 			liveBalanceYi,
-			reconciliationDeltaYi: liveBalanceYi - balanceYi,
+			reconciliationComparable,
+			reconciliationDeltaYi,
 			rateCoveragePct: number(raw.rateCoverage, '利率覆盖率') * 100,
 			lifecycleCoveragePct: number(raw.lifecycleCoverage, '期限覆盖率') * 100,
-			liveDerivedReliable: Math.abs(liveBalanceYi - balanceYi) < 0.005,
+			liveDerivedReliable: reconciliationComparable ? Math.abs(reconciliationDeltaYi) < 0.005 : null,
 			marketRateError: text(raw.marketRateError, '市场利率读取错误', { nullable: true, maximum: 500 }),
 			missingMaturityCount: number(raw.missingMaturityCount, '缺失到期日数量', { minimum: 0, maximum: 1_000_000 }),
 			missingMaturityAmountYi: number(raw.missingMaturityAmountYi, '缺失到期日金额', { minimum: 0 }),

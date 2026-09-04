@@ -112,6 +112,7 @@ test('Neon report RPC payload is date-bound and normalized before snapshotting',
 		report: {
 			asOfDate: '2026-09-03', today: '2026-09-03', balanceYi: 12,
 			previousMonthBalanceYi: 10, previousYearBalanceYi: 8, liveBalanceYi: 12,
+			balanceSnapshotDate: '2026-09-03',
 			longBalanceYi: 7, shortBalanceYi: 5, cumulativeBorrowingYi: 2,
 			parameters: {}, composition: [{ type: '公募债', amountYi: 12 }]
 		},
@@ -121,11 +122,34 @@ test('Neon report RPC payload is date-bound and normalized before snapshotting',
 	assert.equal(report.asOfDate, '2026-09-03');
 	assert.equal(report.metrics.balanceMonthChangeYi, 2);
 	assert.equal(report.metrics.longBalanceRatio, 7 / 12 * 100);
+	assert.equal(report.quality.reconciliationComparable, true);
+	assert.equal(report.quality.reconciliationDeltaYi, 0);
 	assert.deepEqual(report.composition, [{ type: '公募债', amountYi: 12 }]);
 	assert.throws(
 		() => normalizeLiabilityReportDatabasePayload(payload, '2026-09-02'),
 		/与所选日期 2026-09-02 不一致/
 	);
+});
+
+test('balance reconciliation never compares report-date details with an older snapshot', () => {
+	const report = normalizeLiabilityReportDatabasePayload({
+		version: 1,
+		report: {
+			asOfDate: '2026-09-04', today: '2026-09-04', balanceYi: 12,
+			previousMonthBalanceYi: 10, previousYearBalanceYi: 8, liveBalanceYi: 25,
+			balanceSnapshotDate: '2026-09-03',
+			longBalanceYi: 20, shortBalanceYi: 5, cumulativeBorrowingYi: 2,
+			parameters: {}, composition: [{ type: '公募债', amountYi: 12 }]
+		},
+		limits: []
+	}, '2026-09-04');
+	const source = fs.readFileSync(new URL('../src/lib/server/liability-weekly-reports.js', import.meta.url), 'utf8');
+
+	assert.equal(report.quality.reconciliationComparable, false);
+	assert.equal(report.quality.reconciliationDeltaYi, null);
+	assert.equal(report.quality.liveDerivedReliable, null);
+	assert.match(source, /balanceSnapshotDate !== report\.asOfDate[\s\S]*code: 'balance_snapshot_date'[\s\S]*不执行跨日明细勾稽/);
+	assert.match(source, /else if \(report\.quality\.liveDerivedReliable === false\)[\s\S]*code: 'reconciliation'/);
 });
 
 test('raw EDB observations are classified and broker-government spreads are calculated outside SQL', () => {
@@ -251,7 +275,8 @@ test('weekly page renders the complete report directly in the workspace', () => 
 	assert.match(source, /let hasSnapshot = \$derived\(Boolean\(data\.hasSnapshot\)\)/);
 	assert.match(source, /hasSnapshot \? amount\(compositionTotal\) : '数据缺失'/);
 	assert.match(source, /sumEvents[\s\S]*hasSnapshot/);
-	assert.doesNotMatch(source, /页面不会自动拉取业务数据|暂无周报快照|生成本期周报/);
+	assert.match(source, /\{#if !hasSnapshot\}[\s\S]*当前报告日还没有数据快照[\s\S]*生成本期周报/);
+	assert.match(source, /\{#key data\.snapshotVersion\}/);
 	assert.doesNotMatch(source, /数据缺失与来源状态|数据源：public\.edb ｜ 每日更新|历史周报快照/);
 	assert.equal((source.match(/class="report-section"/g) ?? []).length, 7);
 });
@@ -344,8 +369,9 @@ test('generation publishes missing-data reminders through global system messages
 	const server = fs.readFileSync(new URL('../src/routes/liability-report/+page.server.ts', import.meta.url), 'utf8');
 	assert.match(layout, /globalMessages\.warning\(/);
 	assert.match(layout, /liability-report-missing-modules/);
-	assert.match(layout, /本次周报有 \$\{missingModules\.length\} 项待核对/);
+	assert.match(layout, /本次周报有 \$\{notice\.missingModules\.length\} 项待核对/);
 	assert.match(server, /missingModules: result\.missingModules/);
+	assert.match(server, /snapshotVersion: result\.contentSha256/);
 });
 
 test('monitoring gauges use strong threshold colors and keep the value clear of the arc', () => {

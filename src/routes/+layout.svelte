@@ -61,6 +61,49 @@
 	let reportGenerating = $state(false);
 	let reportSnapshotForm = $state<HTMLFormElement>();
 	let reportSourcesPayload = $state('');
+	let restoredReportNotice = false;
+	const REPORT_NOTICE_KEY = 'financing:liability-report-generation-notice';
+	type ReportGenerationNotice = { message: string; missingModules: Array<{ title: string; detail: string }> };
+
+	const reportGenerationNotice = (resultData: any): ReportGenerationNotice => ({
+		message: String(resultData?.message ?? '周报已生成'),
+		missingModules: Array.isArray(resultData?.missingModules) ? resultData.missingModules : []
+	});
+	const publishReportGenerationNotice = (notice: ReportGenerationNotice) => {
+		globalMessages.success(notice.message, {
+			key: 'liability-report-generation',
+			title: '周报生成完成'
+		});
+		if (notice.missingModules.length > 0) {
+			globalMessages.warning(
+				notice.missingModules.map((item) => `${item.title}：${item.detail}`).join('；'),
+				{
+					key: 'liability-report-missing-modules',
+					title: `本次周报有 ${notice.missingModules.length} 项待核对`,
+					duration: 12000
+				}
+			);
+		}
+	};
+	const preserveReportGenerationNotice = (notice: ReportGenerationNotice) => {
+		try {
+			sessionStorage.setItem(REPORT_NOTICE_KEY, JSON.stringify(notice));
+		} catch {
+			// A hard reload still refreshes the report when session storage is unavailable.
+		}
+	};
+	$effect(() => {
+		if (restoredReportNotice) return;
+		restoredReportNotice = true;
+		try {
+			const raw = sessionStorage.getItem(REPORT_NOTICE_KEY);
+			if (!raw) return;
+			sessionStorage.removeItem(REPORT_NOTICE_KEY);
+			publishReportGenerationNotice(JSON.parse(raw));
+		} catch {
+			// The report remains usable when storage is unavailable or contains invalid data.
+		}
+	});
 	$effect(() => {
 		if (!navigating.to) {
 			navigationSlow = false;
@@ -132,35 +175,29 @@
 			try {
 				await update({ reset: false, invalidateAll: false });
 				if (result.type === 'success') {
+					const notice = reportGenerationNotice(result.data);
+					const reportDate = selectedLiabilityReportDate();
+					const reportUrl = withBase(`/liability-report?date=${encodeURIComponent(reportDate)}`);
+					const expectedVersion = String(result.data?.snapshotVersion ?? '');
 					try {
-						await goto(page.url, {
+						await goto(reportUrl, {
 							invalidateAll: true,
 							replaceState: true,
 							noScroll: true,
 							keepFocus: true
 						});
+						await tick();
+						if (!expectedVersion || String((page.data as any)?.snapshotVersion ?? '') !== expectedVersion) {
+							preserveReportGenerationNotice(notice);
+							window.location.replace(reportUrl);
+							return;
+						}
 					} catch {
-						globalMessages.warning('周报快照已保存，但页面刷新失败，请手动刷新后查看。', {
-							key: 'liability-report-generation',
-							title: '周报已保存'
-						});
+						preserveReportGenerationNotice(notice);
+						window.location.replace(reportUrl);
 						return;
 					}
-					globalMessages.success(String(result.data?.message ?? '周报已生成'), {
-						key: 'liability-report-generation',
-						title: '周报生成完成'
-					});
-					const missingModules = Array.isArray(result.data?.missingModules) ? result.data.missingModules : [];
-					if (missingModules.length > 0) {
-						globalMessages.warning(
-							missingModules.map((item: any) => `${item.title}：${item.detail}`).join('；'),
-							{
-								key: 'liability-report-missing-modules',
-								title: `本次周报有 ${missingModules.length} 项待核对`,
-								duration: 12000
-							}
-						);
-					}
+					publishReportGenerationNotice(notice);
 				} else {
 					const message = result.type === 'failure'
 						? String(result.data?.message ?? '周报生成失败，请检查后重试。')

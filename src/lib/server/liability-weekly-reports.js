@@ -98,7 +98,15 @@ export function getLiabilityWeeklyReportSourceStatus(report, sources = {
 	if (Number(counts.incomplete_project_count ?? 0) > 0) {
 		missingModules.push({ code: 'project_fields', title: '推进中项目字段', detail: `${counts.incomplete_project_count} 个推进中项目缺少预计利率、资金成本、期限描述或规模说明中的一项。` });
 	}
-	if (!report.quality.liveDerivedReliable) {
+	if (report.quality.balanceSnapshotDate !== report.asOfDate) {
+		missingModules.push({
+			code: 'balance_snapshot_date',
+			title: '负债余额快照',
+			detail: report.quality.balanceSnapshotDate
+				? `最近余额快照为 ${report.quality.balanceSnapshotDate}，与报告日 ${report.asOfDate} 不同日；主动负债余额与结构沿用该快照，不执行跨日明细勾稽。`
+				: `报告日 ${report.asOfDate} 之前无可用余额快照，主动负债余额与结构暂无可靠数据。`
+		});
+	} else if (report.quality.liveDerivedReliable === false) {
 		missingModules.push({
 			code: 'reconciliation',
 			title: '负债明细与余额快照勾稽',

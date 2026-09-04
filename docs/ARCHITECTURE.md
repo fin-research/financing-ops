@@ -71,7 +71,7 @@ Workflow 使用原生 Brotli 解压，按 Protobuf 批次逐批校验和导入�
 - Dashboard 主数据、额度和日历当前为 3 次集合查询；根布局数据日期与提醒为 1 次。
 - 项目列表首屏 1 次集合查询；人员与启用 SOP 在弹窗打开时通过 `/projects/options` 1 次按需加载。
 - 提醒历史使用三字段 keyset 游标，每批最多 50 条，加载更多不重复全量汇总。
-- 负债周报首屏只按所选报告日查询一行 `liability_weekly_report_runs`；存在成功索引时读取对应 R2 对象，不存在时返回空状态。页面 load、刷新、日期切换和 Cron 均不得读取报表明细、Neon Data API、Choice 或 DM。
+- 负债周报首屏只按所选报告日查询一行 `liability_weekly_report_runs`；存在成功索引时读取对应 R2 对象并将内容哈希作为前端报告版本，不存在时返回点击生成的空状态。生成后的软导航若未观察到服务端返回的新内容哈希，浏览器自动整页重载。页面 load、刷新、日期切换和 Cron 均不得读取报表明细、Neon Data API、Choice 或 DM。
 - 数据后台仍无独立 page server load。浏览器只用本地保存的最近实例 ID 向 Workflow 查询状态；约 1.5 秒轮询只在实例活跃时运行并在终态停止，不增加导入状态 SQL。
 - 只有用户点击“生成本期周报”后，浏览器才并行执行四条数据请求：一次 Choice CTR 年初至报告日逻辑请求、报告日所在周周一至报告日的 DM 分页请求、一次 Neon Data API 业务聚合 RPC、一次 Neon Data API 原始市场观测读取。业务集合与 JSON 聚合在 PostgreSQL 内完成；2021 年以来已结束月份直接读取 `monthly_financing_metrics`，函数只惰性补齐尚未固化的月末，当前报告月份实时计算。市场请求只扫描白名单 `public.edb` 原始行，信用利差在浏览器计算。`saveSnapshot` action 只做边界校验、内容哈希、R2 写入和一行索引/审计事务。快照写入 `eastmoney/liability-report/yyyy-mm-dd.json` 固定 key；同一日重新生成覆盖同一对象和索引行。`public.edb` 的增量写入由 dashboard 每日定时 Workflow 统一负责。
 
