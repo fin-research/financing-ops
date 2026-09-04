@@ -117,6 +117,8 @@ export function getLiabilityWeeklyReportSourceStatus(report, sources = {
 }
 
 export async function getLiabilityWeeklyReportRunByDate(database, asOfDate) {
+	// Hyperdrive does not invalidate a cached empty SELECT after snapshot generation.
+	// The real-time predicate keeps this read-after-write path outside its query cache.
 	return database.prepare(`
 		SELECT id, as_of_date AS "asOfDate", generated_at AS "generatedAt",
 			generated_by_person_id AS "generatedByPersonId", r2_key AS "r2Key",
@@ -124,6 +126,7 @@ export async function getLiabilityWeeklyReportRunByDate(database, asOfDate) {
 			missing_modules AS "missingModules", error_message AS "errorMessage"
 		FROM liability_weekly_report_runs
 		WHERE as_of_date = ? AND status = 'complete'
+			AND updated_at <= CURRENT_TIMESTAMP
 		LIMIT 1
 	`).get(asOfDate);
 }

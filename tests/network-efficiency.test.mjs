@@ -124,6 +124,7 @@ test('liability report page reads one snapshot and generation splits business an
 	assert.match(page, /if \(selectedRun && platform\?\.env\?\.LIABILITY_REPORT_SNAPSHOTS\)/);
 	assert.doesNotMatch(page, /getLiabilityWeeklyReportData|fetchManualLiabilitySources|liabilityWeeklyReport\(/);
 	assert.equal((service.match(/database\.prepare\(/g) ?? []).length, 3);
+	assert.match(service, /WHERE as_of_date = \? AND status = 'complete'[\s\S]*updated_at <= CURRENT_TIMESTAMP/);
 	assert.match(client, /#request\('rpc\/liability_weekly_report_data'/);
 	assert.match(client, /#request\(`liability_market_rate_observations\?\$\{params\}`\)/);
 	assert.match(layout, /const neonDataApi = new NeonDataApi\(\)/);
