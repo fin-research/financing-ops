@@ -87,12 +87,13 @@ test('page loads defer form-only options and remove duplicate identity queries',
 });
 
 test('data administration gets its endpoint with the private token request', async () => {
-	const [endpoint, client, page, table, importer] = await Promise.all([
+	const [endpoint, client, page, table, importer, parameters] = await Promise.all([
 		readFile(new URL('../src/routes/data/token/+server.ts', import.meta.url), 'utf8'),
 		readFile(new URL('../src/lib/neon-data-api.ts', import.meta.url), 'utf8'),
 		readFile(new URL('../src/routes/data/+page.svelte', import.meta.url), 'utf8'),
 		readFile(new URL('../src/lib/DataAdminTable.svelte', import.meta.url), 'utf8'),
-		readFile(new URL('../src/lib/DebtImportPanel.svelte', import.meta.url), 'utf8')
+		readFile(new URL('../src/lib/DebtImportPanel.svelte', import.meta.url), 'utf8'),
+		readFile(new URL('../src/lib/FinanceParametersPanel.svelte', import.meta.url), 'utf8')
 	]);
 	await assert.rejects(
 		readFile(new URL('../src/routes/data/+page.server.ts', import.meta.url), 'utf8'),
@@ -103,7 +104,10 @@ test('data administration gets its endpoint with the private token request', asy
 	assert.match(endpoint, /vary: 'Cookie'/);
 	assert.match(client, /dataApiUrl\?: string/);
 	assert.match(client, /parsed\.protocol !== 'https:'/);
-	assert.match(page, /<DataAdminTable \/>/);
+	assert.doesNotMatch(page, /import DataAdminTable|<DataAdminTable/);
+	assert.match(page, /<FinanceParametersPanel \/>/);
+	assert.match(parameters, /new NeonDataApi\(\)/);
+	assert.doesNotMatch(parameters.slice(parameters.indexOf('async function save()')), /api\.list\(|loadRows\(\);|invalidateAll/);
 	assert.match(page, /hasPermission\(data\.permissions, 'data_manage'\)/);
 	assert.match(page, /<DebtImportPanel \/>/);
 	assert.match(table, /new NeonDataApi\(\)/);

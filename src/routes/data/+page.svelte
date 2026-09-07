@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '../management.css';
-	import DataAdminTable from '$lib/DataAdminTable.svelte';
+	import FinanceParametersPanel from '$lib/FinanceParametersPanel.svelte';
 	import DebtImportPanel from '$lib/DebtImportPanel.svelte';
 	import { hasPermission } from '$lib/permissions.js';
 
@@ -14,7 +14,8 @@
 <div class="management-page data-page">
 	{#if hasPermission(data.permissions, 'data_manage')}
 		<DebtImportPanel />
-		<DataAdminTable />
+		<FinanceParametersPanel />
+		<!-- 通用大表格保留在 $lib/DataAdminTable.svelte，需要恢复时重新挂载。 -->
 	{:else}
 		<section class="section-card permission-empty">
 			<h2>暂无数据后台权限</h2>

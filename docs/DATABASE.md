@@ -51,6 +51,7 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 - Data API 只暴露 `financing` schema，数据库角色为 `authenticated`。
 - 可编辑表必须同时进入 `src/lib/data-admin.ts` 白名单、显式 GRANT、RLS policy 和写入审计触发器。
 - 当前数据后台只开放负债品种表、`finance_parameters` 与 `debt_limit_configs`。
+- `finance_parameters` 以 `code` 为主键保存每项财务指标的当前值，`period_end` 是口径日期，不是历史版本键；`value_yi` 对金额保存亿元，对 `asset_liability_ratio`、`adjusted_asset_liability_ratio` 保存小数比率。数据后台财务指标模块可新增缺失的八项标准指标并编辑已有记录，沿用既有 Data API、RLS、审计及 `updated_at` 并发校验；通用表格组件保留但不在页面挂载。
 - Data API 支持 PostgREST 过滤、关联和聚合，也支持调用数据库函数；负债周报使用固定的 `liability_weekly_report_data(date)` RPC 聚合融资业务数据，并通过只读视图 `liability_market_rate_observations` 按指标和日期直接读取原始市场观测。RPC 与视图仅向 `authenticated` 开放，不再要求 JWT 用户关联 `people`；`monthly_financing_metrics` 与底层 `public.edb` 均不直接开放。
 - 现金流、历史余额和审计记录不展示，且 `authenticated` 不得通过 Data API 访问。
 - 导入载荷、运行状态和结果不写入 Neon；数据库只保存原子提交后的业务表与衍生表结果。
