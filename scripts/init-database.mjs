@@ -40,7 +40,7 @@ try {
 		}
 	}
 
-	console.log(JSON.stringify({ database: 'neon', schema: 'financing', migrations, auth: 'managed-by-neon', status: 'initialized' }, null, 2));
+	console.log(JSON.stringify({ database: 'neon', schema: 'financing', migrations, status: 'initialized' }, null, 2));
 } finally {
 	await client.end();
 }

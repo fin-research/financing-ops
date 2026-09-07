@@ -3,6 +3,7 @@ import type { Actions } from './$types';
 import { withBase } from '$lib/app-paths';
 import { deleteSession, SESSION_COOKIE } from '$lib/server/auth.js';
 import { auditRequestMeta, recordAudit } from '$lib/server/audit.js';
+import { usesAuth0 } from '$lib/server/auth-provider.js';
 
 export const actions: Actions = {
 	default: async (event) => {
@@ -18,6 +19,7 @@ export const actions: Actions = {
 			});
 		}
 		await deleteSession(event, token);
+		if (usesAuth0()) throw redirect(303, '/auth/logout');
 		throw redirect(303, withBase('/login'));
 	}
 };

@@ -4,7 +4,7 @@
 
 融资工作台服务于资金运营与融资项目团队，管理存续负债、现金流、融资项目、SOP、人员权限和提醒。
 
-技术栈：SvelteKit / Svelte 5、TypeScript、Tailwind CSS 4、daisyUI、Lucide、Cloudflare Workers、Hyperdrive、Neon PostgreSQL、Neon Managed Better Auth、Neon Data API 与 Resend。应用统一位于 `/financing` 前缀。
+技术栈：SvelteKit / Svelte 5、TypeScript、Tailwind CSS 4、daisyUI、Lucide、Cloudflare Workers / Access、Auth0、Hyperdrive、Neon PostgreSQL 与 Resend。应用统一位于 `/financing` 前缀。
 
 ## Repository Structure
 
@@ -29,7 +29,7 @@
 - Worker 只通过 `HYPERDRIVE.connectionString` 连接数据库。每个请求至多一个 `pg.Client`，存于 request locals 并在结束时关闭；禁止全局 `Pool`、跨请求连接和 N+1 查询。
 - 页面 mutation 只回传服务端确认的单一变更实体或删除 ID，前端就地合并；禁止成功后 `invalidateAll` 重读整页。只在确有需要时定向失效身份或提醒依赖。
 - 项目、任务和 SOP 普通字段采用防抖串行自动保存；失败保留输入，旧响应不得覆盖新输入。创建、删除、启停、账号、密码和数据后台逐行保存仍为显式动作。
-- 认证与会话只由 Neon Auth 管理；业务授权以启用的 `financing.people` 记录为准。不得重新引入自建密码、会话或 username。
+- 认证与会话由 Auth0 和 Cloudflare Access 管理；融资授权同时要求明确关联、启用的 `financing.people` 与 Auth0 角色／权限。不得自建密码、会话或 username，不得仅凭邮箱自动关联业务人员。
 - Secret、Cookie、数据库连接串、邮件 API key、头像内容不得进入日志、文档或客户端页面数据。
 - 不手动编辑 `worker-configuration.d.ts`；绑定变化用 `pnpm cf:typegen`。
 - 保留用户已有改动，不通过删除测试、关闭检查或忽略错误让任务通过。

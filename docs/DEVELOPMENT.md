@@ -7,7 +7,7 @@ pnpm install
 pnpm dev
 ```
 
-- 从 `.env.example` 创建未跟踪的 `.env`，保存 Neon Auth、Data API 与邮件配置。
+- 从 `.env.example` 创建未跟踪的 `.env`，保存 Auth0、Access 与邮件配置。
 - 从 `.env.database.example` 创建未跟踪的 `.env.database`，只保存本地脚本使用的直连 `DATABASE_URL`。
 - `pnpm-workspace.yaml` 必须显式包含根包 `packages: ['.']`，与 Cloudflare Git 的 pnpm 环境兼容。
 
@@ -30,7 +30,7 @@ git diff --check
 - Workflow：绑定或 `wrangler.jsonc` 变化后运行 `pnpm cf:typegen`；校验导入类导出、生成类型和 Worker dry-run/startup，除非明确授权不得手工部署。
 - SQLite：`pnpm db:migrate:sqlite -- --dry-run`；目标库非空时不得强行覆盖。
 - 提醒：Worker Cron 每个 UTC 整点执行一次候选检查；整天周期只会在上海时间 09:00 后进入候选，含小时周期按实际整点进入候选。至少运行测试；候选可用 `pnpm reminders:send -- --dry-run --at=<ISO 时间>` 盘点，`--date=YYYY-MM-DD` 表示该上海自然日末；查询线上候选前确认目标数据库，真实发送前确认收件人与发件人。
-- Auth / Data API：检查登录、短期 JWT、RLS、角色边界和失败状态，不在日志展示 token。
+- Auth / Data API：检查 Access 登录、Auth0 角色、同源数据代理、RLS、授权过期和失败状态，不在日志展示 token。迁移步骤见 `docs/AUTH0_MIGRATION.md`。
 - Data API schema：migration 新增或调整表、视图、函数或列后，必须对目标 branch/database 执行 `neon data-api refresh-schema --database neondb` 并验证目标资源可见；不能只依赖 migration 内的 `NOTIFY pgrst`。
 - UI：按 `DESIGN.md` 检查受影响的桌面、移动、200% 缩放与减少动效场景；没有执行时明确说明边界。
 

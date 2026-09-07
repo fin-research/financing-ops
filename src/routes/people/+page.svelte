@@ -361,11 +361,11 @@
 				{/if}
 				{#if canManage && accountEnabled}
 					<label class="wide">
-						<span>{editingPerson?.accountId ? '重置密码（留空不变）' : '初始密码'}</span>
+						<span>{editingPerson?.accountId ? '重置密码（留空不变）' : data.auth0 ? '初始密码（已注册账号可留空）' : '初始密码'}</span>
 						<input
 							name="password"
 							type="password"
-							required={!editingPerson?.accountId}
+							required={!editingPerson?.accountId && !data.auth0}
 							minlength={MIN_PASSWORD_LENGTH}
 							autocomplete="new-password"
 						/>

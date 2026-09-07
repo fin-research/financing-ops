@@ -7,11 +7,11 @@ Svelte pages / components
         │
         ├→ SvelteKit load / actions / internal routes
         │               │
-        │               ├→ $lib/server/auth → Neon Auth
+        │               ├→ $lib/server/auth → Access JWT + Auth0
         │               └→ $lib/server/queries → request-scoped pg.Client
         │                                      └→ Hyperdrive → Neon financing
         │
-        └→ Neon Data API client → short-lived JWT → RLS → editable tables
+        └→ Data client → authenticated Worker proxy → transaction identity / RLS → editable tables
 
 Local scripts → direct DATABASE_URL → Neon financing
 
@@ -40,9 +40,9 @@ Admin workbook → browser parse → Protobuf / Brotli → Cloudflare Workflow
 - `src/workflows/debt-import.ts` 从 Workflow 事件分批解码并在一个事务内写入台账、余额和 `monthly_financing_metrics`；实例事件、状态和结果由 Workflow 临时保留，不另建数据库状态。
 - `src/lib/server/debt-importer.js` 是本地导入命令与线上 Workflow 共用的 PostgreSQL 写入实现，保留线上独有数据并按稳定业务身份更新工作簿可变字段。
 - `src/lib/liability-choice.js` 封装浏览器端负债周报外部数据请求和服务端入库前校验；用户点击生成后，浏览器请求公开 `/data/choice/ctr` 与 `/data/broker-bond-registrations`，后者按报告日所在周周一至报告日分页取数，financing 服务端不代理上游请求。
-- `src/lib/neon-data-api.ts` 在生成时通过同一短期 JWT 并行调用 `financing.liability_weekly_report_data(date)` 业务聚合 RPC 与 `financing.liability_market_rate_observations` 原始市场观测视图；`src/lib/liability-report-data.js` 在浏览器配对计算信用利差，并在服务端保存前再次校验日期、字段、数量和数值边界。
+- `src/lib/neon-data-api.ts` 在生成时通过同源认证代理并行调用 `financing.liability_weekly_report_data(date)` 业务聚合 RPC 与 `financing.liability_market_rate_observations` 原始市场观测视图；`src/lib/liability-report-data.js` 在浏览器配对计算信用利差，并在服务端保存前再次校验日期、字段、数量和数值边界。
 - `src/lib/server/liability-weekly-reports.js` 只负责负债周报来源状态、按报告日读取快照索引，以及校验后保存 R2 快照；Choice 或 DM 失败时对应模块留空并返回缺失项，不回退安装包导入表。
-- `src/lib/server/auth.js` 与 `neon-auth-client.js` 封装 Neon Auth；业务页面不直接拼 Auth 请求。
+- `src/lib/server/auth.js`、`auth0-client.js` 和 `auth-provider.js` 封装 Access 身份与 Auth0 管理调用；业务页面不直接拼认证请求。
 
 ## 数据路径
 
@@ -52,7 +52,7 @@ Admin workbook → browser parse → Protobuf / Brotli → Cloudflare Workflow
 
 ### 数据后台
 
-浏览器请求 `/data/token` → Neon Auth 返回短期 JWT，Worker 同响应提供 HTTPS Data API URL → `src/lib/neon-data-api.ts` 访问 Data API → PostgreSQL RLS 与触发器授权、审计。响应使用 `private, no-store`；长期会话 token 不进入浏览器脚本。
+浏览器请求 `/data/token` 获取同源代理配置 → `src/lib/neon-data-api.ts` 调用 `/data/api/*` → Worker 验证 Access 和实时 Auth0 权限 → 单请求 Hyperdrive 事务设置身份与 authenticated 角色 → PostgreSQL RLS 与触发器授权、审计。响应使用 `private, no-store`；Cookie/JWT 不进入浏览器脚本。
 
 ### 本地维护
 

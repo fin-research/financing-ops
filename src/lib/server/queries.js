@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { accountSql, usesAuth0 } from './auth-provider.js';
 import { REPORTING_DEBT_TYPES } from '../debt-types.js';
 import { reminderPeriodLabel } from '../reminder-periods.js';
 import {
@@ -595,17 +596,15 @@ export async function getWorkflowSettingsData() {
 }
 
 export async function getPeopleAccessData() {
+	const account = accountSql();
 	const db = getDatabase();
 	const people = (await db.prepare(`
 		SELECT p.id, p.name, p.email, p.role, p.active,
-			u.id::text AS accountId, NOT COALESCE(u.banned, FALSE) AS accountActive,
-			login.last_login_at AS lastLoginAt
+			${account.id} AS accountId, ${account.active} AS accountActive,
+			${usesAuth0() ? 'p.auth0_last_login_at' : 'login.last_login_at'} AS lastLoginAt
 		FROM people p
-		LEFT JOIN neon_auth."user" u ON u.id = p.neon_auth_user_id
-		LEFT JOIN LATERAL (
-			SELECT MAX(s."createdAt") AS last_login_at
-			FROM neon_auth.session s WHERE s."userId" = u.id
-		) login ON TRUE
+		${usesAuth0() ? '' : `LEFT JOIN neon_auth."user" u ON u.id = p.neon_auth_user_id
+		LEFT JOIN LATERAL (SELECT MAX(s."createdAt") AS last_login_at FROM neon_auth.session s WHERE s."userId" = u.id) login ON TRUE`}
 		ORDER BY p.active DESC, CASE p.role WHEN 'admin' THEN 1 WHEN 'handler' THEN 2 ELSE 3 END, p.name
 	`).all()).map((person) => ({
 		...person, active: Boolean(person.active),
@@ -621,16 +620,14 @@ export async function getPeopleAccessData() {
 }
 
 export async function getPersonAccessData(id, database = getDatabase()) {
+	const account = accountSql();
 	const person = await database.prepare(`
 		SELECT p.id, p.name, p.email, p.role, p.active,
-			u.id::text AS accountId, NOT COALESCE(u.banned, FALSE) AS accountActive,
-			login.last_login_at AS lastLoginAt
+			${account.id} AS accountId, ${account.active} AS accountActive,
+			${usesAuth0() ? 'p.auth0_last_login_at' : 'login.last_login_at'} AS lastLoginAt
 		FROM people p
-		LEFT JOIN neon_auth."user" u ON u.id = p.neon_auth_user_id
-		LEFT JOIN LATERAL (
-			SELECT MAX(s."createdAt") AS last_login_at
-			FROM neon_auth.session s WHERE s."userId" = u.id
-		) login ON TRUE
+		${usesAuth0() ? '' : `LEFT JOIN neon_auth."user" u ON u.id = p.neon_auth_user_id
+		LEFT JOIN LATERAL (SELECT MAX(s."createdAt") AS last_login_at FROM neon_auth.session s WHERE s."userId" = u.id) login ON TRUE`}
 		WHERE p.id = ?
 	`).get(id);
 	return person ? {

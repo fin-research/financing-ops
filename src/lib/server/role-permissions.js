@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { auth0Client, usesAuth0 } from './auth-provider.js';
 import { PERMISSION_CODES } from '../permissions.js';
 import { getDatabase } from './db.js';
 
@@ -31,6 +32,10 @@ export async function getRolePermissionCodes(role, database = getDatabase()) {
 }
 
 export async function getRolePermissionMatrix(database = getDatabase()) {
+	if (usesAuth0()) {
+		const client = auth0Client();
+		return Object.fromEntries(await Promise.all(['admin', 'handler', 'reviewer'].map(async (role) => [role, await client.rolePermissions(role)])));
+	}
 	try {
 		const rows = await database.prepare(`
 			SELECT role, permission_code AS permissionCode

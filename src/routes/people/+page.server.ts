@@ -14,6 +14,8 @@ import { hasPermission, isPermissionCode } from '$lib/permissions.js';
 import { roleLabel } from '$lib/roles';
 import { getRolePermissionMatrix } from '$lib/server/role-permissions.js';
 
+import { accountSql, auth0Client, refreshAuth0People, usesAuth0 } from '$lib/server/auth-provider.js';
+
 const validRoles = new Set(['admin', 'handler', 'reviewer']);
 
 function identityFields(data: FormData) {
@@ -30,26 +32,29 @@ function validationMessage(fields: ReturnType<typeof identityFields>, existingAc
 	if (!fields.name || !isValidEmail(fields.email) || !validRoles.has(fields.role)) return '请填写姓名、有效邮箱并选择系统角色';
 	if (fields.role === 'admin' && !fields.accountEnabled) return '管理员必须开通登录权限';
 	if (!fields.accountEnabled) return null;
-	if (!existingAccount && fields.password.length < MIN_PASSWORD_LENGTH) return `新账号密码不得少于 ${MIN_PASSWORD_LENGTH} 个字符`;
+	if (!existingAccount && fields.password.length < MIN_PASSWORD_LENGTH && !(usesAuth0() && !fields.password)) return `新账号密码不得少于 ${MIN_PASSWORD_LENGTH} 个字符`;
 	if (fields.password && fields.password.length < MIN_PASSWORD_LENGTH) return `重置密码不得少于 ${MIN_PASSWORD_LENGTH} 个字符`;
 	return null;
 }
 
 async function identityState(db: ReturnType<typeof getDatabase>, id: string) {
+	await refreshAuth0People();
+	const account = accountSql();
 	return await db.prepare(`
 		SELECT p.id, p.name, p.email, p.role, p.active,
-			p.neon_auth_user_id::text AS accountId,
-			u.role AS accountRole, NOT COALESCE(u.banned, FALSE) AS accountActive
-		FROM people p LEFT JOIN neon_auth."user" u ON u.id = p.neon_auth_user_id
+			${account.id} AS accountId,
+			${account.role} AS accountRole, ${account.active} AS accountActive
+		FROM people p ${usesAuth0() ? '' : 'LEFT JOIN neon_auth."user" u ON u.id = p.neon_auth_user_id'}
 		WHERE p.id = ?
 	`).get(id) as any;
 }
 
 async function activeAdminCount(db: ReturnType<typeof getDatabase>) {
+	const account = accountSql();
 	const row = await db.prepare(`
 		SELECT COUNT(*) AS count
-		FROM people p JOIN neon_auth."user" u ON u.id = p.neon_auth_user_id
-		WHERE p.role = 'admin' AND p.active = TRUE AND NOT COALESCE(u.banned, FALSE)
+		FROM people p ${usesAuth0() ? '' : 'LEFT JOIN neon_auth."user" u ON u.id = p.neon_auth_user_id'}
+		WHERE p.role = 'admin' AND p.active = TRUE AND ${account.id} IS NOT NULL AND ${account.active}
 	`).get();
 	return Number(row?.count ?? 0);
 }
@@ -59,8 +64,8 @@ function constraintMessage(error: unknown) {
 		if (error.status === 409 || error.code?.includes('USER_ALREADY_EXISTS')) return '该邮箱已存在登录账号，请直接编辑现有人员或更换邮箱';
 		if (error.status === 429) return '认证操作过于频繁，请稍后重试';
 		if (error.status === 401 || error.status === 403) return '当前会话无权执行该账号操作，请重新登录';
-		if (error.status === 503) return 'Neon Auth 暂时不可用，请稍后重试';
-		return 'Neon Auth 账号操作失败，请检查邮箱和密码后重试';
+		if (error.status === 503) return '统一账号 暂时不可用，请稍后重试';
+		return '统一账号 账号操作失败，请检查邮箱和密码后重试';
 	}
 	const message = error instanceof Error ? error.message : String(error);
 	if (message.includes('idx_people_email_unique') || message.includes('people_email_key') || message.includes('people.email')) return '该邮箱已被其他人员使用，请直接编辑现有人员或更换邮箱';
@@ -72,7 +77,10 @@ async function duplicatePerson(db: ReturnType<typeof getDatabase>, name: string,
 	return await db.prepare('SELECT id FROM people WHERE id <> ? AND (name = ? OR LOWER(email) = LOWER(?)) LIMIT 1').get(exceptId, name, email);
 }
 
-export const load: PageServerLoad = async () => ({ peopleAccess: await getPeopleAccessData() });
+export const load: PageServerLoad = async () => {
+  await refreshAuth0People();
+  return { peopleAccess: await getPeopleAccessData() };
+};
 
 async function peopleSuccess(
 	message: string,
@@ -102,10 +110,12 @@ export const actions: Actions = {
 			if (fields.accountEnabled) {
 				const account = await createManagedUser(event, { email: fields.email, password: fields.password, name: fields.name, role: fields.role });
 				accountId = account?.id ? String(account.id) : null;
-				if (!accountId) throw new Error('Neon Auth did not return a user id');
+				if (!accountId) throw new Error('统一账号 did not return a user id');
 			}
 			await db.batch([
-				db.prepare('INSERT INTO people (id, name, email, role, active, neon_auth_user_id) VALUES (?, ?, ?, ?, TRUE, ?::uuid)').bind(personId, fields.name, fields.email, fields.role, accountId),
+				db.prepare(usesAuth0()
+					? 'INSERT INTO people (id, name, email, role, active, auth0_user_id, auth0_account_active) VALUES (?, ?, ?, ?, TRUE, ?, TRUE)'
+					: 'INSERT INTO people (id, name, email, role, active, neon_auth_user_id) VALUES (?, ?, ?, ?, TRUE, ?::uuid)').bind(personId, fields.name, fields.email, fields.role, accountId),
 				prepareAudit({ ...auditRequestMeta(event), db, action: 'person.create', entityType: 'person', entityId: personId, summary: `添加人员：${fields.name}`, after: { name: fields.name, email: fields.email, role: fields.role, accountEnabled: fields.accountEnabled, active: true } })
 			]);
 		} catch (error) {
@@ -113,7 +123,7 @@ export const actions: Actions = {
 			return fail(409, { message: constraintMessage(error) });
 		}
 		return await peopleSuccess(
-			`已添加 ${fields.name}${fields.accountEnabled ? ' 并开通 Neon Auth 登录' : ''}`,
+			`已添加 ${fields.name}${fields.accountEnabled ? ' 并开通 统一账号 登录' : ''}`,
 			{ personId }
 		);
 	},
@@ -129,7 +139,7 @@ export const actions: Actions = {
 		if (message) return fail(400, { message });
 		if (await duplicatePerson(db, fields.name, fields.email, id)) return fail(409, { message: '姓名或邮箱已存在，请直接编辑现有人员' });
 		if (before.accountId && !fields.accountEnabled && event.locals.user?.personId === id) return fail(400, { message: '不能移除当前登录权限' });
-		if (before.accountRole === 'admin' && (!fields.accountEnabled || fields.role !== 'admin') && await activeAdminCount(db) <= 1) return fail(400, { message: '至少保留一个启用中的管理员账号' });
+		if (before.accountRole === 'admin' && (!fields.accountEnabled || fields.role !== 'admin' || (usesAuth0() && fields.email !== normalizeEmail(before.email))) && await activeAdminCount(db) <= 1) return fail(400, { message: '至少保留一个启用中的管理员账号' });
 		let accountId: string | null = before.accountId;
 		let created = false;
 		try {
@@ -137,18 +147,24 @@ export const actions: Actions = {
 				await removeManagedUser(event, accountId);
 				accountId = null;
 			} else if (fields.accountEnabled && accountId) {
-				if (fields.name !== before.name || fields.email !== normalizeEmail(before.email)) await updateManagedUser(event, accountId, { name: fields.name, email: fields.email });
+				const changes = {
+					...(fields.name !== before.name ? { name: fields.name } : {}),
+					...(fields.email !== normalizeEmail(before.email) ? { email: fields.email } : {})
+				};
+				if (Object.keys(changes).length) await updateManagedUser(event, accountId, changes);
 				if (fields.role !== before.accountRole) await setManagedUserRole(event, accountId, fields.role);
 				if (fields.password) await setManagedUserPassword(event, accountId, fields.password);
 			} else if (fields.accountEnabled) {
 				const account = await createManagedUser(event, { email: fields.email, password: fields.password, name: fields.name, role: fields.role });
 				accountId = account?.id ? String(account.id) : null;
-				if (!accountId) throw new Error('Neon Auth did not return a user id');
+				if (!accountId) throw new Error('统一账号 did not return a user id');
 				created = true;
 				if (!before.active) await banManagedUser(event, accountId);
 			}
 			await db.batch([
-				db.prepare('UPDATE people SET name = ?, email = ?, role = ?, neon_auth_user_id = ?::uuid, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(fields.name, fields.email, fields.role, accountId, id),
+				db.prepare(usesAuth0()
+					? 'UPDATE people SET name = ?, email = ?, role = ?, auth0_user_id = ?, auth0_account_active = active, auth0_authorized_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+					: 'UPDATE people SET name = ?, email = ?, role = ?, neon_auth_user_id = ?::uuid, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(fields.name, fields.email, fields.role, accountId, id),
 				prepareAudit({ ...auditRequestMeta(event), db, action: 'person.update', entityType: 'person', entityId: id, summary: `更新人员与账号：${fields.name}`, before, after: { ...before, name: fields.name, email: fields.email, role: fields.role, accountEnabled: fields.accountEnabled } })
 			]);
 		} catch (error) {
@@ -156,7 +172,7 @@ export const actions: Actions = {
 			return fail(409, { message: constraintMessage(error) });
 		}
 		return await peopleSuccess(
-			`已更新 ${fields.name} 的人员、角色与 Neon Auth 账号关联`,
+			`已更新 ${fields.name} 的人员、角色与 统一账号 账号关联`,
 			{ personId: id, refreshIdentity: event.locals.user?.personId === id }
 		);
 	},
@@ -173,14 +189,14 @@ export const actions: Actions = {
 		try {
 			if (before.accountId) await (active ? unbanManagedUser(event, before.accountId) : banManagedUser(event, before.accountId));
 			await db.batch([
-				db.prepare('UPDATE people SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(active, id),
+				db.prepare(usesAuth0() ? 'UPDATE people SET active = ?, auth0_account_active = ?, auth0_authorized_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?' : 'UPDATE people SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(...(usesAuth0() ? [active, active, id] : [active, id])),
 				prepareAudit({ ...auditRequestMeta(event), db, action: active ? 'person.activate' : 'person.deactivate', entityType: 'person', entityId: id, summary: `${active ? '启用' : '停用'}人员与账号：${before.name}`, before, after: { ...before, active, accountActive: before.accountId ? active : null } })
 			]);
 		} catch (error) {
 			return fail(409, { message: constraintMessage(error) });
 		}
 		return await peopleSuccess(
-			active ? '人员与 Neon Auth 登录已启用' : '人员与 Neon Auth 登录已停用',
+			active ? '人员与 统一账号 登录已启用' : '人员与 统一账号 登录已停用',
 			{ personId: id }
 		);
 	},
@@ -202,7 +218,7 @@ export const actions: Actions = {
 		} catch (error) {
 			return fail(409, { message: constraintMessage(error) });
 		}
-		return await peopleSuccess(`已删除 ${before.name} 及其 Neon Auth 登录权限`, { deletedPersonId: id });
+		return await peopleSuccess(`已删除 ${before.name} 及其 统一账号 登录权限`, { deletedPersonId: id });
 	},
 
 	saveRolePermissions: async (event) => {
@@ -220,23 +236,23 @@ export const actions: Actions = {
 		const roleName = roleLabel(role);
 		const before = await getRolePermissionMatrix(db);
 		if (!permissions.includes('permission_manage')) {
+			const managerAccount = accountSql('person', 'account');
+			const managerRoles = Object.entries(before).filter(([key, codes]) => key !== role && (codes as string[]).includes('permission_manage')).map(([key]) => key);
 			const alternativeManager = await db.prepare(`
 				SELECT 1
-				FROM role_permissions permission
-				JOIN people person ON person.role = permission.role
-				JOIN neon_auth."user" account ON account.id = person.neon_auth_user_id
-				WHERE permission.role <> ?
-					AND permission.permission_code = 'permission_manage'
-					AND permission.granted = TRUE
+				FROM people person
+				${usesAuth0() ? '' : 'LEFT JOIN neon_auth."user" account ON account.id = person.neon_auth_user_id'}
+				WHERE person.role = ANY(?::text[])
 					AND person.active = TRUE
-					AND NOT COALESCE(account.banned, FALSE)
+					AND ${managerAccount.id} IS NOT NULL AND ${managerAccount.active}
 				LIMIT 1
-			`).get(role);
+			`).get(managerRoles);
 			if (!alternativeManager) {
 				return fail(400, { message: '至少保留一个有启用登录账号的角色维护权限配置' });
 			}
 		}
 
+		if (usesAuth0()) await auth0Client(event).saveRolePermissions(role, permissions);
 		await db.batch([
 			db.prepare(`
 				UPDATE role_permissions

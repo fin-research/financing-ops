@@ -147,10 +147,11 @@
 				<span class="card-icon orange"><KeyRound size={20} /></span>
 				<div>
 					<h2>修改密码</h2>
-					<p>修改后会保留当前登录，并退出其他设备上的会话</p>
+					<p>{data.auth0 ? '通过注册邮箱验证身份并修改密码' : '修改后会保留当前登录，并退出其他设备上的会话'}</p>
 				</div>
 			</header>
 			<form method="post" action="?/updatePassword" use:enhance={enhanceSection('password')}>
+				{#if !data.auth0}
 				<label>
 					<span>当前密码</span>
 					<input name="currentPassword" type="password" required autocomplete="current-password" />
@@ -164,10 +165,11 @@
 					<span>确认新密码</span>
 					<input name="confirmPassword" type="password" required minlength={MIN_PASSWORD_LENGTH} autocomplete="new-password" />
 				</label>
+				{/if}
 				<div class="form-actions">
 					<button class="primary-action" type="submit" disabled={pendingSection !== null}>
 						{#if pendingSection === 'password'}<LoaderCircle class="spin" size={16} />{:else}<KeyRound size={16} />{/if}
-						{pendingSection === 'password' ? '更新中…' : '更新密码'}
+						{pendingSection === 'password' ? '处理中…' : data.auth0 ? '发送密码重置邮件' : '更新密码'}
 					</button>
 				</div>
 			</form>

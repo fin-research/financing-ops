@@ -32,7 +32,8 @@
 ## 内部 HTTP 路由
 
 - `GET /financing/avatar`：当前用户头像，私有缓存并支持版本条件请求。
-- `GET /financing/data/token`：一次返回当前 Neon Auth 会话签发的短期 Data API JWT 与 HTTPS Data API URL；强制绕过身份缓存，并使用 `private, no-store`。
+- `GET /financing/data/token`：Auth0 模式返回同源数据代理配置，不返回 JWT；强制绕过身份缓存，并使用 `private, no-store`。
+- `GET/POST/PATCH/DELETE /financing/data/api/[...path]`：原数据后台和周报数据方法，经 Auth0 权限、字段白名单、事务身份与 PostgreSQL RLS 执行。
 - `GET /financing/projects/options`：按需返回项目表单选项。
 - `GET /financing/sop/reminders/more`：用 `(delivery_date, created_at, id)` 游标加载下一批最多 50 条发送历史。
 - `POST /financing/data/import`：管理员提交浏览器生成的 Protobuf/Brotli 载荷；同源和大小校验后，以载荷 SHA-256 作为实例 ID 幂等创建 Workflow。已有运行中或成功实例直接复用，失败实例重启；原始 Excel 不进入请求。

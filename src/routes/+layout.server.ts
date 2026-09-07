@@ -1,5 +1,6 @@
 import type { LayoutServerLoad } from './$types';
 import { getLayoutData } from '$lib/server/queries.js';
+import { usesAuth0 } from '$lib/server/auth-provider.js';
 
 export const load: LayoutServerLoad = async ({ locals, depends }) => {
 	depends('financing:identity', 'financing:permissions', 'financing:reminders');
@@ -18,6 +19,7 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
 			})
 		: { reminders: { items: [], total: 0 } };
 	return {
+		auth0: usesAuth0(),
 		user: locals.user,
 		permissions: locals.permissions,
 		reminders: layout.reminders

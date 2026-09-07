@@ -13,8 +13,8 @@ type ListOptions = {
 type ApiErrorBody = { message?: string; details?: string; hint?: string; code?: string };
 
 export class NeonDataApi {
-	#session: { token: string; dataApiUrl: string } | null = null;
-	#sessionRequest: Promise<{ token: string; dataApiUrl: string }> | null = null;
+	#session: { token?: string; dataApiUrl: string } | null = null;
+	#sessionRequest: Promise<{ token?: string; dataApiUrl: string }> | null = null;
 
 	async #getSession(force = false) {
 		if (this.#session && !force) return this.#session;
@@ -26,10 +26,11 @@ export class NeonDataApi {
 		const request = (async () => {
 			const response = await fetch(withBase('/data/token'), { headers: { Accept: 'application/json' }, cache: 'no-store' });
 			if (!response.ok) throw new Error(response.status === 401 ? '登录已失效，请重新登录' : '无法取得数据后台访问令牌');
-			const body = await response.json() as { token?: string; dataApiUrl?: string };
-			if (!body.token) throw new Error('Neon Data API 令牌为空');
+			const body = await response.json() as { token?: string; dataApiUrl?: string; transport?: string };
+			if (!body.token && body.transport !== 'worker') throw new Error('Neon Data API 令牌为空');
 			if (!body.dataApiUrl) throw new Error('Neon Data API 地址为空');
 			const parsed = new URL(body.dataApiUrl);
+			if (body.transport === 'worker' && (parsed.origin !== window.location.origin || parsed.pathname !== withBase('/data/api'))) throw new Error('数据后台代理地址无效');
 			if (parsed.protocol !== 'https:') throw new Error('Neon Data API 必须使用 HTTPS');
 			return {
 				token: body.token,
@@ -48,7 +49,7 @@ export class NeonDataApi {
 	async #request(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
 		const session = await this.#getSession();
 		const headers = new Headers(init.headers);
-		headers.set('Authorization', `Bearer ${session.token}`);
+		if (session.token) headers.set('Authorization', `Bearer ${session.token}`);
 		headers.set('Accept', 'application/json');
 		headers.set('Accept-Profile', 'financing');
 		headers.set('Content-Profile', 'financing');

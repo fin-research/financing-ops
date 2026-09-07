@@ -8,13 +8,15 @@ import {
 } from '$lib/server/auth.js';
 import { auditRequestMeta, prepareAudit, recordAudit } from '$lib/server/audit.js';
 import { MIN_PASSWORD_LENGTH } from '$lib/password-policy';
+import { usesAuth0 } from '$lib/server/auth-provider.js';
+import { requestAuth0PasswordReset } from '$lib/server/auth.js';
 
 const avatarTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const maxAvatarBytes = 512 * 1024;
 
 async function currentProfile(personId: string) {
 	return await getDatabase().prepare(`
-		SELECT id AS personId, neon_auth_user_id::text AS neonAuthUserId,
+		SELECT id AS personId, ${usesAuth0() ? 'auth0_user_id' : 'neon_auth_user_id::text'} AS neonAuthUserId,
 			name, email, role, avatar_data_url IS NOT NULL AS hasAvatar,
 			to_char(updated_at, 'YYYYMMDDHH24MISSUS') AS avatarVersion
 		FROM people
@@ -140,6 +142,14 @@ export const actions: Actions = {
 
 	updatePassword: async (event) => {
 		if (!event.locals.user) return fail(401, { section: 'password', message: '登录已失效，请重新登录' });
+		if (usesAuth0()) {
+			try {
+				await requestAuth0PasswordReset(event);
+				return { section: 'password', success: true, message: '密码重置邮件已请求发送，请检查注册邮箱' };
+			} catch {
+				return fail(503, { section: 'password', message: '密码重置请求失败，请稍后重试' });
+			}
+		}
 		const profile = await currentProfile(event.locals.user.personId);
 		if (!profile?.neonAuthUserId) return fail(404, { section: 'password', message: '未找到当前 Neon Auth 账号' });
 

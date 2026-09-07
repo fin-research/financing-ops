@@ -4,15 +4,18 @@ import { appRoot, isAppPath } from '$lib/app-paths';
 import { authenticate, NeonAuthApiError } from '$lib/server/auth.js';
 import { auditRequestMeta, recordAudit } from '$lib/server/audit.js';
 import { normalizeEmail } from '$lib/email.js';
+import { usesAuth0 } from '$lib/server/auth-provider.js';
 
 function safeRedirect(value: string | null) {
 	if (!value || !isAppPath(value)) return appRoot;
 	return value;
 }
 
-export const load: PageServerLoad = ({ url }) => ({
-	redirectTo: safeRedirect(url.searchParams.get('redirectTo'))
-});
+export const load: PageServerLoad = ({ url }) => {
+  const redirectTo = safeRedirect(url.searchParams.get('redirectTo'));
+  if (usesAuth0()) throw redirect(303, `/auth/login?returnTo=${encodeURIComponent(redirectTo)}`);
+  return { redirectTo };
+};
 
 export const actions: Actions = {
 	default: async (event) => {
@@ -20,6 +23,7 @@ export const actions: Actions = {
 		const email = normalizeEmail(data.get('email'));
 		const password = String(data.get('password') ?? '');
 		const redirectTo = safeRedirect(String(data.get('redirectTo') ?? appRoot));
+		if (usesAuth0()) throw redirect(303, `/auth/login?returnTo=${encodeURIComponent(redirectTo)}`);
 		if (!email || !password) {
 			return fail(400, { message: '请输入邮箱和密码', email });
 		}

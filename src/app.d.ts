@@ -10,6 +10,7 @@ declare global {
 			permissions: string[];
 			user: {
 				id: string;
+				permissions?: string[];
 				email: string | null;
 				role: 'admin' | 'handler' | 'reviewer';
 				personId: string;

@@ -48,6 +48,7 @@
 		"@tanstack/svelte-table": "9.1.2",
 		"brotli-wasm": "^3.0.1",
 		"echarts": "^6.1.0",
+		"jose": "^6.2.12",
 		"pg": "^8.16.3",
 		"resend": "^6.18.0"
 	}

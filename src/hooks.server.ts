@@ -10,6 +10,8 @@ import {
 	NeonAuthApiError,
 	SESSION_COOKIE
 } from '$lib/server/auth.js';
+import { accessToken } from '$lib/server/access';
+import { usesAuth0 } from '$lib/server/auth-provider.js';
 
 export const handle: Handle = async ({ event, resolve }) => {
 	try {
@@ -19,7 +21,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		const routeId = event.route.id;
 		const isStaticAsset = event.url.pathname.startsWith(withBase('/_app/'));
 		const isPublic = routeId === '/login' || isStaticAsset;
-		const sessionToken = isStaticAsset ? null : event.cookies.get(SESSION_COOKIE);
+		const sessionToken = isStaticAsset ? null : usesAuth0() ? accessToken(event.request) : event.cookies.get(SESSION_COOKIE);
 		const safeRequest = isSafeRequestMethod(event.request.method);
 		if (sessionToken && !safeRequest) await invalidateCachedSession(event, sessionToken);
 		const authStartedAt = performance.now();
@@ -28,24 +30,29 @@ export const handle: Handle = async ({ event, resolve }) => {
 				? null
 				: await getSessionUser(event, sessionToken, {
 					requireDataApiJwt: routeId === '/data/token',
-					useSessionCache: safeRequest && routeId !== '/data/token'
+					useSessionCache: safeRequest && routeId !== '/data/token' && routeId !== '/data/api/[...path]'
 				});
 		} catch (authError) {
+			if (authError instanceof NeonAuthApiError && authError.code === 'PERSON_ACCESS_DENIED') throw httpError(403, authError.message);
 			if (authError instanceof NeonAuthApiError && authError.status === 503) {
 				throw httpError(503, '认证服务暂时不可用，请稍后重试');
 			}
 			throw authError;
 		}
 		const authDurationMs = performance.now() - authStartedAt;
-		if (sessionToken && !event.locals.user) {
+		if (!usesAuth0() && sessionToken && !event.locals.user) {
 			event.cookies.delete(SESSION_COOKIE, { path: appCookiePath });
 		}
 		if (!isPublic && !event.locals.user) {
 			const redirectTo = `${event.url.pathname}${event.url.search}`;
+			if (usesAuth0()) {
+				if (routeId?.startsWith('/data/') || !safeRequest) throw httpError(401, '登录已失效，请重新登录');
+				throw redirect(303, `/auth/login?returnTo=${encodeURIComponent(redirectTo)}`);
+			}
 			throw redirect(303, `${withBase('/login')}?redirectTo=${encodeURIComponent(redirectTo)}`);
 		}
 		if (event.locals.user) {
-			event.locals.permissions = await getRolePermissionCodes(event.locals.user.role);
+			event.locals.permissions = usesAuth0() ? event.locals.user.permissions ?? [] : await getRolePermissionCodes(event.locals.user.role);
 		}
 
 		const actionName = actionNameFromUrl(event.url);

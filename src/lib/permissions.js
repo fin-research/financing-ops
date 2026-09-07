@@ -68,6 +68,7 @@ const MUTATION_PERMISSIONS = new Map([
 	['/sop/[id]:deleteNode', 'sop_manage'],
 	['/liability-report:saveSnapshot', 'report_generate'],
 	['/data/import:default', 'data_manage']
+	, ['/data/api/[...path]:default', 'data_manage']
 ]);
 
 /** @param {unknown} code */

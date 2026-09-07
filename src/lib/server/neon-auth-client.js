@@ -2,6 +2,7 @@
 export const NEON_SESSION_COOKIE = '__Secure-neon-auth.session_token';
 
 export class NeonAuthApiError extends Error {
+	/** @param {number} status @param {string} message @param {string | null} [code] @param {ErrorOptions} [options] */
 	constructor(status, message, code = null, options = undefined) {
 		super(message || `Neon Auth request failed with status ${status}`, options);
 		this.name = 'NeonAuthApiError';

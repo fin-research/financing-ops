@@ -68,7 +68,7 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 - 所有 schema、视图、函数、触发器、RLS 和 GRANT 变化新增有序 SQL 文件。
 - migration 必须可在 PostgreSQL 兼容环境实际执行，并在事务失败时保持旧结构可用。
 - 不兼容变更先迁移 Neon，再推送依赖新结构的 Worker。
-- `pnpm db:init -- --schema-only` 应用完整 DDL；登录账号在 Neon Auth 创建，再与 `people` 关联。
+- `pnpm db:init -- --schema-only` 应用完整 DDL；登录账号在 Auth0 创建，再通过稳定的 Auth0 ID 与 `people` 关联。
 
 ## Excel 与 SQLite
 

@@ -117,6 +117,7 @@ export class PostgresDatabase {
 		await this.connecting;
 	}
 
+	/** @param {string} sql @param {unknown[]} [values] @returns {Promise<import('pg').QueryResult<Record<string, any>>>} */
 	async query(sql, values = []) {
 		const startedAt = performance.now();
 		this.queryCount += 1;
