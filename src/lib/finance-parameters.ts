@@ -1,48 +1,48 @@
-import { DATA_ENTITIES, valueForDatabase, type DataRow, type FieldConfig } from './data-admin';
+import { DATA_ENTITIES, valueForDatabase, type DataRow } from './data-admin';
 
-export const FINANCE_PARAMETER_CONFIG = {
-	...DATA_ENTITIES.find((entity) => entity.key === 'parameter')!, canCreate: true
-};
+export const FINANCE_PARAMETER_CONFIG = DATA_ENTITIES.find((entity) => entity.key === 'monthly-finance')!;
+export const FINANCIAL_INPUT_FIELDS = FINANCE_PARAMETER_CONFIG.fields.filter((field) => field.type === 'number' && !field.readOnly);
+export const FINANCIAL_RATIO_FIELDS = FINANCE_PARAMETER_CONFIG.fields.filter((field) => field.type === 'number' && field.readOnly);
 
-export const FINANCE_PARAMETERS = [
-	{ code: 'prior_month_net_capital', label: '上月末净资本', unit: '亿元' },
-	{ code: 'securities_prior_year_net_assets', label: '证券上年末净资产', unit: '亿元' },
-	{ code: 'group_prior_year_net_assets', label: '集团上年末净资产', unit: '亿元' },
-	{ code: 'total_assets', label: '总资产', unit: '亿元' },
-	{ code: 'total_liabilities', label: '总负债', unit: '亿元' },
-	{ code: 'agency_brokerage_funds', label: '代理买卖证券款', unit: '亿元' },
-	{ code: 'asset_liability_ratio', label: '资产负债率', unit: '%' },
-	{ code: 'adjusted_asset_liability_ratio', label: '资产负债率（扣代理买卖）', unit: '%' }
-];
-
-export function financeParameterDefinition(code: string, label?: unknown) {
-	return FINANCE_PARAMETERS.find((parameter) => parameter.code === code)
-		?? { code, label: String(label || code), unit: '亿元' };
+export function monthEnd(month: string) {
+	if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || Number(month.slice(0, 4)) < 1900) throw new Error('请选择有效的月份');
+	const date = new Date(`${month}-01T00:00:00Z`);
+	date.setUTCMonth(date.getUTCMonth() + 1, 0);
+	return date.toISOString().slice(0, 10);
 }
 
-export function financeParameterValue(code: string, value: unknown) {
-	if (value == null || value === '') return '';
-	const isRatio = financeParameterDefinition(code).unit === '%';
-	return Number((Number(value) * (isRatio ? 100 : 1)).toFixed(isRatio ? 2 : 4)).toString();
+export function financeParameterPayload(month: string, values: Record<string, string>, notes: string): DataRow {
+	const payload: DataRow = { period_end: monthEnd(month), notes: notes.trim() || null };
+	for (const field of FINANCIAL_INPUT_FIELDS) {
+		const raw = (values[field.key] ?? '').trim();
+		const value = valueForDatabase(field, raw);
+		if (typeof value === 'number' && (Math.abs(value) >= 1e16 || (field.min != null && value < field.min))) {
+			throw new Error(`${field.label}超出允许范围`);
+		}
+		payload[field.key] = value;
+	}
+	if (FINANCIAL_INPUT_FIELDS.every((field) => payload[field.key] == null)) throw new Error('请至少填写一项财务数据');
+	const agency = payload.agency_brokerage_funds as number | null;
+	for (const key of ['total_assets', 'total_liabilities']) {
+		if (agency != null && payload[key] != null && agency > Number(payload[key])) throw new Error('代理买卖证券款不能超过总资产或总负债');
+	}
+	return payload;
 }
 
-export function financeParameterPayload(code: string, value: string, periodEnd: string, notes: string, label?: unknown): DataRow {
-	const definition = financeParameterDefinition(code, label);
-	if (!value.trim() || !Number.isFinite(Number(value)) || Number(value) < 0) {
-		throw new Error('请填写有效的非负数值');
-	}
-	if (!/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)
-		|| Number.isNaN(Date.parse(periodEnd))
-		|| new Date(periodEnd).toISOString().slice(0, 10) !== periodEnd) {
-		throw new Error('请填写有效的口径日期');
-	}
-	const field: FieldConfig = {
-		key: 'value_yi', label: definition.label, type: 'number',
-		displayFactor: definition.unit === '%' ? 100 : 1
-	};
-	return {
-		code, label: definition.label,
-		value_yi: Number(Number(valueForDatabase(field, value)).toFixed(4)),
-		period_end: periodEnd, notes: notes.trim() || null
-	};
+export function financialReconciliation(row: DataRow) {
+	const numeric = (key: string) => row[key] == null || row[key] === '' || !Number.isFinite(Number(row[key])) ? null : Number(row[key]);
+	const assets = numeric('total_assets');
+	const liabilities = numeric('total_liabilities');
+	const agency = numeric('agency_brokerage_funds');
+	const equity = numeric('securities_net_assets');
+	const ratio = assets != null && assets !== 0 && liabilities != null ? liabilities / assets : null;
+	const adjusted = assets != null && liabilities != null && agency != null && assets > agency && liabilities >= agency
+		? (liabilities - agency) / (assets - agency) : null;
+	const difference = assets != null && liabilities != null && equity != null ? assets - liabilities - equity : null;
+	return { asset_liability_ratio: ratio, adjusted_asset_liability_ratio: adjusted, difference };
+}
+
+export function financialValue(value: unknown, ratio = false) {
+	if (value == null || value === '' || !Number.isFinite(Number(value))) return '暂无数据';
+	return `${(Number(value) * (ratio ? 100 : 1)).toLocaleString('zh-CN', { maximumFractionDigits: ratio ? 2 : 4 })}${ratio ? '%' : ' 亿元'}`;
 }

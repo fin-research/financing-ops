@@ -528,3 +528,61 @@ test('PostgreSQL schema removes custom auth and preserves debt integrity', async
 	await db.query('DELETE FROM financing.bond WHERE id = 101');
 	assert.equal((await db.query('SELECT COUNT(*)::integer AS count FROM financing.cashflow')).rows[0].count, 0);
 });
+
+test('monthly financial wide table migrates history, computes ratios and enforces dated RLS writes', async (t) => {
+	const db = new PGlite();
+	t.after(() => db.close());
+	await installSchema(db);
+	await db.exec(`
+		INSERT INTO financing.finance_parameters (code, label, value_yi, period_end) VALUES
+			('total_assets', '总资产', 100, '2026-07-31'),
+			('total_liabilities', '总负债', 70, '2026-07-31'),
+			('agency_brokerage_funds', '代理买卖证券款', 20, '2026-07-31'),
+			('asset_liability_ratio', '资产负债率', 0.7, '2026-07-31'),
+			('securities_prior_year_net_assets', '证券上年末净资产', 25, '2025-12-31'),
+			('prior_month_net_capital', '上月末净资本', 30, '2026-07-31');
+	`);
+	await db.exec(migrationSql('0024_financial_metric_history.sql'));
+	const July = (await db.query("SELECT * FROM financing.financial_monthly_data WHERE period_end = '2026-07-31'")).rows[0];
+	assert.equal(Number(July.asset_liability_ratio), 0.7);
+	assert.equal(Number(July.adjusted_asset_liability_ratio), 0.625);
+	assert.equal((await db.query('SELECT count(*)::integer AS count FROM financing.financial_monthly_data')).rows[0].count, 2);
+	await assert.rejects(db.query("INSERT INTO financing.financial_monthly_data (period_end, total_assets) VALUES ('2026-07-31', 200)"), /duplicate key|unique constraint/);
+	await assert.rejects(db.query("INSERT INTO financing.financial_monthly_data (period_end, total_assets) VALUES ('2026-08-01', 200)"), /check constraint/);
+	await assert.rejects(db.query("UPDATE financing.financial_monthly_data SET asset_liability_ratio = 0.8 WHERE period_end = '2026-07-31'"), /DEFAULT/i);
+	await db.exec("INSERT INTO financing.financial_monthly_data (period_end, net_capital, total_assets, total_liabilities, agency_brokerage_funds) VALUES ('2026-08-31', 40, 200, 160, 40)");
+	const atAugust = (await db.query("SELECT * FROM financing.finance_parameters_as_of('2026-08-15')")).rows;
+	assert.equal(Number(atAugust.find((row) => row.code === 'total_assets').value_yi), 100);
+	assert.equal(Number(atAugust.find((row) => row.code === 'prior_month_net_capital').value_yi), 30);
+	assert.equal(Number(atAugust.find((row) => row.code === 'securities_prior_year_net_assets').value_yi), 25);
+	const atSeptember = (await db.query("SELECT * FROM financing.finance_parameters_as_of('2026-09-01')")).rows;
+	assert.equal(Number(atSeptember.find((row) => row.code === 'total_assets').value_yi), 200);
+	assert.equal(Number(atSeptember.find((row) => row.code === 'prior_month_net_capital').value_yi), 40);
+	const report = (await db.query("SELECT financing.liability_weekly_report_data('2026-08-15') AS payload")).rows[0].payload;
+	assert.equal(Number(report.report.parameters.total_assets.valueYi), 100);
+	await db.exec("UPDATE financing.financial_monthly_data SET total_liabilities = 60 WHERE period_end = '2026-07-31'");
+	assert.equal(Number((await db.query("SELECT asset_liability_ratio FROM financing.financial_monthly_data WHERE period_end = '2026-07-31'")).rows[0].asset_liability_ratio), 0.6);
+	assert.equal(Number((await db.query("SELECT total_liabilities FROM financing.financial_monthly_data WHERE period_end = '2026-08-31'")).rows[0].total_liabilities), 160);
+	await db.exec("INSERT INTO financing.financial_monthly_data (period_end, total_assets, total_liabilities, agency_brokerage_funds) VALUES ('2026-06-30', 0, 0, 0)");
+	const zero = (await db.query("SELECT asset_liability_ratio, adjusted_asset_liability_ratio FROM financing.financial_monthly_data WHERE period_end = '2026-06-30'")).rows[0];
+	assert.equal(zero.asset_liability_ratio, null);
+	assert.equal(zero.adjusted_asset_liability_ratio, null);
+	await db.exec('SET ROLE authenticated');
+	await assert.rejects(db.query("INSERT INTO financing.financial_monthly_data (period_end, total_assets) VALUES ('2026-05-31', 1)"), /row-level security|policy/i);
+	assert.equal((await db.query('SELECT * FROM financing.financial_monthly_data')).rows.length, 0);
+	await db.exec('RESET ROLE');
+	await db.exec(`
+		INSERT INTO neon_auth."user" (id, name, email, "emailVerified", role) VALUES ('00000000-0000-4000-8000-000000000091', 'monthly', 'monthly@example.com', TRUE, 'admin');
+		INSERT INTO financing.people (id, name, email, role, neon_auth_user_id) VALUES ('monthly', 'monthly', 'monthly@example.com', 'admin', '00000000-0000-4000-8000-000000000091');
+		SELECT set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000091', false);
+		SET ROLE authenticated;
+	`);
+	await db.exec("UPDATE financing.financial_monthly_data SET total_assets = 110 WHERE period_end = '2026-07-31'");
+	await assert.rejects(db.query("UPDATE financing.finance_parameters SET value_yi = 200 WHERE code = 'total_assets'"), /permission denied/);
+	await db.exec('RESET ROLE');
+	const audit = (await db.query("SELECT entity_id FROM financing.audit_logs WHERE summary = 'Data API update financial_monthly_data'")).rows;
+	assert.deepEqual(audit.map((row) => row.entity_id), ['2026-07-31']);
+	await db.exec("UPDATE financing.role_permissions SET granted = FALSE WHERE role = 'admin' AND permission_code = 'data_manage'");
+	await db.exec('SET ROLE authenticated');
+	await assert.rejects(db.query("INSERT INTO financing.financial_monthly_data (period_end, total_assets) VALUES ('2026-05-31', 1)"), /row-level security|policy/i);
+});

@@ -50,8 +50,11 @@ PostgreSQL 的主键、唯一约束和外键不会自动覆盖继承子表，因
 
 - Data API 只暴露 `financing` schema，数据库角色为 `authenticated`。
 - 可编辑表必须同时进入 `src/lib/data-admin.ts` 白名单、显式 GRANT、RLS policy 和写入审计触发器。
-- 当前数据后台只开放负债品种表、`finance_parameters` 与 `debt_limit_configs`。
-- `finance_parameters` 以 `code` 为主键保存每项财务指标的当前值，`period_end` 是口径日期，不是历史版本键；`value_yi` 对金额保存亿元，对 `asset_liability_ratio`、`adjusted_asset_liability_ratio` 保存小数比率。数据后台财务指标模块可新增缺失的八项标准指标并编辑已有记录，沿用既有 Data API、RLS、审计及 `updated_at` 并发校验；通用表格组件保留但不在页面挂载。
+- 数据后台写入白名单为负债品种表、`financial_monthly_data` 与 `debt_limit_configs`；通用表格组件保留但不在页面挂载。
+- `financial_monthly_data` 是月度财务宽表，以自然月末 `period_end` 为主键，一月一行，不设指标定义表。基础列为净资本 `net_capital`、证券净资产 `securities_net_assets`、集团净资产 `group_net_assets`、总资产 `total_assets`、总负债 `total_liabilities`、代理买卖证券款 `agency_brokerage_funds`，全部使用亿元；空值代表缺失，允许分次补全。未来基础指标通过 migration 加列，派生指标优先使用数据库计算列。
+- `asset_liability_ratio` 为总负债/总资产，`adjusted_asset_liability_ratio` 为（总负债−代理买卖证券款）/（总资产−代理买卖证券款），均是 stored generated columns，保存小数比率，页面转换为百分比。缺少基础金额或分母为零时返回 NULL；基础金额非负，代理买卖证券款不能超过已填总资产或总负债。证券净资产独立录入并与总资产−总负债提示勾稽差额，集团净资产保持独立主体口径。
+- 首页、额度和周报通过 `finance_parameters_as_of(date)` 读取截至对应日期的最近非空数据；净资本截至上月末，证券/集团净资产截至上年末，其他列截至报告日。结果保留真实数据日期，允许沿用更早月份并由既有缺口提醒标注，不把后续月份回填到历史报告。历史修订不自动改写已保存的 R2 周报快照，需要显式重新生成。
+- 原 `finance_parameters` 仅作为只读迁移档案保留，包括原手工比率和来源；月度维护只写新表。新表沿用 Data API、人员权限 RLS、按月审计和 `updated_at` 并发校验；修改历史月份不会覆盖其他月份。
 - Data API 支持 PostgREST 过滤、关联和聚合，也支持调用数据库函数；负债周报使用固定的 `liability_weekly_report_data(date)` RPC 聚合融资业务数据，并通过只读视图 `liability_market_rate_observations` 按指标和日期直接读取原始市场观测。RPC 与视图仅向 `authenticated` 开放，不再要求 JWT 用户关联 `people`；`monthly_financing_metrics` 与底层 `public.edb` 均不直接开放。
 - 现金流、历史余额和审计记录不展示，且 `authenticated` 不得通过 Data API 访问。
 - 导入载荷、运行状态和结果不写入 Neon；数据库只保存原子提交后的业务表与衍生表结果。

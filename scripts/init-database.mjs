@@ -40,15 +40,6 @@ try {
 		}
 	}
 
-	await client.query(`
-		INSERT INTO financing.finance_parameters (code, label)
-		VALUES
-			('securities_prior_year_net_assets', '证券上年末净资产'),
-			('group_prior_year_net_assets', '集团上年末净资产'),
-			('prior_month_net_capital', '上月末净资本')
-		ON CONFLICT (code) DO UPDATE SET label = EXCLUDED.label
-	`);
-
 	console.log(JSON.stringify({ database: 'neon', schema: 'financing', migrations, auth: 'managed-by-neon', status: 'initialized' }, null, 2));
 } finally {
 	await client.end();

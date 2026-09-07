@@ -2,34 +2,41 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tsImport } from 'tsx/esm/api';
 
-const { FINANCE_PARAMETER_CONFIG, financeParameterValue, financeParameterPayload } = await tsImport('../src/lib/finance-parameters.ts', import.meta.url);
+const { FINANCE_PARAMETER_CONFIG, financeParameterPayload, financialReconciliation, financialValue, monthEnd } = await tsImport('../src/lib/finance-parameters.ts', import.meta.url);
 
-test('financial amounts retain the existing hundred-million-yuan unit and four decimal precision', () => {
-	const payload = financeParameterPayload('total_assets', '1234.5678', '2026-08-31', ' 月末财务报表 ');
-	assert.equal(FINANCE_PARAMETER_CONFIG.tableName, 'finance_parameters');
-	assert.equal(payload.value_yi, 1234.5678);
+test('monthly financial input keeps amount units, canonical month ends and excludes generated columns', () => {
+	const payload = financeParameterPayload('2026-08', { total_assets: '1234.5678', asset_liability_ratio: '99' }, ' 月末财务报表 ');
+	assert.equal(FINANCE_PARAMETER_CONFIG.tableName, 'financial_monthly_data');
+	assert.deepEqual(FINANCE_PARAMETER_CONFIG.primaryKeys, ['period_end']);
+	assert.equal(payload.total_assets, 1234.5678);
 	assert.equal(payload.period_end, '2026-08-31');
 	assert.equal(payload.notes, '月末财务报表');
-	assert.equal(financeParameterValue('total_assets', payload.value_yi), '1234.5678');
-	assert.equal(financeParameterValue('total_assets', 0), '0');
-	assert.equal(financeParameterValue('total_assets', null), '');
+	assert.equal(payload.total_liabilities, null);
+	assert.equal('asset_liability_ratio' in payload, false);
+	assert.equal(monthEnd('2024-02'), '2024-02-29');
+	assert.equal(monthEnd('2026-02'), '2026-02-28');
+	assert.equal(financialValue(0), '0 亿元');
+	assert.equal(financialValue(null), '暂无数据');
 });
 
-test('both asset liability ratios round trip percentages without changing their stored decimal caliber', () => {
-	for (const code of ['asset_liability_ratio', 'adjusted_asset_liability_ratio']) {
-		assert.equal(financeParameterValue(code, '0.5678'), '56.78');
-		assert.equal(financeParameterPayload(code, '56.78', '2026-08-31', '').value_yi, 0.5678);
-		assert.equal(financeParameterPayload(code, '0', '2026-08-31', '').value_yi, 0);
-		assert.equal(financeParameterPayload(code, '100', '2026-08-31', '').value_yi, 1);
-	}
+test('ratio previews and equity reconciliation use the same month and distinguish missing values from zero', () => {
+	const result = financialReconciliation({ total_assets: 100, total_liabilities: 70, agency_brokerage_funds: 20, securities_net_assets: 30 });
+	assert.equal(result.asset_liability_ratio, 0.7);
+	assert.equal(result.adjusted_asset_liability_ratio, 0.625);
+	assert.equal(result.difference, 0);
+	assert.equal(financialValue(result.adjusted_asset_liability_ratio, true), '62.5%');
+	assert.equal(financialReconciliation({ total_assets: 100, total_liabilities: 0 }).asset_liability_ratio, 0);
+	assert.equal(financialReconciliation({ total_assets: 0, total_liabilities: 0 }).asset_liability_ratio, null);
+	assert.equal(financialReconciliation({ total_assets: 100, total_liabilities: '' }).asset_liability_ratio, null);
+	assert.equal(financialReconciliation({ total_assets: 100, total_liabilities: 100, agency_brokerage_funds: 100 }).adjusted_asset_liability_ratio, null);
 });
 
-test('financial input rejects missing values and invalid dates while accepting real leap days', () => {
-	for (const value of ['', ' ', '-1', 'NaN', 'Infinity']) {
-		assert.throws(() => financeParameterPayload('total_assets', value, '2026-08-31', ''), /有效的非负数值/);
+test('monthly financial validation rejects invalid amounts and agent-funds inconsistencies', () => {
+	for (const value of ['-1', 'NaN', 'Infinity']) {
+		assert.throws(() => financeParameterPayload('2026-08', { total_assets: value }, ''));
 	}
-	for (const date of ['', '2026-02-29', '2026-04-31', '2026-13-01']) {
-		assert.throws(() => financeParameterPayload('total_assets', '1', date, ''), /有效的口径日期/);
-	}
-	assert.equal(financeParameterPayload('total_assets', '1', '2024-02-29', '').period_end, '2024-02-29');
+	assert.throws(() => financeParameterPayload('2026-08', {}, ''), /至少填写/);
+	assert.throws(() => financeParameterPayload('2026-08', { total_assets: '100', agency_brokerage_funds: '101' }, ''), /不能超过/);
+	assert.equal(financeParameterPayload('2026-08', { securities_net_assets: '-10' }, '').securities_net_assets, -10);
+	for (const month of ['', '2026-13', '2026-00']) assert.throws(() => monthEnd(month), /有效的月份/);
 });

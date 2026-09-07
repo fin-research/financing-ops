@@ -102,6 +102,27 @@ async function migrateWorkflowTables() {
 		['code', 'text'], ['label', 'text'], ['value_yi', 'numeric'], ['period_end', 'date'], ['notes', 'text'],
 		['created_at', 'timestamptz'], ['updated_at', 'timestamptz']
 	], rows('finance_parameters'), ['code']);
+	await client.query(`
+		INSERT INTO financing.financial_monthly_data (
+			period_end, net_capital, securities_net_assets, group_net_assets,
+			total_assets, total_liabilities, agency_brokerage_funds, notes
+		)
+		SELECT (date_trunc('month', period_end) + INTERVAL '1 month - 1 day')::date,
+			MAX(value_yi) FILTER (WHERE code = 'prior_month_net_capital'),
+			MAX(value_yi) FILTER (WHERE code = 'securities_prior_year_net_assets'),
+			MAX(value_yi) FILTER (WHERE code = 'group_prior_year_net_assets'),
+			MAX(value_yi) FILTER (WHERE code = 'total_assets'),
+			MAX(value_yi) FILTER (WHERE code = 'total_liabilities'),
+			MAX(value_yi) FILTER (WHERE code = 'agency_brokerage_funds'),
+			string_agg(label || '：' || notes, E'\\n' ORDER BY code) FILTER (WHERE notes IS NOT NULL)
+		FROM financing.finance_parameters
+		WHERE value_yi IS NOT NULL AND period_end IS NOT NULL AND code IN (
+			'prior_month_net_capital', 'securities_prior_year_net_assets', 'group_prior_year_net_assets',
+			'total_assets', 'total_liabilities', 'agency_brokerage_funds'
+		)
+		GROUP BY (date_trunc('month', period_end) + INTERVAL '1 month - 1 day')::date
+		ON CONFLICT (period_end) DO NOTHING
+	`);
 	migrated.debtLimits = await bulkUpsert('debt_limit_configs', [
 		['debt_type', 'text'], ['limit_yi', 'numeric'], ['usage_basis', 'text'], ['approved_date', 'date'],
 		['expiry_date', 'date'], ['calculation_mode', 'text'], ['sort_order', 'integer'],

@@ -22,7 +22,7 @@ const CALIBER = {
 	registration: '用户点击生成后由浏览器通过统一 Data API 分页读取 DM 券商债券申报；区间为报告日所在周周一至报告日，不使用数据库底稿回退。',
 	database: '融资工作台业务数据由浏览器使用短期 JWT 调用 Neon Data API 聚合 RPC；历史月末趋势读取冻结汇总，仅当前报告月份实时计算，financing Worker 只校验并固化快照。',
 	due30: '未来30天与年内到期核心指标统计全量已安排负债并纳入尚未发行记录；仅未来30天到期明细排除同业拆借和浮动收益凭证，独立付息现金流不计作负债到期。',
-	parameters: '净资本、净资产和资产负债率读取 financing.finance_parameters 当前维护值；月末字段按自然月末日期记录。'
+	parameters: '净资本、净资产和资产负债规模读取 financing.financial_monthly_data 月末历史，按报告日期及上月末/上年末口径取最近有效值；两项资产负债率由同月基础数据计算。'
 };
 
 function hex(buffer) {

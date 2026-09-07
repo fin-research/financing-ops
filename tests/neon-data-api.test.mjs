@@ -33,12 +33,12 @@ const listOptions = {
 	search: ''
 };
 
-test('financial parameter writes return one entity and reject stale updates without overwriting by code alone', async () => {
+test('monthly financial writes return one dated entity and reject stale updates', async () => {
 	const { NeonDataApi } = await loadNeonDataApi();
 	const originalFetch = globalThis.fetch;
 	const calls = [];
-	const config = { ...entity, tableName: 'finance_parameters', primaryKeys: ['code'] };
-	const row = { code: 'total_assets', value_yi: 1500, period_end: '2026-08-31', updated_at: '2026-09-07T08:00:00Z' };
+	const config = { ...entity, tableName: 'financial_monthly_data', primaryKeys: ['period_end'] };
+	const row = { total_assets: 1500, period_end: '2026-08-31', updated_at: '2026-09-07T08:00:00Z' };
 	globalThis.fetch = async (input, init = {}) => {
 		if (String(input) === '/financing/data/token') return Response.json({ token: 'test', dataApiUrl: 'https://data.example.test' });
 		calls.push({ url: new URL(input), ...init });
@@ -46,10 +46,10 @@ test('financial parameter writes return one entity and reject stale updates with
 	};
 	try {
 		const api = new NeonDataApi();
-		assert.deepEqual(await api.insert(config, { code: row.code, value_yi: 1500 }), [row]);
-		await assert.rejects(api.update(config, row, { value_yi: 1600 }), /已被其他人修改/);
+		assert.deepEqual(await api.insert(config, { period_end: row.period_end, total_assets: 1500 }), [row]);
+		await assert.rejects(api.update(config, row, { total_assets: 1600 }), /已被其他人修改/);
 		assert.deepEqual(calls.map((call) => call.method), ['POST', 'PATCH']);
-		assert.equal(calls[1].url.searchParams.get('code'), 'eq.total_assets');
+		assert.equal(calls[1].url.searchParams.get('period_end'), 'eq.2026-08-31');
 		assert.equal(calls[1].url.searchParams.get('updated_at'), `eq.${row.updated_at}`);
 		assert.equal(new Headers(calls[0].headers).get('Prefer'), 'return=representation');
 	} finally {

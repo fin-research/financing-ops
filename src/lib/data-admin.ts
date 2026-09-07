@@ -137,8 +137,25 @@ const debtEntities: EntityConfig[] = DATA_ADMIN_DEBT_TYPES.map((item, index) => 
 export const DATA_ENTITIES: EntityConfig[] = [
 	...debtEntities,
 	{
+		key: 'monthly-finance', label: '月度财务数据', tableName: 'financial_monthly_data', primaryKeys: ['period_end'], searchFields: ['notes'],
+		defaultSort: { key: 'period_end', direction: 'desc' }, canCreate: true, canDelete: true,
+		fields: [
+			{ key: 'period_end', label: '月末日期', type: 'date', required: true },
+			{ key: 'net_capital', label: '净资本', type: 'number', step: '0.0001' },
+			{ key: 'securities_net_assets', label: '证券净资产', type: 'number', step: '0.0001' },
+			{ key: 'group_net_assets', label: '集团净资产', type: 'number', step: '0.0001' },
+			{ key: 'total_assets', label: '总资产', type: 'number', min: 0, step: '0.0001' },
+			{ key: 'total_liabilities', label: '总负债', type: 'number', min: 0, step: '0.0001' },
+			{ key: 'agency_brokerage_funds', label: '代理买卖证券款', type: 'number', min: 0, step: '0.0001' },
+			{ key: 'asset_liability_ratio', label: '资产负债率（%）', type: 'number', displayFactor: 100, readOnly: true, form: false },
+			{ key: 'adjusted_asset_liability_ratio', label: '资产负债率（扣代理买卖，%）', type: 'number', displayFactor: 100, readOnly: true, form: false },
+			{ key: 'notes', label: '来源与说明', type: 'textarea' },
+			...commonTimestamps
+		]
+	},
+	{
 		key: 'parameter', label: '监管参数', tableName: 'finance_parameters', primaryKeys: ['code'], searchFields: ['code', 'label', 'notes'],
-		defaultSort: { key: 'code', direction: 'asc' }, canCreate: false, canDelete: false,
+		defaultSort: { key: 'code', direction: 'asc' }, canCreate: false, canDelete: false, readOnly: true,
 		fields: [
 			{ key: 'code', label: '参数编码', readOnly: true },
 			{ key: 'label', label: '参数名称', required: true },

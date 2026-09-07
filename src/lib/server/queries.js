@@ -139,7 +139,7 @@ export async function getFinancingDashboardData({ selectedTypes = [] } = {}) {
 			SELECT COALESCE(jsonb_object_agg(code, jsonb_build_object(
 				'label', label, 'valueYi', value_yi, 'periodEnd', period_end, 'notes', notes
 			)), '{}'::jsonb) AS value
-			FROM finance_parameters
+			FROM financing.finance_parameters_as_of((SELECT as_of_date FROM latest))
 		), borrowing AS (
 			SELECT COALESCE(MAX(d.amount) FILTER (
 					WHERE ${currentYearBorrowingPredicateSql()}
@@ -348,7 +348,7 @@ export async function getDebtLimitSummary(database = getDatabase()) {
 		WITH latest AS (
 			SELECT COALESCE(MAX(as_of_date), ?::date) AS as_of_date FROM balance_snapshot
 		), net_capital AS (
-			SELECT value_yi, period_end FROM finance_parameters WHERE code = 'prior_month_net_capital'
+			SELECT value_yi, period_end FROM financing.finance_parameters_as_of((SELECT as_of_date FROM latest)) WHERE code = 'prior_month_net_capital'
 		), usage AS (
 			SELECT config.debt_type,
 				CASE WHEN config.usage_basis = 'since_approval' THEN (
