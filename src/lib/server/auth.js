@@ -249,7 +249,7 @@ async function getAccessSessionUser(event, { useSessionCache }) {
 export async function requestAuth0PasswordReset(event) {
   const config = providerConfig();
   const response = await event.fetch(`https://${config.AUTH0_DOMAIN}/dbconnections/change_password`, {
-    method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
+    method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(10000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ client_id: config.AUTH0_CLIENT_ID, email: event.locals.user.email, connection: 'eastmoney-email' }),
   });

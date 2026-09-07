@@ -586,3 +586,28 @@ test('monthly financial wide table migrates history, computes ratios and enforce
 	await db.exec('SET ROLE authenticated');
 	await assert.rejects(db.query("INSERT INTO financing.financial_monthly_data (period_end, total_assets) VALUES ('2026-05-31', 1)"), /row-level security|policy/i);
 });
+
+test('retired Neon identity keeps Auth0 RLS and audit working without old auth schemas', async () => {
+	const db = new PGlite();
+	try {
+		await installSchema(db);
+		const id = '00000000-0000-4000-8000-000000000099';
+		await db.query('INSERT INTO neon_auth."user" (id, name, email, "emailVerified", role) VALUES ($1, $2, $3, FALSE, $4)', [id, 'migration', 'migration@18.cn', 'admin']);
+		await db.query('INSERT INTO financing.people (id, name, email, role, neon_auth_user_id) VALUES ($1, $2, $3, $4, $5)', ['migration', 'migration', 'migration@18.cn', 'admin', id]);
+		for (const name of ['0025_auth0_identity.sql', '0026_auth0_request_context.sql', '0027_retire_neon_identity.sql']) await db.exec(migrationSql(name));
+		await db.exec('DROP SCHEMA neon_auth CASCADE; DROP SCHEMA auth CASCADE;');
+		const person = (await db.query('SELECT auth0_user_id FROM financing.people WHERE id = $1', ['migration'])).rows[0];
+		assert.equal(person.auth0_user_id, `auth0|${id}`);
+		await db.exec("BEGIN; UPDATE financing.people SET auth0_permissions=ARRAY['data_manage'], auth0_authorized_until=CURRENT_TIMESTAMP + interval '60 seconds' WHERE id='migration';");
+		await db.query("SELECT set_config('request.financing.user_id', $1, true)", [person.auth0_user_id]);
+		await db.exec('SET LOCAL ROLE authenticated;');
+		assert.equal((await db.query('SELECT financing.current_app_user_can_edit() AS allowed')).rows[0].allowed, true);
+		await db.exec("INSERT INTO financing.finance_parameters (code, label, value_yi) VALUES ('migration-fixture', 'migration fixture', 1);");
+		await db.exec('RESET ROLE;');
+		assert.ok((await db.query("SELECT count(*)::int AS count FROM financing.audit_logs WHERE actor_person_id='migration'")).rows[0].count > 0);
+		await db.exec("UPDATE financing.people SET auth0_authorized_until=CURRENT_TIMESTAMP - interval '1 second'; SET LOCAL ROLE authenticated;");
+		assert.equal((await db.query('SELECT financing.current_app_user_can_edit() AS allowed')).rows[0].allowed, false);
+		assert.equal((await db.query('SELECT count(*)::int AS count FROM financing.finance_parameters')).rows[0].count, 0);
+		await db.exec('ROLLBACK;');
+	} finally { await db.close(); }
+});

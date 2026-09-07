@@ -6,7 +6,6 @@ export interface FinancingWorkerEnv {
 	ASSETS: Fetcher;
 	LIABILITY_REPORT_SNAPSHOTS: R2Bucket;
 	DEBT_IMPORT_WORKFLOW: Workflow<DebtImportWorkflowParams>;
-	NEON_AUTH_URL: string;
 	CHOICE_DATA_API_URL?: string;
 	RESEND_API_KEY?: string;
 	FROM_EMAIL?: string;

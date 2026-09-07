@@ -5,7 +5,7 @@
 ### 人员与账号
 
 - `people` 是责任人、业务角色和系统访问的统一主档。
-- 业务角色为 `admin`、`handler`、`reviewer`。登录账号由可选的 `neon_auth_user_id` 关联 Neon Auth，不建立第二套人员。
+- 业务角色为 `admin`、`handler`、`reviewer`。登录账号由可选的 `auth0_user_id` 明确关联 Auth0；原 `people.id` 和业务归属保持不变。
 - 登录标识为唯一邮箱；个人设置可改显示姓名、头像和密码，邮箱由管理员维护。
 - 停用人员不能登录或作为有效业务人员；系统必须至少保留一个启用中的管理员。
 - 角色权限按 `project_manage`、`own_task_update`、`sop_manage`、`people_manage`、`data_manage`、`report_generate`、`permission_manage` 七类配置；内部测试初始状态为三种角色全量授权。

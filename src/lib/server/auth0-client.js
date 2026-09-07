@@ -29,10 +29,17 @@ export function createAuth0ManagementClient(config) {
   /** @param {string} url @param {RequestInit} init */
   async function send(url, init) {
     let response;
-    try { response = await fetcher(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(10000) }); }
-    catch { throw new NeonAuthApiError(503, 'Auth0 暂时不可用', 'AUTH0_UNAVAILABLE'); }
+    // workerd supports manual/follow only. Reject 3xx here without forwarding credentials.
+    try { response = await fetcher(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(10000) }); }
+    catch {
+      console.warn(JSON.stringify({ event: 'auth0_request_failed', phase: url.includes('/oauth/token') ? 'token' : 'management', reason: 'network' }));
+      throw new NeonAuthApiError(503, 'Auth0 暂时不可用', 'AUTH0_UNAVAILABLE');
+    }
     if (response.status === 401) serviceTokens.delete(cacheKey);
-    if (!response.ok) throw new NeonAuthApiError(response.status >= 500 || [401, 403, 429].includes(response.status) ? 503 : response.status, 'Auth0 操作失败', 'AUTH0_REQUEST_FAILED');
+    if (!response.ok) {
+      console.warn(JSON.stringify({ event: 'auth0_request_failed', phase: url.includes('/oauth/token') ? 'token' : 'management', status: response.status }));
+      throw new NeonAuthApiError(response.status < 400 || response.status >= 500 || [401, 403, 429].includes(response.status) ? 503 : response.status, 'Auth0 操作失败', 'AUTH0_REQUEST_FAILED');
+    }
     if (response.status === 204) return null;
     const reader = response.body?.getReader();
     if (!reader) return null;

@@ -35,6 +35,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		} catch (authError) {
 			if (authError instanceof NeonAuthApiError && authError.code === 'PERSON_ACCESS_DENIED') throw httpError(403, authError.message);
 			if (authError instanceof NeonAuthApiError && authError.status === 503) {
+				console.warn(JSON.stringify({ event: 'identity_unavailable', code: authError.code }));
 				throw httpError(503, '认证服务暂时不可用，请稍后重试');
 			}
 			throw authError;

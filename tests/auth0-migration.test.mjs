@@ -61,3 +61,16 @@ test('Auth0 authorization uses one token and preserves the existing role/permiss
   assert.deepEqual(await client.authorization(`auth0|${id}`), { role: 'handler', permissions: ['own_task_update'], email: 'user@18.cn' });
   assert.equal(tokens, 1);
 });
+
+test('management credentials never follow redirects and use a Workers-supported request mode', async () => {
+  let requests = 0;
+  const client = createAuth0ManagementClient({ domain: 'redirect-fixture.eu.auth0.com', clientId: 'redirect-client', clientSecret: 'fixture', roleIds: {},
+    fetchImpl: async (_url, init) => {
+      requests++;
+      assert.equal(init.redirect, 'manual');
+      return new Response(null, { status: 302, headers: { location: 'https://untrusted.example/token' } });
+    },
+  });
+  await assert.rejects(client.request('users'), (error) => error.status === 503 && error.code === 'AUTH0_REQUEST_FAILED');
+  assert.equal(requests, 1);
+});

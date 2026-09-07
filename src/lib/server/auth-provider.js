@@ -3,8 +3,12 @@ import { env } from '$env/dynamic/private';
 import { getRequestEvent } from '$app/server';
 import { createAuth0ManagementClient } from './auth0-client.js';
 import { getDatabase } from './db.js';
+import { NeonAuthApiError } from './neon-auth-client.js';
 
-export function usesAuth0() { return env.AUTH_PROVIDER === 'auth0-access'; }
+export function usesAuth0() {
+  if (env.AUTH_PROVIDER !== 'auth0-access') throw new NeonAuthApiError(503, '统一身份服务未配置', 'AUTH0_UNAVAILABLE');
+  return true;
+}
 
 export function auth0Client(event = getRequestEvent()) {
   event.locals.auth0Management ??= createAuth0ManagementClient({

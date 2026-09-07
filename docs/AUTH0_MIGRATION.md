@@ -26,7 +26,7 @@
 3. Data 先发布 `legacy` 兼容模式和 `InternalData`；Dashboard、ingest 和 quant 再切换调用通道。
 4. 在隔离 Neon 分支验证 `0025_auth0_identity.sql` 与 `0026_auth0_request_context.sql`。授权有效时可读取原业务行，过期授权必须返回零行。生产用 `scripts/init-database.mjs` 执行并登记 migration。
 5. Secret 就绪后发布 financing Auth0 模式和 Dashboard Access 保护，再启用 Data 公网保护与 Access 业务路径。检查公开页面、匿名写入、登录、服务令牌和私有 binding。
-6. 新链路确认后移除旧 Neon Auth 列／外键和函数依赖，再关闭 Neon Auth 并删除其身份 schema。业务 schema 保留。
+6. 新链路确认后执行 `0027_retire_neon_identity.sql`，移除旧身份列／外键及函数依赖，再关闭 Neon Auth 并删除其身份 schema，同时删除已停用的 Neon Data API。业务 schema 保留。部署配置只能使用 `auth0-access`，缺失或错误配置返回服务不可用。
 
 账号导入脚本仅用于一次性迁移；含哈希、Token 或 Secret 的文件必须位于仓库外的受限目录，不纳入版本控制。CLI 配置脚本默认先输出计划，真实导入显式使用 `--apply --confirmed-compatible-passwords`。未经对账不能用 upsert 覆盖现有密码。
 
@@ -35,3 +35,13 @@
 - 单元和类型检查覆盖登录域名、迁移 ID、权限边界、查询白名单、参数化写入和乐观锁。
 - 数据后台使用同一 Hyperdrive 连接内的事务身份上下文和 `SET LOCAL ROLE authenticated`，不依赖 Neon Auth 给浏览器签发令牌。
 - 旧认证关闭之前可以回退旧应用；旧 schema 删除之后必须从迁移备份恢复才可回退。不能把关闭新保护当作完成迁移。
+
+## 生产验收记录（2026-09-07）
+
+- 六个账号全部导入并完成 ID、角色、权限和邮箱状态对账。原管理员账号用原密码通过 Auth0 → Access → Dashboard 回调；签名 JWT 中的稳定身份声明已核验。
+- 登录后交易研究工作台、融资首页、人员管理和数据后台查询均返回 200；未登录首页、市场点评和二级池保持公开。匿名 Data／交易工作台跳转统一登录，跨站写请求返回 403。
+- Data 公网强制 Access 验证，Workers.dev 同样受保护；Dashboard、ingest 的私有 `InternalData` binding 和 Quant 专用服务身份已切换。Quant 令牌到期日为 2027-09-07，后续需在到期前更新。
+- `0025`、`0026`、`0027` 已通过正式 migration runner 应用生产。生产 `neon_auth` schema、旧人员身份列和 Neon Data API 已删除；保留 6 条人员映射和 9,735 条负债记录。
+- 隔离分支删除旧身份 schema 后，授权仍可读取业务行；授权过期返回零行。自动化回归还验证了写入审计保留原人员归属。
+- 修复 Workers 不支持 `redirect: error` 导致的 Auth0 请求失败：使用 `manual` 并拒绝全部 3xx，凭证不随跳转发送。诊断日志只记录阶段、状态和错误代码，不记录用户信息或凭证。
+- 完成 HTTP 协议登录与只读线上验证；没有执行浏览器视觉验收、真实业务写入或付费 AI 调用。
