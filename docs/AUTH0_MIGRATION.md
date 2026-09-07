@@ -6,7 +6,7 @@
 
 - Auth0 租户：`hasbai.eu.auth0.com`，应用 `eastmoney` 使用 Regular Web Application / Authorization Code。
 - 邮箱连接：`eastmoney-email`，仅此连接对 eastmoney 启用；只接受 `18.cn` 邮箱，新账号验证后登录。
-- Access 团队：`protossr.cloudflareaccess.com`，同一个 eastmoney 应用覆盖统一登录和受保护业务路径。混合读取／写入的 Dashboard API 由 Worker 区分方法并验证 Cookie 中的 Access JWT。
+- Access 团队：`hasbai.cloudflareaccess.com`，同一个 eastmoney 应用覆盖统一登录和受保护业务路径。混合读取／写入的 Dashboard API 由 Worker 区分方法并验证 Cookie 中的 Access JWT。
 - financing 使用 `AUTH_PROVIDER=auth0-access`，固定的 `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD`，以及 Auth0 域名、客户端 ID 和角色 ID 映射。
 - `AUTH0_MANAGEMENT_CLIENT_SECRET` 仅在 Worker Secret 中保存。Management 客户端使用 read/create/update users 与 read/update roles；服务令牌按服务有效期缓存，用户授权仍按每次写请求实时读取。
 - Dashboard 和 ingest 通过 Data 的 `InternalData` Service Binding；quant 使用独立 Access Service Token。服务身份不允许执行用户操作。
